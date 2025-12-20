@@ -1,0 +1,44 @@
+// Copyright KawaiiFluid Team. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+
+/**
+ * 공간 해싱 클래스
+ * 이웃 입자 탐색을 O(n²) -> O(n)으로 최적화
+ */
+class KAWAIIFLUIDRUNTIME_API FSpatialHash
+{
+public:
+	FSpatialHash();
+	FSpatialHash(float InCellSize);
+
+	/** 그리드 초기화 */
+	void Clear();
+
+	/** 셀 크기 설정 */
+	void SetCellSize(float NewCellSize);
+
+	/** 입자를 그리드에 삽입 */
+	void Insert(int32 ParticleIndex, const FVector& Position);
+
+	/** 특정 위치 주변의 이웃 입자 인덱스 반환 */
+	void GetNeighbors(const FVector& Position, float Radius, TArray<int32>& OutNeighbors) const;
+
+	/** 모든 입자를 한 번에 삽입 (벌크 연산) */
+	void BuildFromPositions(const TArray<FVector>& Positions);
+
+private:
+	/** 셀 크기 */
+	float CellSize;
+
+	/** 해시 그리드: 셀 좌표 -> 입자 인덱스 배열 */
+	TMap<FIntVector, TArray<int32>> Grid;
+
+	/** 월드 좌표를 셀 좌표로 변환 */
+	FIntVector GetCellCoord(const FVector& Position) const;
+
+	/** 셀 좌표의 해시 값 계산 */
+	uint32 HashCoord(const FIntVector& Coord) const;
+};
