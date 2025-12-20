@@ -1,0 +1,9 @@
+{
+	"BuildId": "47537391",
+	"Modules": 
+	{
+		"KawaiiFluidEditor": "UnrealEditor-KawaiiFluidEditor-Win64-DebugGame.dll",
+		"KawaiiFluidRuntime": "UnrealEditor-KawaiiFluidRuntime-Win64-DebugGame.dll",
+		"KawaiiFluidSystem": "UnrealEditor-KawaiiFluidSystem-Win64-DebugGame.dll"
+	}
+}
