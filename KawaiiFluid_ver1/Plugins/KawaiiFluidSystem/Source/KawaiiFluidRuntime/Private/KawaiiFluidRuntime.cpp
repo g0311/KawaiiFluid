@@ -9,16 +9,11 @@
 
 void FKawaiiFluidRuntimeModule::StartupModule()
 {
-	// This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
-
-	/*
-	* ½¦ÀÌ´õ °æ·Î ¸ÅÇÎ
-	* 
-	* "/Plugin/KawaiiFluidSystem" À¸·Î °æ·Î ¸ÅÇÎ
-	* ´Ù¸¥ ½¦ÀÌ´õ ÆÄÀÏ¿¡¼­ #include "/Plugin/KawaiiFluidSystem/YourShaderFile.usf" ¿Í °°ÀÌ »ç¿ë °¡´É
-	*/
+	// í”ŒëŸ¬ê·¸ì¸ ì…°ì´ë” ë””ë ‰í† ë¦¬ ë§¤í•‘
 	FString PluginShaderPath = FPaths::Combine(IPluginManager::Get().FindPlugin(TEXT("KawaiiFluidSystem"))->GetBaseDir(), TEXT("Shaders"));
 	AddShaderSourceDirectoryMapping(TEXT("/Plugin/KawaiiFluidSystem"), PluginShaderPath);
+
+	UE_LOG(LogTemp, Log, TEXT("KawaiiFluidRuntime Module Started: Shader Directory: %s"), *PluginShaderPath);
 }
 
 void FKawaiiFluidRuntimeModule::ShutdownModule()

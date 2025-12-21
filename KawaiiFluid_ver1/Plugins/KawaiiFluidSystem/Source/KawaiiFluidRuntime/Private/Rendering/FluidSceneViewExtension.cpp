@@ -2,6 +2,7 @@
 
 #include "Rendering/FluidSceneViewExtension.h"
 #include "Rendering/FluidRendererSubsystem.h"
+#include "Rendering/FluidDepthPass.h"
 #include "Core/FluidSimulator.h"
 #include "SceneView.h"
 #include "ScreenPass.h"
@@ -41,28 +42,34 @@ void FFluidSceneViewExtension::PrePostProcessPass_RenderThread(FRDGBuilder& Grap
 		return;
 	}
 
-	// TODO: SSFR 렌더링 파이프라인 실행
-	// 현재는 구조만 잡고 실제 렌더링은 다음 단계에서 구현
+	// SSFR 렌더링 파이프라인 실행
 
 	// 1. Depth Pass
-	// RenderDepthPass(GraphBuilder, View);
+	RenderDepthPass(GraphBuilder, View);
 
-	// 2. Smoothing Pass
+	// 2. Smoothing Pass (TODO)
 	// RenderSmoothingPass(GraphBuilder, View);
 
-	// 3. Normal Reconstruction Pass
+	// 3. Normal Reconstruction Pass (TODO)
 	// RenderNormalPass(GraphBuilder, View);
 
-	// 4. Thickness Pass
+	// 4. Thickness Pass (TODO)
 	// RenderThicknessPass(GraphBuilder, View);
 
-	// 5. Final Shading Pass
+	// 5. Final Shading Pass (TODO)
 	// RenderShadingPass(GraphBuilder, View, Inputs);
 }
 
 void FFluidSceneViewExtension::RenderDepthPass(FRDGBuilder& GraphBuilder, const FSceneView& View)
 {
-	// TODO: 다음 단계에서 구현
+	UFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
+	if (!SubsystemPtr)
+	{
+		return;
+	}
+
+	FRDGTextureRef DepthTexture = nullptr;
+	RenderFluidDepthPass(GraphBuilder, View, SubsystemPtr, DepthTexture);
 }
 
 void FFluidSceneViewExtension::RenderSmoothingPass(FRDGBuilder& GraphBuilder, const FSceneView& View)

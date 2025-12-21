@@ -1,0 +1,84 @@
+// Copyright KawaiiFluid Team. All Rights Reserved.
+
+#pragma once
+
+// 공통 유틸리티 함수들
+
+/**
+ * Sphere-Ray Intersection
+ * 구형 파티클과 레이의 교차점에서의 depth 계산
+ *
+ * @param SphereCenter 구의 중심 위치 (View Space)
+ * @param SphereRadius 구의 반지름
+ * @param RayOrigin 레이 시작점 (카메라 위치)
+ * @param RayDirection 정규화된 레이 방향
+ * @return 교차점까지의 거리 (실패 시 -1)
+ */
+float CalculateSphereDepth(float3 SphereCenter, float SphereRadius, float3 RayOrigin, float3 RayDirection)
+{
+	// 레이 원점에서 구 중심으로의 벡터
+	float3 VectorToSphere = SphereCenter - RayOrigin;
+
+	// 구 중심과 Ray 사이의 거리를 정사영하여 최단 거리가 되는 지점까지의 길이 연산
+	float TimeToClosestApproach = dot(VectorToSphere, RayDirection);
+
+	// 레이가 구를 향하지 않으면 교차 없음
+	if (TimeToClosestApproach < 0.0)
+	{
+		return -1.0;
+	}
+
+	// 직각 삼각형에서 양 변을 알고 있으니 나머지 변의 제곱을 구할 수 있음 (최단 거리 지점에서 구 중심)
+	float DistanceSquared = dot(VectorToSphere, VectorToSphere) - TimeToClosestApproach * TimeToClosestApproach;
+	float RadiusSquared = SphereRadius * SphereRadius;
+
+	// 레이가 구를 빗나감
+	if (DistanceSquared > RadiusSquared)
+	{
+		return -1.0;
+	}
+
+	// 구와의 교차 현(chord)의 반 길이
+	float HalfChordLength = sqrt(RadiusSquared - DistanceSquared);
+
+	// 앞쪽 교차점까지의 거리 (뒷쪽은 TimeToClosestApproach + HalfChordLength)
+	float IntersectionDistance = TimeToClosestApproach - HalfChordLength;
+
+	return IntersectionDistance;
+}
+
+/**
+ * View Space Depth를 Linear Depth로 변환
+ *
+ * @param ViewSpaceZ View Space의 Z 깊이값
+ * @param ProjectionMatrix 투영 행렬
+ * @return Linear depth 값
+ */
+float ViewDepthToLinearDepth(float ViewSpaceZ, float4x4 ProjectionMatrix)
+{
+	// TODO: 실제 변환 로직 구현 필요
+	// 현재는 View Space Z를 그대로 반환
+	return ViewSpaceZ;
+}
+
+/**
+ * Screen UV에서 View Ray Direction 계산
+ *
+ * @param ScreenUV 화면 UV 좌표 (0~1)
+ * @param InverseProjectionMatrix 역투영 행렬
+ * @return 정규화된 View Space 레이 방향
+ */
+float3 CalculateViewRayDirection(float2 ScreenUV, float4x4 InverseProjectionMatrix)
+{
+	// Screen UV(0 ~ 1)를 NDC 좌표(-1 ~ 1)로 변환
+	float2 NormalizedDeviceCoords = ScreenUV * 2.0 - 1.0;
+
+	// NDC를 View Space로 역변환
+	float4 ViewSpacePosition = mul(float4(NormalizedDeviceCoords, 1.0, 1.0), InverseProjectionMatrix);
+
+	// 동차 좌표 정규화 (perspective divide)
+	ViewSpacePosition.xyz /= ViewSpacePosition.w;
+
+	// 정규화된 방향 벡터 반환
+	return normalize(ViewSpacePosition.xyz);
+}

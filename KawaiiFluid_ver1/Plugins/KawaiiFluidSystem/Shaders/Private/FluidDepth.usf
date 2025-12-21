@@ -1,0 +1,110 @@
+// Copyright KawaiiFluid Team. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/ScreenPass.ush"
+#include "FluidCommon.ush"
+
+//-----------------------------------------------------------------------------
+// 파라미터
+//-----------------------------------------------------------------------------
+
+// 파티클 데이터 버퍼
+StructuredBuffer<float3> ParticlePositions;
+StructuredBuffer<float3> ParticleVelocities;
+
+// 렌더링 파라미터
+float ParticleRadius;
+float4x4 ViewMatrix;
+float4x4 ProjectionMatrix;
+float4x4 ViewProjectionMatrix;
+
+//-----------------------------------------------------------------------------
+// 버텍스 셰이더 (Vertex Shader)
+//-----------------------------------------------------------------------------
+
+struct FVertexInput
+{
+	uint InstanceId : SV_InstanceID;
+	uint VertexId : SV_VertexID;
+};
+
+struct FVertexOutput
+{
+	float4 Position : SV_POSITION;
+	float3 ViewSpacePosition : TEXCOORD0;
+	float3 ParticleCenter : TEXCOORD1;
+	float ParticleRadius : TEXCOORD2;
+	uint InstanceId : TEXCOORD3;
+};
+
+// 빌보드 쿼드 정점
+static const float2 QuadVertices[4] =
+{
+	float2(-1.0, -1.0),
+	float2( 1.0, -1.0),
+	float2(-1.0,  1.0),
+	float2( 1.0,  1.0)
+};
+
+FVertexOutput MainVS(FVertexInput Input)
+{
+	FVertexOutput Output;
+
+	// 파티클 월드 위치 가져오기
+	float3 ParticleWorldPosition = ParticlePositions[Input.InstanceId];
+
+	// 뷰 공간(View space)으로 변환
+	float4 ParticleViewPosition = mul(float4(ParticleWorldPosition, 1.0), ViewMatrix);
+
+	// 빌보드 쿼드 오프셋 생성
+	float2 QuadOffset = QuadVertices[Input.VertexId] * ParticleRadius;
+
+	// 뷰 공간에서 쿼드 오프셋 적용 (카메라를 향하도록)
+	float3 ViewSpacePosition = ParticleViewPosition.xyz;
+	ViewSpacePosition.xy += QuadOffset;
+
+	// 투영 (Projection)
+	Output.Position = mul(float4(ViewSpacePosition, 1.0), ProjectionMatrix);
+	Output.ViewSpacePosition = ViewSpacePosition;
+	Output.ParticleCenter = ParticleViewPosition.xyz;
+	Output.ParticleRadius = ParticleRadius;
+	Output.InstanceId = Input.InstanceId;
+
+	return Output;
+}
+
+//-----------------------------------------------------------------------------
+// 픽셀 셰이더 (Pixel Shader)
+//-----------------------------------------------------------------------------
+
+struct FPixelOutput
+{
+	float Depth : SV_Depth;
+};
+
+FPixelOutput MainPS(FVertexOutput Input)
+{
+	FPixelOutput Output;
+
+	// 뷰 공간에서 레이(Ray) 방향 계산
+	float3 RayDirection = normalize(Input.ViewSpacePosition);
+	float3 RayOrigin = float3(0, 0, 0); // 뷰 공간 원점
+
+	// 구-레이 교차(Sphere-Ray intersection)를 사용하여 정확한 깊이 계산
+	float IntersectionT = CalculateSphereDepth(Input.ParticleCenter, Input.ParticleRadius, RayOrigin, RayDirection);
+
+	// 교차하지 않으면 무시(Discard)
+	if (IntersectionT < 0.0)
+	{
+		discard;
+	}
+
+	// 교차점 계산
+	float3 IntersectionPoint = RayOrigin + RayDirection * IntersectionT;
+
+	// 깊이 계산 (뷰 공간 Z를 투영 공간 깊이로 변환)
+	float4 ClipPosition = mul(float4(IntersectionPoint, 1.0), ProjectionMatrix);
+	Output.Depth = ClipPosition.z / ClipPosition.w;
+
+	return Output;
+}
