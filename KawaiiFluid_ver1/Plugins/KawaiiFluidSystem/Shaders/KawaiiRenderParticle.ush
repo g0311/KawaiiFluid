@@ -1,6 +1,6 @@
-// Copyright KawaiiFluid Team. All Rights Reserved.
+ï»¿// Copyright KawaiiFluid Team. All Rights Reserved.
 
-// ½¦ÀÌ´õ¿¡¼­ »ç¿ëÇÒ ÆÄÆ¼Å¬ ±¸Á¶Ã¼
+// ì‰ì´ë”ì—ì„œ ì‚¬ìš©í•  íŒŒí‹°í´ êµ¬ì¡°ì²´
 struct FKawaiiRenderParticle
 {
     float3 Position;

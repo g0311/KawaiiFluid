@@ -50,8 +50,8 @@ public class KawaiiFluidRuntime : ModuleRules
 			{
 				"Slate",
 				"SlateCore",
-				"Projects", // IPluginManager ����ϱ� ����
-				"RenderCore", // AddShaderSourceDirectoryMapping ��� ����
+				"Projects", // IPluginManager 위해 추가
+				"RenderCore", // AddShaderSourceDirectoryMapping 위해 추가
 			}
 		);
 	}

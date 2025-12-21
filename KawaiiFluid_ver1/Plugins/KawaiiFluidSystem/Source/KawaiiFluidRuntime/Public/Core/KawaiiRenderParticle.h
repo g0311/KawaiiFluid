@@ -1,11 +1,11 @@
-// Copyright KawaiiFluid Team. All Rights Reserved.
+ï»¿// Copyright KawaiiFluid Team. All Rights Reserved.
 
 #pragma once
 
 #include "CoreMinimal.h"
 
 /**
- * ·»´õ¸µ¿¡ »ç¿ëÇÒ ÆÄÆ¼Å¬ ±¸Á¶Ã¼ Á¤ÀÇ
+ * ë Œë”ë§ì— ì‚¬ìš©í•  íŒŒí‹°í´ êµ¬ì¡°ì²´ ì •ì˜
  */
 struct KAWAIIFLUIDRUNTIME_API FKawaiiRenderParticle
 {
@@ -13,7 +13,7 @@ public:
 	FVector3f Position;
 	FVector3f Velocity;
 	float Radius;
-	float Padding; // 16¹ÙÀÌÆ® Á¤·ÄÀ» À§ÇÑ ÆĞµù
+	float Padding; // 16ë°”ì´íŠ¸ ì •ë ¬ì„ ìœ„í•œ íŒ¨ë”©
 
 	FKawaiiRenderParticle()
 		: Position(FVector3f::ZeroVector)
@@ -24,8 +24,8 @@ public:
 	}
 };
 
-// 32 ¹ÙÀÌÆ® Å©±â È®ÀÎ
+// 32 ë°”ì´íŠ¸ í¬ê¸° í™•ì¸
 static_assert(sizeof(FKawaiiRenderParticle) == 32, "FKawaiiRenderParticle size is not 32 bytes.");
 
-// ¿ÀÇÁ¼Â °ËÁõ
+// ì˜¤í”„ì…‹ ê²€ì¦
 static_assert(STRUCT_OFFSET(FKawaiiRenderParticle, Radius) == 24, "Radius offset is incorrect.");
