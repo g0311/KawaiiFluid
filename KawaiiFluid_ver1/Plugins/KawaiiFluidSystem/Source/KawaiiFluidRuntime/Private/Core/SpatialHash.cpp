@@ -24,7 +24,10 @@ void FSpatialHash::SetCellSize(float NewCellSize)
 
 void FSpatialHash::Insert(int32 ParticleIndex, const FVector& Position)
 {
+	// 셀 좌표 계산 
 	FIntVector CellCoord = GetCellCoord(Position);
+
+	// 해당 셀에 인덱스 추가
 	Grid.FindOrAdd(CellCoord).Add(ParticleIndex);
 }
 

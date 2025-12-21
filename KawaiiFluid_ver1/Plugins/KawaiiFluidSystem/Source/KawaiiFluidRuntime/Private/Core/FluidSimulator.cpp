@@ -1,4 +1,4 @@
-﻿// Copyright KawaiiFluid Team. All Rights Reserved.
+// Copyright KawaiiFluid Team. All Rights Reserved.
 
 #include "Core/FluidSimulator.h"
 #include "Core/SpatialHash.h"
@@ -23,7 +23,6 @@ DECLARE_CYCLE_STAT(TEXT("World Collision"), STAT_WorldCollision, STATGROUP_Kawai
 DECLARE_CYCLE_STAT(TEXT("Finalize Positions"), STAT_FinalizePositions, STATGROUP_KawaiiFluid);
 DECLARE_CYCLE_STAT(TEXT("Apply Viscosity"), STAT_ApplyViscosity, STATGROUP_KawaiiFluid);
 DECLARE_CYCLE_STAT(TEXT("Apply Adhesion"), STAT_ApplyAdhesion, STATGROUP_KawaiiFluid);
-DECLARE_CYCLE_STAT(TEXT("Update Render Data"), STAT_UpdateRenderData, STATGROUP_KawaiiFluid);
 DECLARE_CYCLE_STAT(TEXT("Debug Rendering"), STAT_DebugRendering, STATGROUP_KawaiiFluid);
 
 AFluidSimulator::AFluidSimulator()
@@ -87,7 +86,11 @@ AFluidSimulator::AFluidSimulator()
 	}
 }
 
-AFluidSimulator::~AFluidSimulator() = default;
+AFluidSimulator::~AFluidSimulator()
+{
+	// TUniquePtr 멤버들(SpatialHash, DensityConstraint, ViscositySolver, AdhesionSolver)이
+	// 여기서 자동으로 파괴됨. 빈 본문이지만 .cpp에 정의해야 완전한 타입 정의가 보장됨.
+}
 
 void AFluidSimulator::BeginPlay()
 {
@@ -128,10 +131,10 @@ void AFluidSimulator::BeginDestroy()
 
 void AFluidSimulator::InitializeSolvers()
 {
-	SpatialHash = MakeUnique<FSpatialHash>(SmoothingRadius);
-	DensityConstraint = MakeUnique<FDensityConstraint>(RestDensity, SmoothingRadius, Epsilon);
-	ViscositySolver = MakeUnique<FViscositySolver>();
-	AdhesionSolver = MakeUnique<FAdhesionSolver>();
+	SpatialHash = MakeShared<FSpatialHash>(SmoothingRadius);
+	DensityConstraint = MakeShared<FDensityConstraint>(RestDensity, SmoothingRadius, Epsilon);
+	ViscositySolver = MakeShared<FViscositySolver>();
+	AdhesionSolver = MakeShared<FAdhesionSolver>();
 }
 
 void AFluidSimulator::InitializeRenderResource()
@@ -272,11 +275,13 @@ void AFluidSimulator::UpdateNeighbors()
 	TArray<FVector> Positions;
 	Positions.Reserve(Particles.Num());
 
+	// 각 입자의 위치 수집
 	for (const FFluidParticle& Particle : Particles)
 	{
 		Positions.Add(Particle.PredictedPosition);
 	}
 
+	// 3D 격자에 넣기 
 	SpatialHash->BuildFromPositions(Positions);
 
 	// 각 입자의 이웃 캐싱 (병렬 - 읽기만)

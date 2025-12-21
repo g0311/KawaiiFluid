@@ -1,4 +1,4 @@
-﻿// Copyright KawaiiFluid Team. All Rights Reserved.
+// Copyright KawaiiFluid Team. All Rights Reserved.
 
 #pragma once
 

@@ -229,16 +229,16 @@ private:
 	//========================================
 
 	/** 공간 해싱 */
-	TUniquePtr<FSpatialHash> SpatialHash;
+	TSharedPtr<FSpatialHash> SpatialHash;
 
 	/** 밀도 제약 솔버 */
-	TUniquePtr<FDensityConstraint> DensityConstraint;
+	TSharedPtr<FDensityConstraint> DensityConstraint;
 
 	/** 점성 솔버 */
-	TUniquePtr<FViscositySolver> ViscositySolver;
+	TSharedPtr<FViscositySolver> ViscositySolver;
 
 	/** 접착력 솔버 */
-	TUniquePtr<FAdhesionSolver> AdhesionSolver;
+	TSharedPtr<FAdhesionSolver> AdhesionSolver;
 
 	/** 등록된 콜라이더들 */
 	UPROPERTY()
