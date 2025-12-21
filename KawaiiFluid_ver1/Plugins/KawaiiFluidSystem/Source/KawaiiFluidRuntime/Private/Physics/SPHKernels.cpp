@@ -4,6 +4,9 @@
 
 namespace SPHKernels
 {
+	// 언리얼 단위(cm)를 미터(m)로 변환하는 상수
+	constexpr float CM_TO_M = 0.01f;
+
 	//========================================
 	// Poly6 커널
 	//========================================
@@ -21,11 +24,15 @@ namespace SPHKernels
 			return 0.0f;
 		}
 
-		float h2 = h * h;
-		float r2 = r * r;
+		// cm -> m 변환
+		float r_m = r * CM_TO_M;
+		float h_m = h * CM_TO_M;
+
+		float h2 = h_m * h_m;
+		float r2 = r_m * r_m;
 		float diff = h2 - r2;
 
-		return Poly6Coefficient(h) * diff * diff * diff;
+		return Poly6Coefficient(h_m) * diff * diff * diff;
 	}
 
 	float Poly6(const FVector& r, float h)
@@ -52,13 +59,19 @@ namespace SPHKernels
 			return FVector::ZeroVector;
 		}
 
-		float diff = h - rLen;
-		float coeff = SpikyGradientCoefficient(h) * diff * diff;
+		// cm -> m 변환
+		float rLen_m = rLen * CM_TO_M;
+		float h_m = h * CM_TO_M;
 
-		// r̂ (단위 벡터)
+		float diff = h_m - rLen_m;
+		float coeff = SpikyGradientCoefficient(h_m) * diff * diff;
+
+		// r̂ (단위 벡터) - 방향은 변하지 않음
 		FVector rNorm = r / rLen;
 
-		return coeff * rNorm;
+		// 결과를 cm 단위로 변환 (그래디언트 = 1/m^4, 위치 보정에 사용되므로 cm로)
+		// 그래디언트의 크기는 1/m 단위이므로, cm로 변환하려면 * 0.01
+		return coeff * rNorm * CM_TO_M;
 	}
 
 	//========================================
@@ -78,7 +91,11 @@ namespace SPHKernels
 			return 0.0f;
 		}
 
-		return ViscosityLaplacianCoefficient(h) * (h - r);
+		// cm -> m 변환
+		float r_m = r * CM_TO_M;
+		float h_m = h * CM_TO_M;
+
+		return ViscosityLaplacianCoefficient(h_m) * (h_m - r_m);
 	}
 
 	//========================================
@@ -93,9 +110,13 @@ namespace SPHKernels
 			return 0.0f;
 		}
 
+		// cm -> m 변환
+		float r_m = r * CM_TO_M;
+		float h_m = h * CM_TO_M;
+
 		// 0.007 / h^3.25 * (-4r²/h + 6r - 2h)^0.25
-		float coeff = 0.007f / FMath::Pow(h, 3.25f);
-		float inner = -4.0f * r * r / h + 6.0f * r - 2.0f * h;
+		float coeff = 0.007f / FMath::Pow(h_m, 3.25f);
+		float inner = -4.0f * r_m * r_m / h_m + 6.0f * r_m - 2.0f * h_m;
 
 		if (inner <= 0.0f)
 		{
@@ -116,22 +137,26 @@ namespace SPHKernels
 			return 0.0f;
 		}
 
-		float coeff = 32.0f / (PI * FMath::Pow(h, 9.0f));
-		float h2 = h * 0.5f;
+		// cm -> m 변환
+		float r_m = r * CM_TO_M;
+		float h_m = h * CM_TO_M;
 
-		if (r <= h2)
+		float coeff = 32.0f / (PI * FMath::Pow(h_m, 9.0f));
+		float h2 = h_m * 0.5f;
+
+		if (r_m <= h2)
 		{
 			// 0 < r <= h/2
-			float diff1 = h - r;
+			float diff1 = h_m - r_m;
 			float diff2 = diff1 * diff1 * diff1;
-			float r3 = r * r * r;
-			return coeff * 2.0f * diff2 * r3 - (FMath::Pow(h, 6.0f) / 64.0f);
+			float r3 = r_m * r_m * r_m;
+			return coeff * 2.0f * diff2 * r3 - (FMath::Pow(h_m, 6.0f) / 64.0f);
 		}
 		else
 		{
 			// h/2 < r <= h
-			float diff = h - r;
-			return coeff * diff * diff * diff * r * r * r;
+			float diff = h_m - r_m;
+			return coeff * diff * diff * diff * r_m * r_m * r_m;
 		}
 	}
 
@@ -141,7 +166,8 @@ namespace SPHKernels
 
 	void FKernelCoefficients::Precompute(float SmoothingRadius)
 	{
-		h = SmoothingRadius;
+		// cm -> m 변환
+		h = SmoothingRadius * CM_TO_M;
 		h2 = h * h;
 		h6 = h2 * h2 * h2;
 		h9 = h6 * h2 * h;

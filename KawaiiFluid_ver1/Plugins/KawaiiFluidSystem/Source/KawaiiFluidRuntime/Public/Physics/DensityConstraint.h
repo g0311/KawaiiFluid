@@ -18,7 +18,7 @@ public:
 	FDensityConstraint(float InRestDensity, float InSmoothingRadius, float InEpsilon);
 
 	/** 밀도 제약 해결 (한 번의 반복) */
-	void Solve(TArray<FFluidParticle>& Particles, float SmoothingRadius);
+	void Solve(TArray<FFluidParticle>& Particles, float InSmoothingRadius, float InRestDensity, float InEpsilon);
 
 	/** 파라미터 설정 */
 	void SetRestDensity(float NewRestDensity);

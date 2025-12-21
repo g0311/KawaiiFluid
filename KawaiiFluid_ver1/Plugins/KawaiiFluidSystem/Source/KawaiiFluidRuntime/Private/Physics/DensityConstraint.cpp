@@ -17,9 +17,11 @@ FDensityConstraint::FDensityConstraint(float InRestDensity, float InSmoothingRad
 {
 }
 
-void FDensityConstraint::Solve(TArray<FFluidParticle>& Particles, float InSmoothingRadius)
+void FDensityConstraint::Solve(TArray<FFluidParticle>& Particles, float InSmoothingRadius, float InRestDensity, float InEpsilon)
 {
 	SmoothingRadius = InSmoothingRadius;
+	RestDensity = InRestDensity;
+	Epsilon = InEpsilon;
 
 	// 1. 밀도 계산
 	ComputeDensities(Particles);
@@ -29,6 +31,20 @@ void FDensityConstraint::Solve(TArray<FFluidParticle>& Particles, float InSmooth
 
 	// 3. 위치 보정
 	ApplyPositionCorrection(Particles);
+
+	// 디버그 출력 (첫 번째 입자)
+	static int32 DebugCounter = 0;
+	if (++DebugCounter % 60 == 0 && Particles.Num() > 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[PBF Debug] Particles=%d, Neighbors=%d, Density=%.6f, RestDensity=%.2f, Lambda=%.6f, h=%.2f, Epsilon=%.2f"),
+			Particles.Num(),
+			Particles[0].NeighborIndices.Num(),
+			Particles[0].Density,
+			RestDensity,
+			Particles[0].Lambda,
+			SmoothingRadius,
+			Epsilon);
+	}
 }
 
 void FDensityConstraint::ComputeDensities(TArray<FFluidParticle>& Particles)

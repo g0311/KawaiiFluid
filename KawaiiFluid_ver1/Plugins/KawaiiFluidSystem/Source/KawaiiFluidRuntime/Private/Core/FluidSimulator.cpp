@@ -47,7 +47,8 @@ AFluidSimulator::AFluidSimulator()
 
 	// 월드 콜리전 기본값
 	bUseWorldCollision = true;
-	CollisionChannel = ECC_WorldStatic;
+	// ECC_GameTraceChannel1 = Project Settings에서 첫 번째로 만든 커스텀 채널 (Fluid)
+	CollisionChannel = ECC_GameTraceChannel1;
 
 	// 디버그 메시 컴포넌트 생성
 	DebugMeshComponent = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("DebugMeshComponent"));
@@ -191,7 +192,7 @@ void AFluidSimulator::SolveDensityConstraints()
 {
 	if (DensityConstraint.IsValid())
 	{
-		DensityConstraint->Solve(Particles, SmoothingRadius);
+		DensityConstraint->Solve(Particles, SmoothingRadius, RestDensity, Epsilon);
 	}
 }
 
@@ -237,19 +238,18 @@ void AFluidSimulator::HandleWorldCollision()
 
 		if (bHit && HitResult.bBlockingHit)
 		{
-			// 충돌 지점으로 위치 조정 (약간 밀어냄)
-			Particle.PredictedPosition = HitResult.Location + HitResult.ImpactNormal * (ParticleRadius + 0.1f);
+			// 충돌 지점으로 위치 조정
+			FVector CollisionPos = HitResult.Location + HitResult.ImpactNormal * (ParticleRadius + 0.01f);
 
-			// 속도 반사 (마찰 + 반발)
+			// 점성 유체: Position도 함께 업데이트하여 FinalizePositions에서 튀어오르지 않도록 함
+			Particle.PredictedPosition = CollisionPos;
+			Particle.Position = CollisionPos;  // ← 이게 핵심!
+
+			// 속도의 수직 성분 제거 (표면에 달라붙음)
 			float VelDotNormal = FVector::DotProduct(Particle.Velocity, HitResult.ImpactNormal);
-
 			if (VelDotNormal < 0.0f)
 			{
-				FVector VelNormal = VelDotNormal * HitResult.ImpactNormal;
-				FVector VelTangent = Particle.Velocity - VelNormal;
-
-				// 반발 계수 0.2, 마찰 계수 0.3
-				Particle.Velocity = -0.2f * VelNormal + 0.7f * VelTangent;
+				Particle.Velocity -= VelDotNormal * HitResult.ImpactNormal;
 			}
 		}
 	}

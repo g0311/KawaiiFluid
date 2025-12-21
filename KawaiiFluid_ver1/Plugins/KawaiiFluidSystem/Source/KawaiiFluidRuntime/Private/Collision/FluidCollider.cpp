@@ -54,16 +54,19 @@ void UFluidCollider::ResolveParticleCollision(FFluidParticle& Particle)
 
 	if (IsPointInside(Particle.PredictedPosition))
 	{
-		Particle.PredictedPosition = ClosestPoint + Normal * 0.001f;
+		FVector CollisionPos = ClosestPoint + Normal * 0.01f;
 
+		// Position도 함께 업데이트 (튀어오름 방지)
+		Particle.PredictedPosition = CollisionPos;
+		Particle.Position = CollisionPos;
+
+		// 점성 유체: 수직 성분 제거 (표면에 달라붙음)
 		float VelDotNormal = FVector::DotProduct(Particle.Velocity, Normal);
+
 
 		if (VelDotNormal < 0.0f)
 		{
-			FVector VelNormal = VelDotNormal * Normal;
-			FVector VelTangent = Particle.Velocity - VelNormal;
-
-			Particle.Velocity = -Restitution * VelNormal + (1.0f - Friction) * VelTangent;
+			Particle.Velocity -= VelDotNormal * Normal;
 		}
 	}
 }

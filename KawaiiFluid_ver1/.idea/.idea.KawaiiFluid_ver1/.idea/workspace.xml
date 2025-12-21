@@ -21,7 +21,10 @@
     <option name="firstShow" value="false" />
   </component>
   <component name="HighlightingSettingsPerFile">
-    <setting file="cidr-memory-view://0" root0="FORCE_HIGHLIGHTING" />
+    <setting file="file://$PROJECT_DIR$/Plugins/ViscousFluid/Source/ViscousFluid/Public/Core/SpatialHash.h" root0="FORCE_HIGHLIGHTING" />
+    <setting file="file://$PROJECT_DIR$/../../Program Files/Epic Games/UE_5.7/Engine/Plugins/VirtualProduction/VirtualScouting/Source/VirtualScouting/Private/VirtualScoutingSettings.cpp" root0="SKIP_HIGHLIGHTING" />
+    <setting file="file://$PROJECT_DIR$/../../Program Files/Epic Games/UE_5.7/Engine/Source/Runtime/Core/Public/Misc/ConfigCacheIni.h" root0="FORCE_HIGHLIGHTING" />
+    <setting file="file://$PROJECT_DIR$/../../Program Files/Epic Games/UE_5.7/Engine/Source/Runtime/SlateCore/Public/Layout/Visibility.h" root0="FORCE_HIGHLIGHTING" />
   </component>
   <component name="ProblemsViewState">
     <option name="selectedTabId" value="CurrentFile" />
@@ -51,7 +54,7 @@
     &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
 }</component>
-  <component name="RunManager" selected="C/C++ 프로젝트.KawaiiFluid_ver1">
+  <component name="RunManager" selected=".NET Project.AutomationTool">
     <configuration name="KawaiiFluid_ver1" type="CppProject" factoryName="C++ Project">
       <configuration_1 setup="1">
         <option name="CONFIGURATION" value="DebugGame_Editor" />
@@ -138,13 +141,6 @@
         <option name="Build" />
       </method>
     </configuration>
-    <configuration default="true" type="docker-deploy" factoryName="dockerfile" temporary="true">
-      <deployment type="dockerfile">
-        <settings />
-      </deployment>
-      <EXTENSION ID="com.jetbrains.rider.docker.debug" isFastModeEnabled="true" isSslEnabled="false" />
-      <method v="2" />
-    </configuration>
     <configuration name="EpicGames.Perforce.Fixture/Dockerfile" type="docker-deploy" factoryName="dockerfile" server-name="Docker">
       <deployment type="dockerfile">
         <settings>
@@ -152,6 +148,13 @@
           <option name="contextFolderPath" value="C:\g0311_WorkSpace\KawaiiFluid_ver1" />
           <option name="sourceFilePath" value="../../Epic Games/UE_5.7/Engine/Source/Programs/Shared/EpicGames.Perforce.Fixture/Dockerfile" />
         </settings>
+      </deployment>
+      <EXTENSION ID="com.jetbrains.rider.docker.debug" isFastModeEnabled="true" isSslEnabled="false" />
+      <method v="2" />
+    </configuration>
+    <configuration default="true" type="docker-deploy" factoryName="dockerfile" temporary="true">
+      <deployment type="dockerfile">
+        <settings />
       </deployment>
       <EXTENSION ID="com.jetbrains.rider.docker.debug" isFastModeEnabled="true" isSslEnabled="false" />
       <method v="2" />
@@ -168,6 +171,8 @@
       <workItem from="1766215031127" duration="202000" />
       <workItem from="1766215276814" duration="1397000" />
       <workItem from="1766216703487" duration="336000" />
+      <workItem from="1766233196286" duration="113000" />
+      <workItem from="1766233566891" duration="247000" />
     </task>
     <servers />
   </component>
