@@ -200,10 +200,10 @@ void AFluidSimulator::Tick(float DeltaTime)
 		// 실제 위치 디버그 (빨간색 = 실제 물리 위치)
 		for (const FFluidParticle& Particle : Particles)
 		{
-			DrawDebugPoint(GetWorld(), Particle.Position, 10.0f, FColor::Red, false, -1.0f);
+			//DrawDebugPoint(GetWorld(), Particle.Position, 10.0f, FColor::Red, false, -1.0f);
 
 			// 속도 방향 표시 (파란색 선)
-			DrawDebugLine(GetWorld(), Particle.Position, Particle.Position + Particle.Velocity * 0.1f, FColor::Blue, false, -1.0f);
+			//DrawDebugLine(GetWorld(), Particle.Position, Particle.Position + Particle.Velocity * 0.1f, FColor::Blue, false, -1.0f);
 		}
 	}
 }
@@ -306,7 +306,10 @@ void AFluidSimulator::HandleWorldCollision()
 		if (bHit && HitResult.bBlockingHit)
 		{
 			// 충돌 지점으로 위치 조정
-			FVector CollisionPos = HitResult.Location + HitResult.ImpactNormal * (ParticleRadius + 0.01f);
+			//FVector CollisionPos = HitResult.Location + HitResult.ImpactNormal * (ParticleRadius + 0.01f);
+
+			FVector CollisionPos = HitResult.Location + HitResult.ImpactNormal * 0.01f;
+
 
 			// 점성 유체: Position도 함께 업데이트하여 FinalizePositions에서 튀어오르지 않도록 함
 			Particle.PredictedPosition = CollisionPos;

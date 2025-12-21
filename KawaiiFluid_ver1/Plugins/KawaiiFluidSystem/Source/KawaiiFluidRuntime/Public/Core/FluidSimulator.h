@@ -110,7 +110,7 @@ public:
 	//========================================
 
 	/** 기준 밀도 (kg/m³) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Physics", meta = (ClampMin = "100.0", ClampMax = "3000.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Physics", meta = (ClampMin = "1.0", ClampMax = "3000.0"))
 	float RestDensity;
 
 	/** 입자 질량 */
