@@ -44,8 +44,10 @@ public class KawaiiFluidRuntime : ModuleRules
 			new string[]
 			{
 				"Slate",
-				"SlateCore"
-			}
+				"SlateCore",
+				"Projects", // IPluginManager 사용하기 위함
+				"RenderCore", // AddShaderSourceDirectoryMapping 사용 위함
+            }
 		);
 	}
 }

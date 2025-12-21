@@ -1,0 +1,10 @@
+// Copyright KawaiiFluid Team. All Rights Reserved.
+
+// 쉐이더에서 사용할 파티클 구조체
+struct FKawaiiRenderParticle
+{
+    float3 Position;
+    float3 Velocity;
+    float Radius;
+    float Padding;
+};
