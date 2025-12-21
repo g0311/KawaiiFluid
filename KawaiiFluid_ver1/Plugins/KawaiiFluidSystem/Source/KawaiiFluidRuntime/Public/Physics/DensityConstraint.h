@@ -6,6 +6,20 @@
 #include "Core/FluidParticle.h"
 
 /**
+ * SPH 커널 계수 (사전 계산)
+ * Pow() 호출 제거를 위해 미리 계산된 값들
+ */
+struct FSPHKernelCoeffs
+{
+	float h;              // 커널 반경 (m)
+	float h2;             // h²
+	float Poly6Coeff;     // 315 / (64πh⁹)
+	float SpikyCoeff;     // -45 / (πh⁶)
+	float InvRestDensity; // 1 / ρ₀
+	float SmoothingRadiusSq; // h² (cm²)
+};
+
+/**
  * PBF 밀도 제약 솔버
  *
  * 제약 조건: C_i = (ρ_i / ρ_0) - 1 = 0
@@ -25,30 +39,47 @@ public:
 	void SetEpsilon(float NewEpsilon);
 
 private:
-	/** 기준 밀도 */
-	float RestDensity;
+	float RestDensity;      // 기준 밀도 (kg/m³)
+	float Epsilon;          // 안정성 상수
+	float SmoothingRadius;  // 커널 반경 (cm)
 
-	/** 안정성 상수 */
-	float Epsilon;
+	//========================================
+	// SoA 캐시 (Structure of Arrays)
+	//========================================
+	TArray<float> PosX, PosY, PosZ;  // 예측 위치
+	TArray<float> Masses;             // 질량
+	TArray<float> Densities;          // 밀도
+	TArray<float> Lambdas;            // Lambda
+	TArray<float> DeltaPX, DeltaPY, DeltaPZ;  // 위치 보정량
 
-	/** 커널 반경 */
-	float SmoothingRadius;
+	//========================================
+	// SoA 관리 함수
+	//========================================
+	void ResizeSoAArrays(int32 NumParticles);
+	void CopyToSoA(const TArray<FFluidParticle>& Particles);
+	void ApplyFromSoA(TArray<FFluidParticle>& Particles);
 
-	/** 1. 모든 입자의 밀도 계산 */
+	//========================================
+	// SIMD 최적화 함수 (Solve 내부에서 사용)
+	//========================================
+
+	/** 1단계: 밀도 + Lambda 동시 계산 (SIMD) */
+	void ComputeDensityAndLambda_SIMD(
+		const TArray<FFluidParticle>& Particles,
+		const FSPHKernelCoeffs& Coeffs);
+
+	/** 2단계: 위치 보정량 계산 (SIMD) */
+	void ComputeDeltaP_SIMD(
+		const TArray<FFluidParticle>& Particles,
+		const FSPHKernelCoeffs& Coeffs);
+
+	//========================================
+	// 레거시 함수 (하위 호환성)
+	//========================================
 	void ComputeDensities(TArray<FFluidParticle>& Particles);
-
-	/** 2. 모든 입자의 Lambda 계산 */
 	void ComputeLambdas(TArray<FFluidParticle>& Particles);
-
-	/** 3. 위치 보정 적용 */
 	void ApplyPositionCorrection(TArray<FFluidParticle>& Particles);
-
-	/** 단일 입자의 밀도 계산 */
 	float ComputeParticleDensity(const FFluidParticle& Particle, const TArray<FFluidParticle>& Particles);
-
-	/** 단일 입자의 Lambda 계산 */
 	float ComputeParticleLambda(const FFluidParticle& Particle, const TArray<FFluidParticle>& Particles);
-
-	/** 단일 입자의 위치 보정량 계산 */
 	FVector ComputeDeltaPosition(int32 ParticleIndex, const TArray<FFluidParticle>& Particles);
 };

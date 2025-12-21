@@ -2,7 +2,30 @@
 
 #include "Physics/DensityConstraint.h"
 #include "Physics/SPHKernels.h"
+#include "Math/UnrealMathSSE.h"
 
+//========================================
+// 상수
+//========================================
+namespace
+{
+	constexpr float CM_TO_M = 0.01f;
+	constexpr float CM_TO_M_SQ = CM_TO_M * CM_TO_M;
+}
+
+//========================================
+// SIMD 헬퍼
+//========================================
+FORCEINLINE VectorRegister4Float VectorInvSqrtSafe(VectorRegister4Float V)
+{
+	const VectorRegister4Float MinValue = VectorSetFloat1(KINDA_SMALL_NUMBER);
+	V = VectorMax(V, MinValue);
+	return VectorReciprocalSqrt(V);
+}
+
+//========================================
+// 생성자
+//========================================
 FDensityConstraint::FDensityConstraint()
 	: RestDensity(1000.0f)
 	, Epsilon(100.0f)
@@ -17,35 +40,421 @@ FDensityConstraint::FDensityConstraint(float InRestDensity, float InSmoothingRad
 {
 }
 
+//========================================
+// SoA 관리
+//========================================
+void FDensityConstraint::ResizeSoAArrays(int32 NumParticles)
+{
+	if (PosX.Num() != NumParticles)
+	{
+		PosX.SetNum(NumParticles);
+		PosY.SetNum(NumParticles);
+		PosZ.SetNum(NumParticles);
+		Masses.SetNum(NumParticles);
+		Densities.SetNum(NumParticles);
+		Lambdas.SetNum(NumParticles);
+		DeltaPX.SetNum(NumParticles);
+		DeltaPY.SetNum(NumParticles);
+		DeltaPZ.SetNum(NumParticles);
+	}
+}
+
+void FDensityConstraint::CopyToSoA(const TArray<FFluidParticle>& Particles)
+{
+	ParallelFor(Particles.Num(), [&](int32 i)
+	{
+		const FFluidParticle& P = Particles[i];
+		PosX[i] = P.PredictedPosition.X;
+		PosY[i] = P.PredictedPosition.Y;
+		PosZ[i] = P.PredictedPosition.Z;
+		Masses[i] = P.Mass;
+	});
+}
+
+void FDensityConstraint::ApplyFromSoA(TArray<FFluidParticle>& Particles)
+{
+	ParallelFor(Particles.Num(), [&](int32 i)
+	{
+		FFluidParticle& P = Particles[i];
+		P.PredictedPosition.X += DeltaPX[i];
+		P.PredictedPosition.Y += DeltaPY[i];
+		P.PredictedPosition.Z += DeltaPZ[i];
+		P.Density = Densities[i];
+		P.Lambda = Lambdas[i];
+	});
+}
+
+//========================================
+// 메인 솔버
+//========================================
 void FDensityConstraint::Solve(TArray<FFluidParticle>& Particles, float InSmoothingRadius, float InRestDensity, float InEpsilon)
 {
 	SmoothingRadius = InSmoothingRadius;
 	RestDensity = InRestDensity;
 	Epsilon = InEpsilon;
 
-	// 1. 밀도 계산
-	ComputeDensities(Particles);
+	const int32 NumParticles = Particles.Num();
+	if (NumParticles == 0) return;
 
-	// 2. Lambda 계산
-	ComputeLambdas(Particles);
+	// 1. SoA 준비
+	ResizeSoAArrays(NumParticles);
+	CopyToSoA(Particles);
 
-	// 3. 위치 보정
-	ApplyPositionCorrection(Particles);
+	// 2. 커널 계수 계산
+	const float h = SmoothingRadius * CM_TO_M;
+	const float h2 = h * h;
+	const float h6 = h2 * h2 * h2;
+	const float h9 = h6 * h2 * h;
 
-	// 디버그 출력 (첫 번째 입자)
-	static int32 DebugCounter = 0;
-	if (++DebugCounter % 60 == 0 && Particles.Num() > 0)
-	{
-		//UE_LOG(LogTemp, Warning, TEXT("[PBF Debug] Particles=%d, Neighbors=%d, Density=%.6f, RestDensity=%.2f, Lambda=%.6f, h=%.2f, Epsilon=%.2f"),
-		//	Particles.Num(),
-		//	Particles[0].NeighborIndices.Num(),
-		//	Particles[0].Density,
-		//	RestDensity,
-		//	Particles[0].Lambda,
-		//	SmoothingRadius,
-		//	Epsilon);
-	}
+	FSPHKernelCoeffs Coeffs;
+	Coeffs.h = h;
+	Coeffs.h2 = h2;
+	Coeffs.Poly6Coeff = 315.0f / (64.0f * PI * h9);
+	Coeffs.SpikyCoeff = -45.0f / (PI * h6);
+	Coeffs.InvRestDensity = 1.0f / RestDensity;
+	Coeffs.SmoothingRadiusSq = SmoothingRadius * SmoothingRadius;
+
+	// 3. SIMD 계산
+	ComputeDensityAndLambda_SIMD(Particles, Coeffs);
+	ComputeDeltaP_SIMD(Particles, Coeffs);
+
+	// 4. 결과 적용
+	ApplyFromSoA(Particles);
 }
+
+//========================================
+// 1단계: Density + Lambda (SIMD)
+//========================================
+void FDensityConstraint::ComputeDensityAndLambda_SIMD(
+	const TArray<FFluidParticle>& Particles,
+	const FSPHKernelCoeffs& Coeffs)
+{
+	const int32 NumParticles = Particles.Num();
+
+	// RESTRICT 포인터
+	const float* RESTRICT PosXPtr = PosX.GetData();
+	const float* RESTRICT PosYPtr = PosY.GetData();
+	const float* RESTRICT PosZPtr = PosZ.GetData();
+	const float* RESTRICT MassPtr = Masses.GetData();
+	float* RESTRICT DensityPtr = Densities.GetData();
+	float* RESTRICT LambdaPtr = Lambdas.GetData();
+
+	// SIMD 상수
+	const VectorRegister4Float VecH2 = VectorSetFloat1(Coeffs.h2);
+	const VectorRegister4Float VecH = VectorSetFloat1(Coeffs.h);
+	const VectorRegister4Float VecCmToM = VectorSetFloat1(CM_TO_M);
+	const VectorRegister4Float VecCmToMSq = VectorSetFloat1(CM_TO_M_SQ);
+	const VectorRegister4Float VecPoly6Coeff = VectorSetFloat1(Coeffs.Poly6Coeff);
+	const VectorRegister4Float VecSpikyCoeff = VectorSetFloat1(Coeffs.SpikyCoeff);
+	const VectorRegister4Float VecInvRestDensity = VectorSetFloat1(Coeffs.InvRestDensity);
+	const VectorRegister4Float VecSmoothingRadiusSq = VectorSetFloat1(Coeffs.SmoothingRadiusSq);
+	const VectorRegister4Float VecZero = VectorZeroFloat();
+	const VectorRegister4Float VecMinR2 = VectorSetFloat1(KINDA_SMALL_NUMBER);
+
+	ParallelFor(NumParticles, [&](int32 i)
+	{
+		const TArray<int32>& Neighbors = Particles[i].NeighborIndices;
+		const int32 NumNeighbors = Neighbors.Num();
+		const int32* NeighborData = Neighbors.GetData();
+
+		const float PiX = PosXPtr[i];
+		const float PiY = PosYPtr[i];
+		const float PiZ = PosZPtr[i];
+
+		const VectorRegister4Float VecPiX = VectorSetFloat1(PiX);
+		const VectorRegister4Float VecPiY = VectorSetFloat1(PiY);
+		const VectorRegister4Float VecPiZ = VectorSetFloat1(PiZ);
+
+		VectorRegister4Float VecDensity = VecZero;
+		VectorRegister4Float VecSumGradC2 = VecZero;
+		VectorRegister4Float VecGradC_iX = VecZero;
+		VectorRegister4Float VecGradC_iY = VecZero;
+		VectorRegister4Float VecGradC_iZ = VecZero;
+
+		// SIMD 4개씩 처리
+		int32 n = 0;
+		for (; n + 4 <= NumNeighbors; n += 4)
+		{
+			const int32 n0 = NeighborData[n];
+			const int32 n1 = NeighborData[n + 1];
+			const int32 n2 = NeighborData[n + 2];
+			const int32 n3 = NeighborData[n + 3];
+
+			// Gather
+			const VectorRegister4Float VecNX = MakeVectorRegisterFloat(PosXPtr[n0], PosXPtr[n1], PosXPtr[n2], PosXPtr[n3]);
+			const VectorRegister4Float VecNY = MakeVectorRegisterFloat(PosYPtr[n0], PosYPtr[n1], PosYPtr[n2], PosYPtr[n3]);
+			const VectorRegister4Float VecNZ = MakeVectorRegisterFloat(PosZPtr[n0], PosZPtr[n1], PosZPtr[n2], PosZPtr[n3]);
+			const VectorRegister4Float VecMass = MakeVectorRegisterFloat(MassPtr[n0], MassPtr[n1], MassPtr[n2], MassPtr[n3]);
+
+			// r = Pi - Pj
+			const VectorRegister4Float VecDX = VectorSubtract(VecPiX, VecNX);
+			const VectorRegister4Float VecDY = VectorSubtract(VecPiY, VecNY);
+			const VectorRegister4Float VecDZ = VectorSubtract(VecPiZ, VecNZ);
+
+			// r²
+			VectorRegister4Float VecR2 = VectorMultiply(VecDX, VecDX);
+			VecR2 = VectorMultiplyAdd(VecDY, VecDY, VecR2);
+			VecR2 = VectorMultiplyAdd(VecDZ, VecDZ, VecR2);
+
+			// 범위 마스크
+			const VectorRegister4Float VecMask = VectorCompareLT(VecR2, VecSmoothingRadiusSq);
+
+			// Poly6 밀도
+			const VectorRegister4Float VecR2_m = VectorMultiply(VecR2, VecCmToMSq);
+			VectorRegister4Float VecDiff = VectorSubtract(VecH2, VecR2_m);
+			VectorRegister4Float VecDiff3 = VectorMultiply(VecDiff, VectorMultiply(VecDiff, VecDiff));
+			VectorRegister4Float VecDensityContrib = VectorMultiply(VectorMultiply(VecMass, VecPoly6Coeff), VecDiff3);
+			VecDensityContrib = VectorSelect(VecMask, VecDensityContrib, VecZero);
+			VecDensity = VectorAdd(VecDensity, VecDensityContrib);
+
+			// Spiky 그래디언트
+			const VectorRegister4Float VecValidMask = VectorBitwiseAnd(VecMask, VectorCompareGT(VecR2, VecMinR2));
+			const VectorRegister4Float VecInvRLen = VectorInvSqrtSafe(VecR2);
+			const VectorRegister4Float VecRLen = VectorMultiply(VecR2, VecInvRLen);
+			const VectorRegister4Float VecRLen_m = VectorMultiply(VecRLen, VecCmToM);
+
+			VecDiff = VectorSubtract(VecH, VecRLen_m);
+			VectorRegister4Float VecCoeff = VectorMultiply(VecSpikyCoeff, VectorMultiply(VecDiff, VecDiff));
+			VecCoeff = VectorMultiply(VecCoeff, VectorMultiply(VecCmToM, VecInvRLen));
+
+			VectorRegister4Float VecGradWX = VectorSelect(VecValidMask, VectorMultiply(VecCoeff, VecDX), VecZero);
+			VectorRegister4Float VecGradWY = VectorSelect(VecValidMask, VectorMultiply(VecCoeff, VecDY), VecZero);
+			VectorRegister4Float VecGradWZ = VectorSelect(VecValidMask, VectorMultiply(VecCoeff, VecDZ), VecZero);
+
+			// ∇Cⱼ = -∇W / ρ₀
+			const VectorRegister4Float VecGradC_jX = VectorMultiply(VectorNegate(VecGradWX), VecInvRestDensity);
+			const VectorRegister4Float VecGradC_jY = VectorMultiply(VectorNegate(VecGradWY), VecInvRestDensity);
+			const VectorRegister4Float VecGradC_jZ = VectorMultiply(VectorNegate(VecGradWZ), VecInvRestDensity);
+
+			// |∇Cⱼ|² 누적
+			VectorRegister4Float VecGradC_j2 = VectorMultiply(VecGradC_jX, VecGradC_jX);
+			VecGradC_j2 = VectorMultiplyAdd(VecGradC_jY, VecGradC_jY, VecGradC_j2);
+			VecGradC_j2 = VectorMultiplyAdd(VecGradC_jZ, VecGradC_jZ, VecGradC_j2);
+			VecSumGradC2 = VectorAdd(VecSumGradC2, VecGradC_j2);
+
+			// ∇Cᵢ 누적
+			VecGradC_iX = VectorAdd(VecGradC_iX, VectorMultiply(VecGradWX, VecInvRestDensity));
+			VecGradC_iY = VectorAdd(VecGradC_iY, VectorMultiply(VecGradWY, VecInvRestDensity));
+			VecGradC_iZ = VectorAdd(VecGradC_iZ, VectorMultiply(VecGradWZ, VecInvRestDensity));
+		}
+
+		// SIMD 결과 합산
+		alignas(16) float Temp[4];
+		float Density = 0.0f, SumGradC2 = 0.0f;
+		float GradC_iX = 0.0f, GradC_iY = 0.0f, GradC_iZ = 0.0f;
+
+		VectorStoreAligned(VecDensity, Temp);
+		Density = Temp[0] + Temp[1] + Temp[2] + Temp[3];
+
+		VectorStoreAligned(VecSumGradC2, Temp);
+		SumGradC2 = Temp[0] + Temp[1] + Temp[2] + Temp[3];
+
+		VectorStoreAligned(VecGradC_iX, Temp);
+		GradC_iX = Temp[0] + Temp[1] + Temp[2] + Temp[3];
+
+		VectorStoreAligned(VecGradC_iY, Temp);
+		GradC_iY = Temp[0] + Temp[1] + Temp[2] + Temp[3];
+
+		VectorStoreAligned(VecGradC_iZ, Temp);
+		GradC_iZ = Temp[0] + Temp[1] + Temp[2] + Temp[3];
+
+		// 나머지 스칼라 처리
+		for (; n < NumNeighbors; ++n)
+		{
+			const int32 NeighborIdx = NeighborData[n];
+			const float dx = PiX - PosXPtr[NeighborIdx];
+			const float dy = PiY - PosYPtr[NeighborIdx];
+			const float dz = PiZ - PosZPtr[NeighborIdx];
+			const float r2_cm = dx * dx + dy * dy + dz * dz;
+
+			if (r2_cm <= Coeffs.SmoothingRadiusSq)
+			{
+				const float r2_m = r2_cm * CM_TO_M_SQ;
+				const float diff = Coeffs.h2 - r2_m;
+				Density += MassPtr[NeighborIdx] * Coeffs.Poly6Coeff * diff * diff * diff;
+			}
+
+			if (r2_cm > KINDA_SMALL_NUMBER && r2_cm <= Coeffs.SmoothingRadiusSq)
+			{
+				const float rLen = FMath::Sqrt(r2_cm);
+				const float rLen_m = rLen * CM_TO_M;
+				const float diff = Coeffs.h - rLen_m;
+				const float coeff = Coeffs.SpikyCoeff * diff * diff * CM_TO_M / rLen;
+
+				const float GradWX = coeff * dx;
+				const float GradWY = coeff * dy;
+				const float GradWZ = coeff * dz;
+
+				const float GradC_jX = -GradWX * Coeffs.InvRestDensity;
+				const float GradC_jY = -GradWY * Coeffs.InvRestDensity;
+				const float GradC_jZ = -GradWZ * Coeffs.InvRestDensity;
+				SumGradC2 += GradC_jX * GradC_jX + GradC_jY * GradC_jY + GradC_jZ * GradC_jZ;
+
+				GradC_iX += GradWX * Coeffs.InvRestDensity;
+				GradC_iY += GradWY * Coeffs.InvRestDensity;
+				GradC_iZ += GradWZ * Coeffs.InvRestDensity;
+			}
+		}
+
+		DensityPtr[i] = Density;
+
+		// Lambda 계산
+		const float C_i = (Density * Coeffs.InvRestDensity) - 1.0f;
+		if (C_i < 0.0f)
+		{
+			LambdaPtr[i] = 0.0f;
+			return;
+		}
+
+		SumGradC2 += GradC_iX * GradC_iX + GradC_iY * GradC_iY + GradC_iZ * GradC_iZ;
+		LambdaPtr[i] = -C_i / (SumGradC2 + Epsilon);
+
+	}, EParallelForFlags::Unbalanced);
+}
+
+//========================================
+// 2단계: DeltaP (SIMD)
+//========================================
+void FDensityConstraint::ComputeDeltaP_SIMD(
+	const TArray<FFluidParticle>& Particles,
+	const FSPHKernelCoeffs& Coeffs)
+{
+	const int32 NumParticles = Particles.Num();
+
+	const float* RESTRICT PosXPtr = PosX.GetData();
+	const float* RESTRICT PosYPtr = PosY.GetData();
+	const float* RESTRICT PosZPtr = PosZ.GetData();
+	const float* RESTRICT LambdaPtr = Lambdas.GetData();
+	float* RESTRICT DeltaPXPtr = DeltaPX.GetData();
+	float* RESTRICT DeltaPYPtr = DeltaPY.GetData();
+	float* RESTRICT DeltaPZPtr = DeltaPZ.GetData();
+
+	const VectorRegister4Float VecH = VectorSetFloat1(Coeffs.h);
+	const VectorRegister4Float VecCmToM = VectorSetFloat1(CM_TO_M);
+	const VectorRegister4Float VecSpikyCoeff = VectorSetFloat1(Coeffs.SpikyCoeff);
+	const VectorRegister4Float VecInvRestDensity = VectorSetFloat1(Coeffs.InvRestDensity);
+	const VectorRegister4Float VecSmoothingRadiusSq = VectorSetFloat1(Coeffs.SmoothingRadiusSq);
+	const VectorRegister4Float VecZero = VectorZeroFloat();
+	const VectorRegister4Float VecMinR2 = VectorSetFloat1(KINDA_SMALL_NUMBER);
+
+	ParallelFor(NumParticles, [&](int32 i)
+	{
+		const TArray<int32>& Neighbors = Particles[i].NeighborIndices;
+		const int32 NumNeighbors = Neighbors.Num();
+		const int32* NeighborData = Neighbors.GetData();
+
+		const float PiX = PosXPtr[i];
+		const float PiY = PosYPtr[i];
+		const float PiZ = PosZPtr[i];
+		const float Lambda_i = LambdaPtr[i];
+
+		const VectorRegister4Float VecPiX = VectorSetFloat1(PiX);
+		const VectorRegister4Float VecPiY = VectorSetFloat1(PiY);
+		const VectorRegister4Float VecPiZ = VectorSetFloat1(PiZ);
+		const VectorRegister4Float VecLambda_i = VectorSetFloat1(Lambda_i);
+		const VectorRegister4Float VecI = VectorSetFloat1(static_cast<float>(i));
+
+		VectorRegister4Float VecDeltaX = VecZero;
+		VectorRegister4Float VecDeltaY = VecZero;
+		VectorRegister4Float VecDeltaZ = VecZero;
+
+		int32 n = 0;
+		for (; n + 4 <= NumNeighbors; n += 4)
+		{
+			const int32 n0 = NeighborData[n];
+			const int32 n1 = NeighborData[n + 1];
+			const int32 n2 = NeighborData[n + 2];
+			const int32 n3 = NeighborData[n + 3];
+
+			const VectorRegister4Float VecNeighborIdx = MakeVectorRegisterFloat(
+				static_cast<float>(n0), static_cast<float>(n1),
+				static_cast<float>(n2), static_cast<float>(n3));
+			const VectorRegister4Float VecNotSelfMask = VectorCompareNE(VecNeighborIdx, VecI);
+
+			const VectorRegister4Float VecNX = MakeVectorRegisterFloat(PosXPtr[n0], PosXPtr[n1], PosXPtr[n2], PosXPtr[n3]);
+			const VectorRegister4Float VecNY = MakeVectorRegisterFloat(PosYPtr[n0], PosYPtr[n1], PosYPtr[n2], PosYPtr[n3]);
+			const VectorRegister4Float VecNZ = MakeVectorRegisterFloat(PosZPtr[n0], PosZPtr[n1], PosZPtr[n2], PosZPtr[n3]);
+			const VectorRegister4Float VecLambda_j = MakeVectorRegisterFloat(LambdaPtr[n0], LambdaPtr[n1], LambdaPtr[n2], LambdaPtr[n3]);
+
+			const VectorRegister4Float VecDX = VectorSubtract(VecPiX, VecNX);
+			const VectorRegister4Float VecDY = VectorSubtract(VecPiY, VecNY);
+			const VectorRegister4Float VecDZ = VectorSubtract(VecPiZ, VecNZ);
+
+			VectorRegister4Float VecR2 = VectorMultiply(VecDX, VecDX);
+			VecR2 = VectorMultiplyAdd(VecDY, VecDY, VecR2);
+			VecR2 = VectorMultiplyAdd(VecDZ, VecDZ, VecR2);
+
+			VectorRegister4Float VecValidMask = VectorBitwiseAnd(
+				VectorCompareGT(VecR2, VecMinR2),
+				VectorCompareLT(VecR2, VecSmoothingRadiusSq));
+			VecValidMask = VectorBitwiseAnd(VecValidMask, VecNotSelfMask);
+
+			const VectorRegister4Float VecInvRLen = VectorInvSqrtSafe(VecR2);
+			const VectorRegister4Float VecRLen = VectorMultiply(VecR2, VecInvRLen);
+			const VectorRegister4Float VecRLen_m = VectorMultiply(VecRLen, VecCmToM);
+			const VectorRegister4Float VecDiff = VectorSubtract(VecH, VecRLen_m);
+
+			VectorRegister4Float VecCoeff = VectorMultiply(VecSpikyCoeff, VectorMultiply(VecDiff, VecDiff));
+			VecCoeff = VectorMultiply(VecCoeff, VectorMultiply(VecCmToM, VecInvRLen));
+
+			VectorRegister4Float VecGradWX = VectorSelect(VecValidMask, VectorMultiply(VecCoeff, VecDX), VecZero);
+			VectorRegister4Float VecGradWY = VectorSelect(VecValidMask, VectorMultiply(VecCoeff, VecDY), VecZero);
+			VectorRegister4Float VecGradWZ = VectorSelect(VecValidMask, VectorMultiply(VecCoeff, VecDZ), VecZero);
+
+			const VectorRegister4Float VecLambdaSum = VectorAdd(VecLambda_i, VecLambda_j);
+			VecDeltaX = VectorMultiplyAdd(VecLambdaSum, VecGradWX, VecDeltaX);
+			VecDeltaY = VectorMultiplyAdd(VecLambdaSum, VecGradWY, VecDeltaY);
+			VecDeltaZ = VectorMultiplyAdd(VecLambdaSum, VecGradWZ, VecDeltaZ);
+		}
+
+		// SIMD 결과 합산
+		alignas(16) float Temp[4];
+		float DeltaX = 0.0f, DeltaY = 0.0f, DeltaZ = 0.0f;
+
+		VectorStoreAligned(VecDeltaX, Temp);
+		DeltaX = Temp[0] + Temp[1] + Temp[2] + Temp[3];
+
+		VectorStoreAligned(VecDeltaY, Temp);
+		DeltaY = Temp[0] + Temp[1] + Temp[2] + Temp[3];
+
+		VectorStoreAligned(VecDeltaZ, Temp);
+		DeltaZ = Temp[0] + Temp[1] + Temp[2] + Temp[3];
+
+		// 나머지 스칼라 처리
+		for (; n < NumNeighbors; ++n)
+		{
+			const int32 NeighborIdx = NeighborData[n];
+			if (NeighborIdx == i) continue;
+
+			const float dx = PiX - PosXPtr[NeighborIdx];
+			const float dy = PiY - PosYPtr[NeighborIdx];
+			const float dz = PiZ - PosZPtr[NeighborIdx];
+			const float r2_cm = dx * dx + dy * dy + dz * dz;
+
+			if (r2_cm > KINDA_SMALL_NUMBER && r2_cm <= Coeffs.SmoothingRadiusSq)
+			{
+				const float rLen = FMath::Sqrt(r2_cm);
+				const float rLen_m = rLen * CM_TO_M;
+				const float diff = Coeffs.h - rLen_m;
+				const float coeff = Coeffs.SpikyCoeff * diff * diff * CM_TO_M / rLen;
+
+				const float LambdaSum = Lambda_i + LambdaPtr[NeighborIdx];
+				DeltaX += LambdaSum * coeff * dx;
+				DeltaY += LambdaSum * coeff * dy;
+				DeltaZ += LambdaSum * coeff * dz;
+			}
+		}
+
+		DeltaPXPtr[i] = DeltaX * Coeffs.InvRestDensity;
+		DeltaPYPtr[i] = DeltaY * Coeffs.InvRestDensity;
+		DeltaPZPtr[i] = DeltaZ * Coeffs.InvRestDensity;
+
+	}, EParallelForFlags::Unbalanced);
+}
+
+//========================================
+// 레거시 함수 (하위 호환성)
+//========================================
 
 void FDensityConstraint::ComputeDensities(TArray<FFluidParticle>& Particles)
 {
@@ -65,17 +474,14 @@ void FDensityConstraint::ComputeLambdas(TArray<FFluidParticle>& Particles)
 
 void FDensityConstraint::ApplyPositionCorrection(TArray<FFluidParticle>& Particles)
 {
-	// 임시 배열에 보정량 저장 (동시 업데이트 방지)
 	TArray<FVector> DeltaPositions;
 	DeltaPositions.SetNum(Particles.Num());
 
-	// 병렬 계산
 	ParallelFor(Particles.Num(), [&](int32 i)
 	{
 		DeltaPositions[i] = ComputeDeltaPosition(i, Particles);
 	}, EParallelForFlags::Unbalanced);
 
-	// 병렬 적용
 	ParallelFor(Particles.Num(), [&](int32 i)
 	{
 		Particles[i].PredictedPosition += DeltaPositions[i];
@@ -85,31 +491,20 @@ void FDensityConstraint::ApplyPositionCorrection(TArray<FFluidParticle>& Particl
 float FDensityConstraint::ComputeParticleDensity(const FFluidParticle& Particle, const TArray<FFluidParticle>& Particles)
 {
 	float Density = 0.0f;
-
 	for (int32 NeighborIdx : Particle.NeighborIndices)
 	{
 		const FFluidParticle& Neighbor = Particles[NeighborIdx];
 		FVector r = Particle.PredictedPosition - Neighbor.PredictedPosition;
-
 		Density += Neighbor.Mass * SPHKernels::Poly6(r, SmoothingRadius);
 	}
-
 	return Density;
 }
 
 float FDensityConstraint::ComputeParticleLambda(const FFluidParticle& Particle, const TArray<FFluidParticle>& Particles)
 {
-	// 제약 조건: C_i = (ρ_i / ρ_0) - 1
 	float C_i = (Particle.Density / RestDensity) - 1.0f;
+	if (C_i < 0.0f) return 0.0f;
 
-	// C_i >= 0 이면 압축 상태 (보정 필요)
-	// C_i < 0 이면 팽창 상태 (허용 - 비압축성 유체에서)
-	if (C_i < 0.0f)
-	{
-		return 0.0f;
-	}
-
-	// 그래디언트 제곱합 계산
 	float SumGradC2 = 0.0f;
 	FVector GradC_i = FVector::ZeroVector;
 
@@ -117,22 +512,14 @@ float FDensityConstraint::ComputeParticleLambda(const FFluidParticle& Particle, 
 	{
 		const FFluidParticle& Neighbor = Particles[NeighborIdx];
 		FVector r = Particle.PredictedPosition - Neighbor.PredictedPosition;
-
-		// Spiky 커널 그래디언트
 		FVector GradW = SPHKernels::SpikyGradient(r, SmoothingRadius);
 
-		// 이웃 j에 대한 제약 그래디언트
 		FVector GradC_j = -GradW / RestDensity;
 		SumGradC2 += GradC_j.SizeSquared();
-
-		// 자신에 대한 그래디언트 누적
 		GradC_i += GradW / RestDensity;
 	}
 
-	// 자신의 그래디언트 추가
 	SumGradC2 += GradC_i.SizeSquared();
-
-	// Lambda 계산: λ = -C / (Σ|∇C|² + ε)
 	return -C_i / (SumGradC2 + Epsilon);
 }
 
@@ -143,18 +530,11 @@ FVector FDensityConstraint::ComputeDeltaPosition(int32 ParticleIndex, const TArr
 
 	for (int32 NeighborIdx : Particle.NeighborIndices)
 	{
-		if (NeighborIdx == ParticleIndex)
-		{
-			continue;
-		}
+		if (NeighborIdx == ParticleIndex) continue;
 
 		const FFluidParticle& Neighbor = Particles[NeighborIdx];
 		FVector r = Particle.PredictedPosition - Neighbor.PredictedPosition;
-
-		// Spiky 커널 그래디언트
 		FVector GradW = SPHKernels::SpikyGradient(r, SmoothingRadius);
-
-		// 위치 보정: Δp = (1/ρ_0) * Σ(λ_i + λ_j) * ∇W
 		DeltaP += (Particle.Lambda + Neighbor.Lambda) * GradW;
 	}
 
