@@ -45,6 +45,16 @@ struct KAWAIIFLUIDRUNTIME_API FFluidParticle
 	UPROPERTY(BlueprintReadOnly, Category = "Particle")
 	TWeakObjectPtr<AActor> AttachedActor;
 
+	// 접착된 본 이름 (스켈레탈 메시용)
+	UPROPERTY(BlueprintReadOnly, Category = "Particle")
+	FName AttachedBoneName;
+
+	// 본 로컬 좌표에서의 상대 위치 (본 이동 추적용)
+	FVector AttachedLocalOffset;
+
+	// 접착된 표면의 법선 (표면 미끄러짐 계산용)
+	FVector AttachedSurfaceNormal;
+
 	// 입자 ID
 	UPROPERTY(BlueprintReadOnly, Category = "Particle")
 	int32 ParticleID;
@@ -60,6 +70,9 @@ struct KAWAIIFLUIDRUNTIME_API FFluidParticle
 		, Density(0.0f)
 		, Lambda(0.0f)
 		, bIsAttached(false)
+		, AttachedBoneName(NAME_None)
+		, AttachedLocalOffset(FVector::ZeroVector)
+		, AttachedSurfaceNormal(FVector::UpVector)
 		, ParticleID(-1)
 	{
 	}
@@ -72,6 +85,9 @@ struct KAWAIIFLUIDRUNTIME_API FFluidParticle
 		, Density(0.0f)
 		, Lambda(0.0f)
 		, bIsAttached(false)
+		, AttachedBoneName(NAME_None)
+		, AttachedLocalOffset(FVector::ZeroVector)
+		, AttachedSurfaceNormal(FVector::UpVector)
 		, ParticleID(InID)
 	{
 	}

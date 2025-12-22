@@ -68,6 +68,10 @@ private:
 		FFluidParticle& Particle,
 		AActor* Collider,
 		float Force,
-		float DetachThreshold
+		float DetachThreshold,
+		FName BoneName,
+		const FTransform& BoneTransform,
+		const FVector& ParticlePosition,
+		const FVector& SurfaceNormal
 	);
 };

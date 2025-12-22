@@ -36,6 +36,14 @@ bool UFluidCollider::GetClosestPoint(const FVector& Point, FVector& OutClosestPo
 	return false;
 }
 
+bool UFluidCollider::GetClosestPointWithBone(const FVector& Point, FVector& OutClosestPoint, FVector& OutNormal, float& OutDistance, FName& OutBoneName, FTransform& OutBoneTransform) const
+{
+	// 기본 구현: 본 정보 없음
+	OutBoneName = NAME_None;
+	OutBoneTransform = FTransform::Identity;
+	return GetClosestPoint(Point, OutClosestPoint, OutNormal, OutDistance);
+}
+
 bool UFluidCollider::IsPointInside(const FVector& Point) const
 {
 	return false;

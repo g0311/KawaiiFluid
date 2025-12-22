@@ -12,6 +12,8 @@ struct FCachedCapsule
 	FVector Start;
 	FVector End;
 	float Radius;
+	FName BoneName;
+	FTransform BoneTransform;
 };
 
 /** 캐싱된 스피어 데이터 */
@@ -19,6 +21,8 @@ struct FCachedSphere
 {
 	FVector Center;
 	float Radius;
+	FName BoneName;
+	FTransform BoneTransform;
 };
 
 /**
@@ -46,6 +50,7 @@ public:
 	float CollisionMargin;
 
 	virtual bool GetClosestPoint(const FVector& Point, FVector& OutClosestPoint, FVector& OutNormal, float& OutDistance) const override;
+	virtual bool GetClosestPointWithBone(const FVector& Point, FVector& OutClosestPoint, FVector& OutNormal, float& OutDistance, FName& OutBoneName, FTransform& OutBoneTransform) const override;
 	virtual bool IsPointInside(const FVector& Point) const override;
 	virtual void CacheCollisionShapes() override;
 

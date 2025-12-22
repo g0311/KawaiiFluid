@@ -76,11 +76,8 @@ private:
 	UPROPERTY()
 	UFluidCollider* AutoCollider;
 
-	FVector PreviousLocation;
-
 	void CreateAutoCollider();
 	void RegisterWithSimulator();
 	void UnregisterFromSimulator();
 	void UpdateAttachedParticleCount();
-	void ApplyDragAlong(float DeltaTime);
 };

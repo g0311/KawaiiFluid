@@ -51,6 +51,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Fluid Collider")
 	virtual bool GetClosestPoint(const FVector& Point, FVector& OutClosestPoint, FVector& OutNormal, float& OutDistance) const;
 
+	/** 최근접점과 함께 해당 본 이름, 본 트랜스폼도 반환 (스켈레탈 메시용) */
+	UFUNCTION(BlueprintCallable, Category = "Fluid Collider")
+	virtual bool GetClosestPointWithBone(const FVector& Point, FVector& OutClosestPoint, FVector& OutNormal, float& OutDistance, FName& OutBoneName, FTransform& OutBoneTransform) const;
+
 	UFUNCTION(BlueprintCallable, Category = "Fluid Collider")
 	virtual bool IsPointInside(const FVector& Point) const;
 

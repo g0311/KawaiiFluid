@@ -19,14 +19,11 @@ UFluidInteractionComponent::UFluidInteractionComponent()
 	bIsWet = false;
 
 	AutoCollider = nullptr;
-	PreviousLocation = FVector::ZeroVector;
 }
 
 void UFluidInteractionComponent::BeginPlay()
 {
 	Super::BeginPlay();
-
-	PreviousLocation = GetOwner()->GetActorLocation();
 
 	if (!TargetSimulator)
 	{
@@ -75,12 +72,7 @@ void UFluidInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickT
 		OnFluidDetached.Broadcast();
 	}
 
-	if (DragAlongStrength > 0.0f && AttachedParticleCount > 0)
-	{
-		ApplyDragAlong(DeltaTime);
-	}
-
-	PreviousLocation = GetOwner()->GetActorLocation();
+	// 본 레벨 추적은 FluidSimulator::UpdateAttachedParticlePositions()에서 처리
 }
 
 void UFluidInteractionComponent::CreateAutoCollider()
@@ -102,17 +94,26 @@ void UFluidInteractionComponent::CreateAutoCollider()
 
 void UFluidInteractionComponent::RegisterWithSimulator()
 {
-	if (TargetSimulator && AutoCollider)
+	if (TargetSimulator)
 	{
-		TargetSimulator->RegisterCollider(AutoCollider);
+		if (AutoCollider)
+		{
+			TargetSimulator->RegisterCollider(AutoCollider);
+		}
+		// 본 레벨 추적을 위해 자신도 등록
+		TargetSimulator->RegisterInteractionComponent(this);
 	}
 }
 
 void UFluidInteractionComponent::UnregisterFromSimulator()
 {
-	if (TargetSimulator && AutoCollider)
+	if (TargetSimulator)
 	{
-		TargetSimulator->UnregisterCollider(AutoCollider);
+		if (AutoCollider)
+		{
+			TargetSimulator->UnregisterCollider(AutoCollider);
+		}
+		TargetSimulator->UnregisterInteractionComponent(this);
 	}
 }
 
@@ -139,35 +140,6 @@ void UFluidInteractionComponent::UpdateAttachedParticleCount()
 	AttachedParticleCount = Count;
 }
 
-void UFluidInteractionComponent::ApplyDragAlong(float DeltaTime)
-{
-	if (!TargetSimulator)
-	{
-		return;
-	}
-
-	AActor* Owner = GetOwner();
-	FVector CurrentLocation = Owner->GetActorLocation();
-	FVector Delta = CurrentLocation - PreviousLocation;  // 위치 변화량
-
-	if (Delta.SizeSquared() < KINDA_SMALL_NUMBER)
-	{
-		return;
-	}
-
-	TArray<FFluidParticle>& Particles = TargetSimulator->GetParticlesMutable();
-	for (FFluidParticle& Particle : Particles)
-	{
-		if (Particle.bIsAttached && Particle.AttachedActor.Get() == Owner)
-		{
-			// 위치 직접 이동 (속도가 아닌 위치를 업데이트)
-			FVector PositionDelta = Delta * DragAlongStrength;
-			Particle.Position += PositionDelta;
-			Particle.PredictedPosition += PositionDelta;
-		}
-	}
-}
-
 void UFluidInteractionComponent::DetachAllFluid()
 {
 	if (!TargetSimulator)
@@ -184,6 +156,8 @@ void UFluidInteractionComponent::DetachAllFluid()
 		{
 			Particle.bIsAttached = false;
 			Particle.AttachedActor.Reset();
+			Particle.AttachedBoneName = NAME_None;
+			Particle.AttachedLocalOffset = FVector::ZeroVector;
 		}
 	}
 
@@ -215,6 +189,8 @@ void UFluidInteractionComponent::PushFluid(FVector Direction, float Force)
 			{
 				Particle.bIsAttached = false;
 				Particle.AttachedActor.Reset();
+				Particle.AttachedBoneName = NAME_None;
+				Particle.AttachedLocalOffset = FVector::ZeroVector;
 			}
 		}
 	}

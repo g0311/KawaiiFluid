@@ -157,6 +157,8 @@ void UMeshFluidCollider::CacheCollisionShapes()
 					CachedCap.Start = CapsuleCenter - CapsuleUp * HalfLength;
 					CachedCap.End = CapsuleCenter + CapsuleUp * HalfLength;
 					CachedCap.Radius = CapsuleRadius;
+					CachedCap.BoneName = BodySetup->BoneName;
+					CachedCap.BoneTransform = BoneTransform;
 					CachedCapsules.Add(CachedCap);
 
 					CachedBounds += CachedCap.Start;
@@ -172,6 +174,8 @@ void UMeshFluidCollider::CacheCollisionShapes()
 					FCachedSphere CachedSph;
 					CachedSph.Center = SphereWorldTransform.GetLocation();
 					CachedSph.Radius = SphereElem.Radius + CollisionMargin;
+					CachedSph.BoneName = BodySetup->BoneName;
+					CachedSph.BoneTransform = BoneTransform;
 					CachedSpheres.Add(CachedSph);
 
 					CachedBounds += CachedSph.Center;
@@ -318,6 +322,136 @@ bool UMeshFluidCollider::GetClosestPoint(const FVector& Point, FVector& OutClose
 		FVector ToPointVec = Point - OutClosestPoint;
 		OutDistance = ToPointVec.Size();
 		OutNormal = OutDistance > KINDA_SMALL_NUMBER ? ToPointVec / OutDistance : FVector::UpVector;
+		bFoundAny = true;
+	}
+
+	return bFoundAny;
+}
+
+bool UMeshFluidCollider::GetClosestPointWithBone(const FVector& Point, FVector& OutClosestPoint, FVector& OutNormal, float& OutDistance, FName& OutBoneName, FTransform& OutBoneTransform) const
+{
+	if (!bCacheValid)
+	{
+		OutBoneName = NAME_None;
+		OutBoneTransform = FTransform::Identity;
+		return false;
+	}
+
+	// AABB 컬링: 바운딩 박스 밖이면 스킵
+	const float CullingMargin = 50.0f;
+	if (!CachedBounds.ExpandBy(CullingMargin).IsInside(Point))
+	{
+		OutBoneName = NAME_None;
+		OutBoneTransform = FTransform::Identity;
+		return false;
+	}
+
+	float MinDistance = TNumericLimits<float>::Max();
+	bool bFoundAny = false;
+
+	// 캐싱된 캡슐들 순회
+	for (const FCachedCapsule& Cap : CachedCapsules)
+	{
+		FVector SegmentDir = Cap.End - Cap.Start;
+		float SegmentLengthSq = SegmentDir.SizeSquared();
+
+		FVector ClosestOnAxis;
+		if (SegmentLengthSq < KINDA_SMALL_NUMBER)
+		{
+			ClosestOnAxis = Cap.Start;
+		}
+		else
+		{
+			float t = FVector::DotProduct(Point - Cap.Start, SegmentDir) / SegmentLengthSq;
+			t = FMath::Clamp(t, 0.0f, 1.0f);
+			ClosestOnAxis = Cap.Start + SegmentDir * t;
+		}
+
+		FVector ToPointVec = Point - ClosestOnAxis;
+		float DistToAxis = ToPointVec.Size();
+
+		FVector TempNormal;
+		FVector TempClosestPoint;
+		float TempDistance;
+
+		if (DistToAxis < KINDA_SMALL_NUMBER)
+		{
+			TempNormal = FVector::ForwardVector;
+			TempClosestPoint = ClosestOnAxis + TempNormal * Cap.Radius;
+			TempDistance = -Cap.Radius;
+		}
+		else
+		{
+			TempNormal = ToPointVec / DistToAxis;
+			TempClosestPoint = ClosestOnAxis + TempNormal * Cap.Radius;
+			TempDistance = DistToAxis - Cap.Radius;
+		}
+
+		if (TempDistance < MinDistance)
+		{
+			MinDistance = TempDistance;
+			OutClosestPoint = TempClosestPoint;
+			OutNormal = TempNormal;
+			OutDistance = TempDistance;
+			OutBoneName = Cap.BoneName;
+			OutBoneTransform = Cap.BoneTransform;
+			bFoundAny = true;
+		}
+	}
+
+	// 캐싱된 스피어들 순회
+	for (const FCachedSphere& Sph : CachedSpheres)
+	{
+		FVector ToPointVec = Point - Sph.Center;
+		float DistToCenter = ToPointVec.Size();
+
+		FVector TempNormal;
+		FVector TempClosestPoint;
+		float TempDistance;
+
+		if (DistToCenter < KINDA_SMALL_NUMBER)
+		{
+			TempNormal = FVector::UpVector;
+			TempClosestPoint = Sph.Center + TempNormal * Sph.Radius;
+			TempDistance = -Sph.Radius;
+		}
+		else
+		{
+			TempNormal = ToPointVec / DistToCenter;
+			TempClosestPoint = Sph.Center + TempNormal * Sph.Radius;
+			TempDistance = DistToCenter - Sph.Radius;
+		}
+
+		if (TempDistance < MinDistance)
+		{
+			MinDistance = TempDistance;
+			OutClosestPoint = TempClosestPoint;
+			OutNormal = TempNormal;
+			OutDistance = TempDistance;
+			OutBoneName = Sph.BoneName;
+			OutBoneTransform = Sph.BoneTransform;
+			bFoundAny = true;
+		}
+	}
+
+	// 캐싱된 데이터가 없으면 바운딩 박스 사용 (본 정보 없음)
+	if (!bFoundAny && TargetMeshComponent)
+	{
+		FVector BoxCenter = CachedBounds.GetCenter();
+		FVector BoxExtent = CachedBounds.GetExtent();
+
+		FVector LocalPoint = Point - BoxCenter;
+		FVector ClampedPoint;
+		ClampedPoint.X = FMath::Clamp(LocalPoint.X, -BoxExtent.X, BoxExtent.X);
+		ClampedPoint.Y = FMath::Clamp(LocalPoint.Y, -BoxExtent.Y, BoxExtent.Y);
+		ClampedPoint.Z = FMath::Clamp(LocalPoint.Z, -BoxExtent.Z, BoxExtent.Z);
+
+		OutClosestPoint = BoxCenter + ClampedPoint;
+		FVector ToPointVec = Point - OutClosestPoint;
+		OutDistance = ToPointVec.Size();
+		OutNormal = OutDistance > KINDA_SMALL_NUMBER ? ToPointVec / OutDistance : FVector::UpVector;
+		OutBoneName = NAME_None;
+		OutBoneTransform = FTransform::Identity;
 		bFoundAny = true;
 	}
 

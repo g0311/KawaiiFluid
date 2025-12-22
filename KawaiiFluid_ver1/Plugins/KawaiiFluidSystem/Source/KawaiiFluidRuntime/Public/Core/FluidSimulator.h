@@ -17,6 +17,7 @@ class FViscositySolver;
 class FAdhesionSolver;
 class UFluidCollider;
 class FKawaiiFluidRenderResource;
+class UFluidInteractionComponent;
 
 /**
  * 유체 타입 열거형
@@ -242,6 +243,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Fluid")
 	void UnregisterCollider(UFluidCollider* Collider);
 
+	/** 상호작용 컴포넌트 등록 */
+	void RegisterInteractionComponent(UFluidInteractionComponent* Component);
+
+	/** 상호작용 컴포넌트 해제 */
+	void UnregisterInteractionComponent(UFluidInteractionComponent* Component);
+
 	/** 입자 위치 배열 반환 (렌더링용) */
 	UFUNCTION(BlueprintCallable, Category = "Fluid")
 	TArray<FVector> GetParticlePositions() const;
@@ -298,6 +305,10 @@ private:
 	UPROPERTY()
 	TArray<UFluidCollider*> Colliders;
 
+	/** 등록된 상호작용 컴포넌트들 */
+	UPROPERTY()
+	TArray<UFluidInteractionComponent*> InteractionComponents;
+
 	//========================================
 	// GPU 렌더 리소스
 	//========================================
@@ -353,4 +364,7 @@ private:
 
 	/** 7. 접착력 적용 */
 	void ApplyAdhesion();
+
+	/** 붙은 입자들의 위치를 본 트랜스폼에 맞게 업데이트 (ApplyAdhesion 전에 호출) */
+	void UpdateAttachedParticlePositions();
 };

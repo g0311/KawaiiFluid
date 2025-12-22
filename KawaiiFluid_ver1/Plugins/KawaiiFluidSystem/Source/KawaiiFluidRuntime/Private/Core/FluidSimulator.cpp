@@ -8,6 +8,8 @@
 #include "Collision/FluidCollider.h"
 #include "Rendering/KawaiiFluidRenderResource.h"
 #include "Rendering/FluidRendererSubsystem.h"
+#include "Components/FluidInteractionComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "UObject/ConstructorHelpers.h"
 #include "DrawDebugHelpers.h"
 
@@ -199,6 +201,12 @@ void AFluidSimulator::Tick(float DeltaTime)
 	}
 
 	// PBF 시뮬레이션 루프
+	// 0. 붙은 입자 위치 업데이트 (본 추적 - 물리 시뮬레이션 전에 실행해야 중력 효과 유지)
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(Fluid_UpdateAttachedPositions);
+		UpdateAttachedParticlePositions();
+	}
+
 	// 1. 외력 적용 & 위치 예측
 	{
 		SCOPE_CYCLE_COUNTER(STAT_PredictPositions);
@@ -293,7 +301,21 @@ void AFluidSimulator::PredictPositions(float DeltaTime)
 	ParallelFor(Particles.Num(), [&](int32 i)
 	{
 		FFluidParticle& Particle = Particles[i];
-		Particle.Velocity += TotalForce * DeltaTime;
+
+		FVector AppliedForce = TotalForce;
+
+		// 접착된 입자는 표면 접선 방향 중력만 적용 (미끄러짐 효과)
+		if (Particle.bIsAttached)
+		{
+			const FVector& Normal = Particle.AttachedSurfaceNormal;
+			// 접선 중력 = 전체 중력 - 법선 방향 성분
+			// TangentGravity = Gravity - (Gravity · Normal) * Normal
+			float NormalComponent = FVector::DotProduct(Gravity, Normal);
+			FVector TangentGravity = Gravity - NormalComponent * Normal;
+			AppliedForce = TangentGravity + AccumulatedExternalForce;
+		}
+
+		Particle.Velocity += AppliedForce * DeltaTime;
 		Particle.PredictedPosition = Particle.Position + Particle.Velocity * DeltaTime;
 	});
 }
@@ -486,9 +508,87 @@ void AFluidSimulator::HandleWorldCollision()
 				{
 					Particle.Velocity -= VelDotNormal * HitResult.ImpactNormal;
 				}
+
+				// 월드 콜리전에 닿으면 캐릭터에서 접착 해제
+				// (충돌한 액터가 접착된 액터와 다른 경우에만)
+				if (Particle.bIsAttached)
+				{
+					AActor* HitActor = HitResult.GetActor();
+					if (HitActor != Particle.AttachedActor.Get())
+					{
+						Particle.bIsAttached = false;
+						Particle.AttachedActor.Reset();
+						Particle.AttachedBoneName = NAME_None;
+						Particle.AttachedLocalOffset = FVector::ZeroVector;
+						Particle.AttachedSurfaceNormal = FVector::UpVector;
+					}
+				}
+			}
+			// 추가: 붙어있는 입자가 바닥 근처에 있으면 분리 (Sweep 없이도)
+			else if (Particle.bIsAttached)
+			{
+				// 아래 방향으로 짧은 라인트레이스로 바닥 감지
+				const float FloorCheckDistance = 3.0f;
+				FHitResult FloorHit;
+				bool bNearFloor = World->LineTraceSingleByChannel(
+					FloorHit,
+					Particle.Position,
+					Particle.Position - FVector(0, 0, FloorCheckDistance),
+					CollisionChannel,
+					LocalParams
+				);
+
+				if (bNearFloor && FloorHit.GetActor() != Particle.AttachedActor.Get())
+				{
+					Particle.bIsAttached = false;
+					Particle.AttachedActor.Reset();
+					Particle.AttachedBoneName = NAME_None;
+					Particle.AttachedLocalOffset = FVector::ZeroVector;
+					Particle.AttachedSurfaceNormal = FVector::UpVector;
+				}
 			}
 		});
 	});
+
+	// 추가: 캐릭터에 붙은 입자가 바닥에 닿으면 분리
+	// (캐릭터를 무시하고 바닥만 감지)
+	const float FloorDetachDistance = 3.0f;
+
+	for (FFluidParticle& Particle : Particles)
+	{
+		if (!Particle.bIsAttached)
+		{
+			continue;
+		}
+
+		// 접착된 캐릭터를 무시하고 바닥만 감지
+		FCollisionQueryParams FloorQueryParams;
+		FloorQueryParams.bTraceComplex = false;
+		FloorQueryParams.AddIgnoredActor(this);
+		if (Particle.AttachedActor.IsValid())
+		{
+			FloorQueryParams.AddIgnoredActor(Particle.AttachedActor.Get());
+		}
+
+		FHitResult FloorHit;
+		bool bTouchingFloor = World->LineTraceSingleByChannel(
+			FloorHit,
+			Particle.Position,
+			Particle.Position - FVector(0, 0, FloorDetachDistance),
+			CollisionChannel,
+			FloorQueryParams
+		);
+
+		// 바닥에 닿으면 무조건 캐릭터에서 분리
+		if (bTouchingFloor)
+		{
+			Particle.bIsAttached = false;
+			Particle.AttachedActor.Reset();
+			Particle.AttachedBoneName = NAME_None;
+			Particle.AttachedLocalOffset = FVector::ZeroVector;
+			Particle.AttachedSurfaceNormal = FVector::UpVector;
+		}
+	}
 }
 
 void AFluidSimulator::FinalizePositions(float DeltaTime)
@@ -516,6 +616,176 @@ void AFluidSimulator::ApplyAdhesion()
 	if (AdhesionSolver.IsValid() && AdhesionStrength > 0.0f)
 	{
 		AdhesionSolver->Apply(Particles, Colliders, AdhesionStrength, AdhesionRadius, DetachThreshold);
+	}
+}
+
+void AFluidSimulator::RegisterInteractionComponent(UFluidInteractionComponent* Component)
+{
+	if (Component && !InteractionComponents.Contains(Component))
+	{
+		InteractionComponents.Add(Component);
+	}
+}
+
+void AFluidSimulator::UnregisterInteractionComponent(UFluidInteractionComponent* Component)
+{
+	InteractionComponents.Remove(Component);
+}
+
+void AFluidSimulator::UpdateAttachedParticlePositions()
+{
+	// 디버그: 상태 체크
+	static int32 DbgCounter = 0;
+	if (++DbgCounter % 120 == 0)
+	{
+		int32 Attached = 0, WithBone = 0, NoBone = 0;
+		for (const FFluidParticle& P : Particles)
+		{
+			if (P.bIsAttached)
+			{
+				Attached++;
+				if (P.AttachedBoneName != NAME_None) WithBone++;
+				else NoBone++;
+			}
+		}
+		if (Attached > 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[BoneTrack] InteractionComps:%d Attached:%d WithBone:%d NoBone:%d"),
+				InteractionComponents.Num(), Attached, WithBone, NoBone);
+		}
+	}
+
+	if (InteractionComponents.Num() == 0 || Particles.Num() == 0)
+	{
+		return;
+	}
+
+	// 최적화: Owner별로 붙은 입자 인덱스 그룹화 (O(P) 1회 순회)
+	TMap<AActor*, TArray<int32>> OwnerToParticleIndices;
+
+	for (int32 i = 0; i < Particles.Num(); ++i)
+	{
+		const FFluidParticle& Particle = Particles[i];
+		if (Particle.bIsAttached && Particle.AttachedActor.IsValid() && Particle.AttachedBoneName != NAME_None)
+		{
+			OwnerToParticleIndices.FindOrAdd(Particle.AttachedActor.Get()).Add(i);
+		}
+	}
+
+	// InteractionComponent별로 처리
+	for (UFluidInteractionComponent* Interaction : InteractionComponents)
+	{
+		if (!Interaction)
+		{
+			continue;
+		}
+
+		AActor* InteractionOwner = Interaction->GetOwner();
+		if (!InteractionOwner)
+		{
+			continue;
+		}
+
+		// 이 Owner에 붙은 입자가 있는지 확인
+		TArray<int32>* ParticleIndicesPtr = OwnerToParticleIndices.Find(InteractionOwner);
+		if (!ParticleIndicesPtr || ParticleIndicesPtr->Num() == 0)
+		{
+			continue;
+		}
+
+		// 스켈레탈 메시 찾기
+		USkeletalMeshComponent* SkelMesh = InteractionOwner->FindComponentByClass<USkeletalMeshComponent>();
+		if (!SkelMesh)
+		{
+			continue;
+		}
+
+		// 본별 그룹화 (최적화: GetBoneTransform 호출 최소화)
+		TMap<FName, TArray<int32>> BoneToParticleIndices;
+		for (int32 ParticleIdx : *ParticleIndicesPtr)
+		{
+			const FFluidParticle& Particle = Particles[ParticleIdx];
+			BoneToParticleIndices.FindOrAdd(Particle.AttachedBoneName).Add(ParticleIdx);
+		}
+
+		// 본별로 트랜스폼 조회 후 입자 위치 업데이트
+		static int32 PosUpdateLogCounter = 0;
+		static FVector LastPelvisPos = FVector::ZeroVector;
+		bool bShouldLog = (++PosUpdateLogCounter % 60 == 0);
+		int32 UpdatedCount = 0;
+		float MaxDelta = 0.0f;
+		FName MaxDeltaBone = NAME_None;
+
+		// pelvis 본 위치 추적
+		int32 PelvisIndex = SkelMesh->GetBoneIndex(TEXT("pelvis"));
+		if (PelvisIndex != INDEX_NONE && bShouldLog)
+		{
+			FVector CurrentPelvisPos = SkelMesh->GetBoneTransform(PelvisIndex).GetLocation();
+			float PelvisMovement = (CurrentPelvisPos - LastPelvisPos).Size();
+			UE_LOG(LogTemp, Warning, TEXT("[BonePos] Pelvis: (%.1f, %.1f, %.1f) Moved: %.2f"),
+				CurrentPelvisPos.X, CurrentPelvisPos.Y, CurrentPelvisPos.Z, PelvisMovement);
+			LastPelvisPos = CurrentPelvisPos;
+		}
+
+		for (auto& BonePair : BoneToParticleIndices)
+		{
+			const FName& BoneName = BonePair.Key;
+			const TArray<int32>& BoneParticleIndices = BonePair.Value;
+
+			int32 BoneIndex = SkelMesh->GetBoneIndex(BoneName);
+			if (BoneIndex == INDEX_NONE)
+			{
+				if (bShouldLog)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("[PosUpdate] Bone NOT FOUND: %s"), *BoneName.ToString());
+				}
+				continue;
+			}
+
+			FTransform CurrentBoneTransform = SkelMesh->GetBoneTransform(BoneIndex);
+
+			for (int32 ParticleIdx : BoneParticleIndices)
+			{
+				FFluidParticle& Particle = Particles[ParticleIdx];
+
+				// 이전 로컬 오프셋 기준 월드 위치 (본이 이동하기 전 입자가 있어야 할 위치)
+				FVector OldWorldPosition = CurrentBoneTransform.TransformPosition(Particle.AttachedLocalOffset);
+
+				// 본 이동에 의한 델타만 적용 (중력은 시뮬레이션에서 별도 적용)
+				FVector BoneDelta = OldWorldPosition - Particle.Position;
+
+				float DeltaSize = BoneDelta.Size();
+				if (DeltaSize > MaxDelta)
+				{
+					MaxDelta = DeltaSize;
+					MaxDeltaBone = BoneName;
+				}
+
+				// 상세 디버그: 첫 번째 입자 추적
+				if (bShouldLog && ParticleIdx == BoneParticleIndices[0] && BoneName == TEXT("spine_02"))
+				{
+					UE_LOG(LogTemp, Warning, TEXT("[Particle] ID:%d Bone:%s LocalOffset:(%.1f,%.1f,%.1f) OldWorld:(%.1f,%.1f,%.1f) CurPos:(%.1f,%.1f,%.1f) Delta:%.2f"),
+						Particle.ParticleID, *BoneName.ToString(),
+						Particle.AttachedLocalOffset.X, Particle.AttachedLocalOffset.Y, Particle.AttachedLocalOffset.Z,
+						OldWorldPosition.X, OldWorldPosition.Y, OldWorldPosition.Z,
+						Particle.Position.X, Particle.Position.Y, Particle.Position.Z,
+						DeltaSize);
+				}
+
+				Particle.Position += BoneDelta;
+				Particle.PredictedPosition += BoneDelta;
+				UpdatedCount++;
+
+				// 시뮬레이션 후 새 위치를 로컬 오프셋으로 업데이트 (흘러내림 반영)
+				// → ApplyAdhesion에서 처리됨
+			}
+		}
+
+		if (bShouldLog && UpdatedCount > 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[PosUpdate] Updated:%d MaxDelta:%.2f Bone:%s"),
+				UpdatedCount, MaxDelta, *MaxDeltaBone.ToString());
+		}
 	}
 }
 
