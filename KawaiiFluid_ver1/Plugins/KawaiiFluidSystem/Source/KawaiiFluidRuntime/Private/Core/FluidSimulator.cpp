@@ -62,6 +62,10 @@ AFluidSimulator::AFluidSimulator()
 	NextParticleID = 0;
 	AccumulatedTime = 0.0f;
 
+	// 충돌 이벤트 시스템 초기화
+	EventCountThisFrame = 0;
+	CurrentGameTime = 0.0f;
+
 	// 디버그 렌더링 기본값
 	bEnableDebugRendering = true;
 	DebugParticleRadius = 5.0f;
@@ -135,6 +139,15 @@ void AFluidSimulator::BeginPlay()
 
 void AFluidSimulator::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	// Delegate 명시적 정리
+	OnParticleHit.Clear();
+	
+	// 쿨다운 맵 정리
+	ParticleLastEventTime.Empty();
+	
+	// 이벤트 비활성화
+	bEnableParticleHitEvents = false;
+	
 	// FluidRendererSubsystem에서 등록 해제
 	if (UWorld* World = GetWorld())
 	{
@@ -200,6 +213,10 @@ void AFluidSimulator::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 
 	SET_DWORD_STAT(STAT_ParticleCount, Particles.Num());
+
+	// 이벤트 카운터 리셋 (매 프레임 시작 시)
+	EventCountThisFrame = 0;
+	CurrentGameTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 
 	if (!bSimulationEnabled || Particles.Num() == 0)
 	{
@@ -524,6 +541,76 @@ void AFluidSimulator::HandleWorldCollision()
 				if (VelDotNormal < 0.0f)
 				{
 					Particle.Velocity -= VelDotNormal * HitResult.ImpactNormal;
+				}
+
+				// 충돌 이벤트 발생 조건 체크
+				if (bEnableParticleHitEvents)
+				{
+					const float Speed = Particle.Velocity.Size();
+					
+					// 조건: 최소 속도, 최대 이벤트 수, 쿨다운 체크
+					if (Speed >= MinVelocityForEvent && 
+						EventCountThisFrame < MaxEventsPerFrame)
+					{
+						// 쿨다운 체크 (동일 파티클 연속 이벤트 방지)
+						bool bCanEmitEvent = true;
+						
+						if (EventCooldownPerParticle > 0.0f)
+						{
+							const float* LastEventTime = ParticleLastEventTime.Find(Particle.ParticleID);
+							if (LastEventTime && (CurrentGameTime - *LastEventTime) < EventCooldownPerParticle)
+							{
+								bCanEmitEvent = false;
+							}
+						}
+						
+						if (bCanEmitEvent)
+						{
+							// TWeakObjectPtr로 안전하게 캡처
+							TWeakObjectPtr<AFluidSimulator> WeakThis(this);
+							
+							// 이벤트 데이터 캡처 (게임 스레드로 전달)
+							const int32 ParticleIdx = Particle.ParticleID;
+							TWeakObjectPtr<AActor> WeakHitActor(HitResult.GetActor());
+							const FVector HitLoc = HitResult.Location;
+							const FVector HitNorm = HitResult.ImpactNormal;
+							const float HitSpeed = Speed;
+							const float CooldownTime = EventCooldownPerParticle;
+							
+							// 게임 스레드에서 Delegate 호출
+							AsyncTask(ENamedThreads::GameThread, [WeakThis, ParticleIdx, WeakHitActor, HitLoc, HitNorm, HitSpeed, CooldownTime]()
+							{
+								// 안전성 체크: Simulator가 유효한지
+								AFluidSimulator* Simulator = WeakThis.Get();
+								if (!Simulator || !IsValid(Simulator))
+								{
+									return;  // Actor 파괴됨
+								}
+								
+								// 충돌 Actor 체크
+								AActor* HitActor = WeakHitActor.Get();
+								
+								// Delegate 호출
+								if (Simulator->OnParticleHit.IsBound())
+								{
+									Simulator->OnParticleHit.Broadcast(ParticleIdx, HitActor, HitLoc, HitNorm, HitSpeed);
+								}
+								
+								// 쿨다운 기록
+								if (CooldownTime > 0.0f)
+								{
+									if (UWorld* World = Simulator->GetWorld())
+									{
+										float CurrentTime = World->GetTimeSeconds();
+										Simulator->ParticleLastEventTime.Add(ParticleIdx, CurrentTime);
+									}
+								}
+							});
+							
+							// 이벤트 카운터 증가 (근사치, Physics Thread에서)
+							EventCountThisFrame++;
+						}
+					}
 				}
 
 				// 월드 콜리전에 닿으면 캐릭터에서 접착 해제
@@ -1028,4 +1115,66 @@ bool AFluidSimulator::IsFluidRenderResourceValid() const
 FKawaiiFluidRenderResource* AFluidSimulator::GetFluidRenderResource() const
 {
 	return RenderResource.Get();
+}
+
+//========================================
+// Query 함수 구현
+//========================================
+
+TArray<int32> AFluidSimulator::GetParticlesInRadius(FVector Location, float Radius) const
+{
+	TArray<int32> Result;
+	const float RadiusSq = Radius * Radius;
+	
+	for (int32 i = 0; i < Particles.Num(); ++i)
+	{
+		const float DistSq = FVector::DistSquared(Particles[i].Position, Location);
+		if (DistSq <= RadiusSq)
+		{
+			Result.Add(i);
+		}
+	}
+	
+	return Result;
+}
+
+TArray<int32> AFluidSimulator::GetParticlesInBox(FVector Center, FVector Extent) const
+{
+	TArray<int32> Result;
+	const FBox Box(Center - Extent, Center + Extent);
+	
+	for (int32 i = 0; i < Particles.Num(); ++i)
+	{
+		if (Box.IsInside(Particles[i].Position))
+		{
+			Result.Add(i);
+		}
+	}
+	
+	return Result;
+}
+
+TArray<int32> AFluidSimulator::GetParticlesNearActor(AActor* Actor, float Radius) const
+{
+	if (!Actor)
+	{
+		return TArray<int32>();
+	}
+	
+	return GetParticlesInRadius(Actor->GetActorLocation(), Radius);
+}
+
+bool AFluidSimulator::GetParticleInfo(int32 ParticleIndex, FVector& OutPosition, FVector& OutVelocity, float& OutDensity) const
+{
+	if (!Particles.IsValidIndex(ParticleIndex))
+	{
+		return false;
+	}
+	
+	const FFluidParticle& Particle = Particles[ParticleIndex];
+	OutPosition = Particle.Position;
+	OutVelocity = Particle.Velocity;
+	OutDensity = Particle.Density;
+	
+	return true;
 }

@@ -1,4 +1,4 @@
-// Copyright KawaiiFluid Team. All Rights Reserved.
+﻿// Copyright KawaiiFluid Team. All Rights Reserved.
 
 #include "Components/FluidInteractionComponent.h"
 #include "Core/FluidSimulator.h"
@@ -58,6 +58,7 @@ void UFluidInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickT
 		return;
 	}
 
+	// 기존: 붙은 파티클 추적
 	int32 PrevCount = AttachedParticleCount;
 	UpdateAttachedParticleCount();
 
@@ -70,6 +71,34 @@ void UFluidInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	{
 		bIsWet = false;
 		OnFluidDetached.Broadcast();
+	}
+
+	// 새로운: Collider 충돌 감지
+	if (bEnableCollisionDetection && AutoCollider)
+	{
+		DetectCollidingParticles();
+		
+		// 트리거 이벤트 발생 조건
+		bool bIsColliding = (CollidingParticleCount >= MinParticleCountForTrigger);
+		
+		// Enter 이벤트
+		if (bIsColliding && !bWasColliding)
+		{
+			if (OnFluidColliding.IsBound())
+			{
+				OnFluidColliding.Broadcast(CollidingParticleCount);
+			}
+		}
+		// Exit 이벤트
+		else if (!bIsColliding && bWasColliding)
+		{
+			if (OnFluidStopColliding.IsBound())
+			{
+				OnFluidStopColliding.Broadcast();
+			}
+		}
+		
+		bWasColliding = bIsColliding;
 	}
 
 	// 본 레벨 추적은 FluidSimulator::UpdateAttachedParticlePositions()에서 처리
@@ -201,4 +230,36 @@ void UFluidInteractionComponent::SetTargetSimulator(AFluidSimulator* Simulator)
 	UnregisterFromSimulator();
 	TargetSimulator = Simulator;
 	RegisterWithSimulator();
+}
+
+void UFluidInteractionComponent::DetectCollidingParticles()
+{
+	if (!AutoCollider || !TargetSimulator)
+	{
+		CollidingParticleCount = 0;
+		return;
+	}
+
+	AActor* Owner = GetOwner();
+	int32 Count = 0;
+
+	const TArray<FFluidParticle>& Particles = TargetSimulator->GetParticles();
+	
+	for (const FFluidParticle& Particle : Particles)
+	{
+		// 1. 이미 붙어있으면 충돌 중
+		if (Particle.bIsAttached && Particle.AttachedActor.Get() == Owner)
+		{
+			++Count;
+			continue;
+		}
+		
+		// 2. Collider 안에 있는지 체크 (물리 기반, 정확!)
+		if (AutoCollider->IsPointInside(Particle.Position))
+		{
+			++Count;
+		}
+	}
+
+	CollidingParticleCount = Count;
 }

@@ -32,6 +32,24 @@ enum class EFluidType : uint8
 };
 
 /**
+ * 파티클 충돌 이벤트 Delegate
+ * 개별 파티클이 Actor와 충돌했을 때 발생
+ * @param ParticleIndex 충돌한 파티클 인덱스
+ * @param HitActor 충돌한 액터
+ * @param HitLocation 충돌 위치 (월드 좌표)
+ * @param HitNormal 충돌 표면 Normal
+ * @param HitSpeed 충돌 시 파티클 속도 (cm/s)
+ */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FiveParams(
+	FOnFluidParticleHit,
+	int32, ParticleIndex,
+	AActor*, HitActor,
+	FVector, HitLocation,
+	FVector, HitNormal,
+	float, HitSpeed
+);
+
+/**
  * PBF 기반 유체 시뮬레이터
  * 점성 유체(슬라임, 꿀 등) 시뮬레이션의 메인 클래스
  */
@@ -180,6 +198,50 @@ public:
 	TEnumAsByte<ECollisionChannel> CollisionChannel;
 
 	//========================================
+	// 충돌 이벤트 시스템
+	//========================================
+
+	/** 파티클이 액터와 충돌했을 때 발생 (Blueprint에서 Bind 가능) */
+	UPROPERTY(BlueprintAssignable, Category = "Fluid|Events")
+	FOnFluidParticleHit OnParticleHit;
+
+	/** 파티클 충돌 이벤트 활성화 (성능 고려 - 기본 비활성) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Events")
+	bool bEnableParticleHitEvents = false;
+
+	/** 이벤트 발생 최소 속도 (cm/s, 너무 느린 충돌은 무시) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Events", meta = (ClampMin = "0.0", EditCondition = "bEnableParticleHitEvents"))
+	float MinVelocityForEvent = 50.0f;
+
+	/** 프레임당 최대 이벤트 수 (성능 보호, 이벤트 폭주 방지) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Events", meta = (ClampMin = "1", ClampMax = "100", EditCondition = "bEnableParticleHitEvents"))
+	int32 MaxEventsPerFrame = 10;
+
+	/** 동일 파티클의 연속 이벤트 방지 쿨다운 (초) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Events", meta = (ClampMin = "0.0", EditCondition = "bEnableParticleHitEvents"))
+	float EventCooldownPerParticle = 0.1f;
+
+	//========================================
+	// Query 함수 (Blueprint 폴링용)
+	//========================================
+
+	/** 특정 위치 근처의 파티클 인덱스 찾기 */
+	UFUNCTION(BlueprintCallable, Category = "Fluid|Query")
+	TArray<int32> GetParticlesInRadius(FVector Location, float Radius) const;
+
+	/** 박스 영역 안의 파티클 인덱스 찾기 */
+	UFUNCTION(BlueprintCallable, Category = "Fluid|Query")
+	TArray<int32> GetParticlesInBox(FVector Center, FVector Extent) const;
+
+	/** 특정 액터 근처의 파티클 찾기 */
+	UFUNCTION(BlueprintCallable, Category = "Fluid|Query")
+	TArray<int32> GetParticlesNearActor(AActor* Actor, float Radius) const;
+
+	/** 특정 파티클의 정보 가져오기 */
+	UFUNCTION(BlueprintCallable, Category = "Fluid|Query")
+	bool GetParticleInfo(int32 ParticleIndex, FVector& OutPosition, FVector& OutVelocity, float& OutDensity) const;
+
+	//========================================
 	// 디버그 시각화
 	//========================================
 
@@ -291,6 +353,19 @@ private:
 
 	/** Substep 시간 누적 */
 	float AccumulatedTime;
+
+	//========================================
+	// 충돌 이벤트 시스템 내부 데이터
+	//========================================
+
+	/** 현재 프레임에서 발생한 이벤트 수 */
+	int32 EventCountThisFrame;
+
+	/** 각 파티클의 마지막 이벤트 발생 시간 (쿨다운용) */
+	TMap<int32, float> ParticleLastEventTime;
+
+	/** 현재 게임 시간 캐시 */
+	float CurrentGameTime;
 
 	//========================================
 	// 솔버 및 유틸리티
