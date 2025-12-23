@@ -30,13 +30,24 @@ public:
 	// 통합 렌더링 관리 (IKawaiiFluidRenderable)
 	//========================================
 
-	/** 렌더링 가능한 액터 등록 (Simulator, TestActor 등) */
+	/** Component 등록 (Component 기반 Renderable) */
+	UFUNCTION(BlueprintCallable, Category = "Fluid Rendering")
+	void RegisterRenderableComponent(UActorComponent* Component);
+
+	/** Component 해제 */
+	UFUNCTION(BlueprintCallable, Category = "Fluid Rendering")
+	void UnregisterRenderableComponent(UActorComponent* Component);
+
+	/** Actor의 Component 자동 검색 후 등록 */
+	void RegisterRenderableActor(AActor* Actor);
+
+	/** 렌더링 가능한 액터 등록 (레거시, Actor 기반) */
 	void RegisterRenderable(AActor* Actor);
 
-	/** 렌더링 가능한 액터 해제 */
+	/** 렌더링 가능한 액터 해제 (레거시) */
 	void UnregisterRenderable(AActor* Actor);
 
-	/** 등록된 모든 렌더링 가능한 액터 반환 */
+	/** 등록된 모든 렌더링 가능한 객체 반환 (Actor + Component) */
 	TArray<IKawaiiFluidRenderable*> GetAllRenderables() const;
 
 	//========================================
@@ -68,7 +79,7 @@ private:
 	// 통합 저장소
 	//========================================
 
-	/** 등록된 렌더링 가능한 모든 액터 (Simulator, TestActor 등) */
+	/** 등록된 렌더링 가능한 모든 객체 (Actor와 Component 모두 지원) */
 	UPROPERTY()
 	TArray<TScriptInterface<IKawaiiFluidRenderable>> RegisteredRenderables;
 
@@ -82,4 +93,11 @@ private:
 
 	/** Scene View Extension (렌더링 파이프라인 인젝션) */
 	TSharedPtr<FFluidSceneViewExtension, ESPMode::ThreadSafe> ViewExtension;
+
+	//========================================
+	// 내부 헬퍼
+	//========================================
+
+	/** UObject가 IKawaiiFluidRenderable 인터페이스를 구현하는지 확인 */
+	bool IsValidRenderable(UObject* Object) const;
 };

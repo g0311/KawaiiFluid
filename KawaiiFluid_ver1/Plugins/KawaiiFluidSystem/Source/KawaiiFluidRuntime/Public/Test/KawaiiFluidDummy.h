@@ -7,40 +7,36 @@
 #include "Core/KawaiiRenderParticle.h"
 #include "Rendering/IKawaiiFluidRenderable.h"
 #include "Rendering/KawaiiFluidRenderingMode.h"
+#include "Test/FluidDummyGenerationMode.h"
+#include "Components/KawaiiFluidDummyComponent.h"
 #include "KawaiiFluidDummy.generated.h"
 
 class FKawaiiFluidRenderResource;
 
 /**
- * 테스트 데이터 생성 모드
- */
-UENUM(BlueprintType)
-enum class ETestDataMode : uint8
-{
-	Static      UMETA(DisplayName = "Static (고정)"),
-	Animated    UMETA(DisplayName = "Animated (애니메이션)"),
-	GridPattern UMETA(DisplayName = "Grid Pattern (격자)"),
-	Sphere      UMETA(DisplayName = "Sphere (구)"),
-	Wave        UMETA(DisplayName = "Wave (파동)")
-};
-
-/**
- * 렌더링 테스트용 유체 더미 액터
- * 물리 시뮬레이션 없이 GPU 버퍼 업로드만 수행하여 SSFR 파이프라인 테스트
+ * 렌더링 테스트용 유체 더미 액터 (레거시 래퍼)
+ * 
+ * @deprecated UKawaiiFluidDummyComponent 사용을 권장합니다.
+ * @note 하위 호환성을 위해 유지되며, 내부적으로 UKawaiiFluidDummyComponent를 사용합니다.
+ * 
+ * 마이그레이션 가이드:
+ * @code
+ * // 이전 (Actor 방식)
+ * AKawaiiFluidDummy* Dummy = GetWorld()->SpawnActor<AKawaiiFluidDummy>();
+ * 
+ * // 새로운 방식 (Component)
+ * AActor* TestActor = GetWorld()->SpawnActor<AActor>();
+ * UKawaiiFluidDummyComponent* DummyComp = NewObject<UKawaiiFluidDummyComponent>(TestActor);
+ * DummyComp->RegisterComponent();
+ * @endcode
  */
 UCLASS(BlueprintType, HideCategories = (Collision, Physics, LOD, Cooking))
-class KAWAIIFLUIDRUNTIME_API AKawaiiFluidDummy : public AActor, public IKawaiiFluidRenderable
+class KAWAIIFLUIDRUNTIME_API AKawaiiFluidDummy : public AActor
 {
 	GENERATED_BODY()
 
 public:
 	AKawaiiFluidDummy();
-	virtual ~AKawaiiFluidDummy();
-
-	virtual void BeginPlay() override;
-	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
-	virtual void BeginDestroy() override;
-	virtual void Tick(float DeltaTime) override;
 
 	//========================================
 	// Components
@@ -50,165 +46,53 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	class USceneComponent* RootSceneComponent;
 
-	//========================================
-	// 테스트 모드 설정
-	//========================================
-
-	/** 렌더링 활성화 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Test|Mode")
-	bool bEnableRendering = true;
-
-	/** 테스트 데이터 생성 모드 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Test|Mode")
-	ETestDataMode DataMode = ETestDataMode::Animated;
+	/** 실제 유체 더미 Component (내부 구현) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	UKawaiiFluidDummyComponent* DummyComponent;
 
 	//========================================
-	// 파티클 설정
-	//========================================
-
-	/** 파티클 개수 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Test|Particles", meta = (ClampMin = "1", ClampMax = "10000"))
-	int32 ParticleCount = 500;
-
-	/** 파티클 반경 (cm) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Test|Particles", meta = (ClampMin = "1.0", ClampMax = "50.0"))
-	float ParticleRadius = 5.0f;
-
-	/** 생성 영역 크기 (cm) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Test|Particles")
-	FVector SpawnExtent = FVector(100.0f, 100.0f, 100.0f);
-
-	//========================================
-	// 애니메이션 설정
-	//========================================
-
-	/** 애니메이션 속도 (DataMode가 Animated/Wave일 때) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Test|Animation", meta = (ClampMin = "0.1", ClampMax = "10.0"))
-	float AnimationSpeed = 1.0f;
-
-	/** 파동 진폭 (Wave 모드, cm) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Test|Animation", meta = (ClampMin = "1.0", ClampMax = "100.0"))
-	float WaveAmplitude = 20.0f;
-
-	/** 파동 주파수 (Wave 모드) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Test|Animation", meta = (ClampMin = "0.1", ClampMax = "5.0"))
-	float WaveFrequency = 1.0f;
-
-	//========================================
-	// 렌더링 방식 선택
-	//========================================
-
-	/** 
-	 * 렌더링 방식 선택
-	 * - DebugMesh: Instanced Static Mesh
-	 * - SSFR: Screen Space Fluid Rendering
-	 * - Both: 둘 다 (디버그용)
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Test|Rendering")
-	EKawaiiFluidRenderingMode RenderingMode = EKawaiiFluidRenderingMode::SSFR;
-
-	/** 디버그 메시 컴포넌트 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Test|Rendering")
-	class UInstancedStaticMeshComponent* DebugMeshComponent;
-
-	//========================================
-	// 블루프린트 함수
+	// 레거시 API (Component로 포워딩)
 	//========================================
 
 	/** 테스트 데이터 재생성 */
 	UFUNCTION(BlueprintCallable, Category = "Test")
-	void RegenerateTestData();
+	void RegenerateTestData()
+	{
+		if (DummyComponent) DummyComponent->RegenerateTestData();
+	}
 
 	/** GPU 버퍼 강제 업데이트 */
 	UFUNCTION(BlueprintCallable, Category = "Test")
-	void ForceUpdateGPUBuffer();
+	void ForceUpdateGPUBuffer()
+	{
+		if (DummyComponent) DummyComponent->ForceUpdateGPUBuffer();
+	}
 
 	/** 현재 파티클 수 반환 */
 	UFUNCTION(BlueprintPure, Category = "Test")
-	int32 GetCurrentParticleCount() const { return TestParticles.Num(); }
-
-	//========================================
-	// IKawaiiFluidRenderable 인터페이스 구현
-	//========================================
-
-	virtual FKawaiiFluidRenderResource* GetFluidRenderResource() const override
+	int32 GetCurrentParticleCount() const
 	{
-		return RenderResource.Get();
+		return DummyComponent ? DummyComponent->GetCurrentParticleCount() : 0;
 	}
 
-	virtual bool IsFluidRenderResourceValid() const override;
-
-	virtual float GetParticleRenderRadius() const override
+	/** 테스트 패턴 변경 */
+	UFUNCTION(BlueprintCallable, Category = "Test")
+	void SetTestPattern(EKawaiiFluidDummyGenMode NewMode)
 	{
-		return ParticleRadius;
+		if (DummyComponent) DummyComponent->SetTestPattern(NewMode);
 	}
 
-	virtual FString GetDebugName() const override
+	/** 파티클 개수 변경 */
+	UFUNCTION(BlueprintCallable, Category = "Test")
+	void SetParticleCount(int32 NewCount)
 	{
-		return FString::Printf(TEXT("FluidDummy_%s"), *GetName());
+		if (DummyComponent) DummyComponent->SetParticleCount(NewCount);
 	}
 
-	virtual bool ShouldUseSSFR() const override
+	/** 애니메이션 일시정지/재개 */
+	UFUNCTION(BlueprintCallable, Category = "Test")
+	void ToggleAnimation()
 	{
-		return RenderingMode == EKawaiiFluidRenderingMode::SSFR || 
-		       RenderingMode == EKawaiiFluidRenderingMode::Both;
+		if (DummyComponent) DummyComponent->ToggleAnimation();
 	}
-
-	virtual bool ShouldUseDebugMesh() const override
-	{
-		return RenderingMode == EKawaiiFluidRenderingMode::DebugMesh || 
-		       RenderingMode == EKawaiiFluidRenderingMode::Both;
-	}
-
-	virtual UInstancedStaticMeshComponent* GetDebugMeshComponent() const override
-	{
-		return DebugMeshComponent;
-	}
-
-	virtual int32 GetParticleCount() const override
-	{
-		return TestParticles.Num();
-	}
-
-private:
-	//========================================
-	// 테스트 데이터
-	//========================================
-
-	/** 테스트 파티클 배열 */
-	TArray<FKawaiiRenderParticle> TestParticles;
-
-	/** 애니메이션 시간 */
-	float AnimationTime = 0.0f;
-
-	//========================================
-	// GPU 렌더 리소스
-	//========================================
-
-	/** GPU 렌더 리소스 (SharedPtr로 수명 관리) */
-	TSharedPtr<FKawaiiFluidRenderResource> RenderResource;
-
-	//========================================
-	// 내부 메서드
-	//========================================
-
-	/** GPU 렌더 리소스 초기화 */
-	void InitializeRenderResource();
-
-	/** 디버그 메시 초기화 */
-	void InitializeDebugMesh();
-
-	/** 디버그 메시 업데이트 */
-	void UpdateDebugMeshInstances();
-
-	/** 테스트 파티클 생성 */
-	void GenerateTestParticles();
-
-	/** 애니메이션 파티클 업데이트 */
-	void UpdateAnimatedParticles(float DeltaTime);
-
-	// 데이터 생성 헬퍼
-	void GenerateStaticData();
-	void GenerateGridPattern();
-	void GenerateSpherePattern();
 };

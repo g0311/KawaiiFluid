@@ -29,6 +29,88 @@ void UFluidRendererSubsystem::Deinitialize()
 }
 
 //========================================
+// Component 지원 (새로운 API)
+//========================================
+
+void UFluidRendererSubsystem::RegisterRenderableComponent(UActorComponent* Component)
+{
+	if (!Component)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("RegisterRenderableComponent: Component is null"));
+		return;
+	}
+
+	// Component가 인터페이스 구현하는지 확인
+	if (!Component->GetClass()->ImplementsInterface(UKawaiiFluidRenderable::StaticClass()))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("RegisterRenderableComponent: %s does not implement IKawaiiFluidRenderable"), 
+			*Component->GetName());
+		return;
+	}
+
+	// TScriptInterface로 래핑
+	TScriptInterface<IKawaiiFluidRenderable> Renderable;
+	Renderable.SetObject(Component);
+	Renderable.SetInterface(Cast<IKawaiiFluidRenderable>(Component));
+
+	// 중복 체크
+	for (const TScriptInterface<IKawaiiFluidRenderable>& Existing : RegisteredRenderables)
+	{
+		if (Existing.GetObject() == Component)
+		{
+			return;
+		}
+	}
+
+	// 등록
+	RegisteredRenderables.Add(Renderable);
+	UE_LOG(LogTemp, Log, TEXT("FluidRendererSubsystem: Registered Component %s"), *Component->GetName());
+}
+
+void UFluidRendererSubsystem::UnregisterRenderableComponent(UActorComponent* Component)
+{
+	if (!Component)
+	{
+		return;
+	}
+
+	RegisteredRenderables.RemoveAll([Component](const TScriptInterface<IKawaiiFluidRenderable>& Renderable)
+	{
+		return Renderable.GetObject() == Component;
+	});
+
+	UE_LOG(LogTemp, Log, TEXT("FluidRendererSubsystem: Unregistered Component %s"), *Component->GetName());
+}
+
+void UFluidRendererSubsystem::RegisterRenderableActor(AActor* Actor)
+{
+	if (!Actor)
+	{
+		return;
+	}
+
+	// 새로운 방식: Actor의 Component 중 IKawaiiFluidRenderable 구현한 것 자동 등록
+	TArray<UActorComponent*> Components;
+	Actor->GetComponents(UActorComponent::StaticClass(), Components);
+
+	bool bFoundAny = false;
+	for (UActorComponent* Component : Components)
+	{
+		if (Component->GetClass()->ImplementsInterface(UKawaiiFluidRenderable::StaticClass()))
+		{
+			RegisterRenderableComponent(Component);
+			bFoundAny = true;
+		}
+	}
+
+	if (!bFoundAny)
+	{
+		// Fallback: Actor 자체가 인터페이스 구현 (레거시, AFluidSimulator)
+		RegisterRenderable(Actor);
+	}
+}
+
+//========================================
 // 통합 렌더링 관리
 //========================================
 
@@ -65,7 +147,7 @@ void UFluidRendererSubsystem::RegisterRenderable(AActor* Actor)
 	if (!bAlreadyRegistered)
 	{
 		RegisteredRenderables.Add(Renderable);
-		UE_LOG(LogTemp, Log, TEXT("FluidRendererSubsystem: Registered %s"), *Actor->GetName());
+		UE_LOG(LogTemp, Log, TEXT("FluidRendererSubsystem: Registered Actor %s"), *Actor->GetName());
 	}
 }
 
@@ -81,7 +163,7 @@ void UFluidRendererSubsystem::UnregisterRenderable(AActor* Actor)
 		return Renderable.GetObject() == Actor;
 	});
 
-	UE_LOG(LogTemp, Log, TEXT("FluidRendererSubsystem: Unregistered %s"), *Actor->GetName());
+	UE_LOG(LogTemp, Log, TEXT("FluidRendererSubsystem: Unregistered Actor %s"), *Actor->GetName());
 }
 
 TArray<IKawaiiFluidRenderable*> UFluidRendererSubsystem::GetAllRenderables() const
@@ -98,6 +180,16 @@ TArray<IKawaiiFluidRenderable*> UFluidRendererSubsystem::GetAllRenderables() con
 	}
 
 	return Result;
+}
+
+bool UFluidRendererSubsystem::IsValidRenderable(UObject* Object) const
+{
+	if (!Object)
+	{
+		return false;
+	}
+
+	return Object->GetClass()->ImplementsInterface(UKawaiiFluidRenderable::StaticClass());
 }
 
 //========================================

@@ -19,8 +19,31 @@ class UKawaiiFluidRenderable : public UInterface
 };
 
 /**
- * Kawaii 유체 렌더링 가능한 액터가 구현해야 하는 인터페이스
- * Simulator, TestActor 등 모든 유체 렌더링 소스에 사용
+ * Kawaii 유체 렌더링 가능한 오브젝트(Actor 또는 Component)가 구현해야 하는 인터페이스
+ * 
+ * 구현 가능 클래스:
+ * - Actor (레거시): AFluidSimulator, AKawaiiFluidDummy
+ * - Component (권장): UFluidSimulatorComponent, UKawaiiFluidDummyComponent
+ * 
+ * @note Component 방식을 권장합니다 (유연성, 재사용성 향상)
+ * 
+ * 사용 예시:
+ * 
+ * Actor 방식 (레거시):
+ * @code
+ * class AFluidSimulator : public AActor, public IKawaiiFluidRenderable
+ * {
+ *     // 인터페이스 구현...
+ * };
+ * @endcode
+ * 
+ * Component 방식 (권장):
+ * @code
+ * class UFluidSimulatorComponent : public UActorComponent, public IKawaiiFluidRenderable
+ * {
+ *     // 인터페이스 구현...
+ * };
+ * @endcode
  */
 class IKawaiiFluidRenderable
 {
