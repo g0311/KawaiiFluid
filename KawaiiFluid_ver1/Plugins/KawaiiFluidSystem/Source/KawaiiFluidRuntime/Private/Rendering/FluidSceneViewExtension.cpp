@@ -1,4 +1,4 @@
-// Copyright KawaiiFluid Team. All Rights Reserved.
+﻿// Copyright KawaiiFluid Team. All Rights Reserved.
 
 #include "Rendering/FluidSceneViewExtension.h"
 #include "Rendering/FluidRendererSubsystem.h"
@@ -6,6 +6,7 @@
 #include "Rendering/FluidSmoothingPass.h"
 #include "Rendering/FluidNormalPass.h"
 #include "Rendering/FluidThicknessPass.h"
+#include "Rendering/IKawaiiFluidRenderable.h"
 #include "Core/FluidSimulator.h"
 #include "SceneView.h"
 #include "RenderGraphBuilder.h"
@@ -38,11 +39,23 @@ void FFluidSceneViewExtension::PrePostProcessPass_RenderThread(FRDGBuilder& Grap
 		return;
 	}
 
-	// 등록된 시뮬레이터가 없으면 스킵
-	const TArray<AFluidSimulator*>& Simulators = SubsystemPtr->GetRegisteredSimulators();
-	if (Simulators.Num() == 0)
+	// ✅ 통합 API 사용 (레거시 API 대체)
+	TArray<IKawaiiFluidRenderable*> Renderables = SubsystemPtr->GetAllRenderables();
+	
+	// ✅ SSFR 사용 객체가 있는지 체크
+	bool bHasSSFRRenderables = false;
+	for (IKawaiiFluidRenderable* Renderable : Renderables)
 	{
-		return;
+		if (Renderable && Renderable->ShouldUseSSFR())
+		{
+			bHasSSFRRenderables = true;
+			break;
+		}
+	}
+
+	if (!bHasSSFRRenderables)
+	{
+		return;  // SSFR 사용하는 객체가 없으면 스킵
 	}
 
 	// 1. Depth Pass
@@ -66,8 +79,6 @@ void FFluidSceneViewExtension::PrePostProcessPass_RenderThread(FRDGBuilder& Grap
 	// 3. Normal Reconstruction Pass
 	FRDGTextureRef NormalTexture = nullptr;
 	RenderNormalPass(GraphBuilder, View, SmoothedDepthTexture, NormalTexture);
-
-	// UE_LOG(LogTemp, Log, TEXT("KawaiiFluid: NormalPass executed."));
 
 	// 4. Thickness Pass
 	FRDGTextureRef ThicknessTexture = nullptr;
@@ -121,7 +132,6 @@ void FFluidSceneViewExtension::RenderThicknessPass(FRDGBuilder& GraphBuilder, co
 		return;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("KawaiiFluid: FluidSceneViewExtension::RenderThicknessPass called."));
 	RenderFluidThicknessPass(GraphBuilder, View, SubsystemPtr, OutThicknessTexture);
 }
 

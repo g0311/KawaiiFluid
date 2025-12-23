@@ -13,7 +13,13 @@ class IKawaiiFluidRenderable;
 
 /**
  * 유체 렌더링 월드 서브시스템
- * 월드별로 SSFR 렌더링 파이프라인 관리
+ *
+ * 역할:
+ * - IKawaiiFluidRenderable 인터페이스 구현 객체 통합 관리
+ * - SSFR 렌더링 파이프라인 제공 (ViewExtension)
+ * - DebugMesh 렌더링은 Unreal 기본 파이프라인 사용
+ *
+ * @note SSFR 모드 객체만 ViewExtension에서 처리됨
  */
 UCLASS()
 class KAWAIIFLUIDRUNTIME_API UFluidRendererSubsystem : public UWorldSubsystem
