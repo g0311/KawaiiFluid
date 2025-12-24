@@ -58,7 +58,7 @@ public:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	virtual void BeginDestroy() override;
-
+	
 	//========================================
 	// IKawaiiFluidRenderable Interface
 	//========================================
@@ -95,6 +95,56 @@ public:
 	/** Use world collision */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Collision")
 	bool bUseWorldCollision = true;
+
+	//========================================
+	// Preset Overrides (Per-Instance)
+	//========================================
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+
+	/** Override RestDensity from preset */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Override", meta = (InlineEditConditionToggle))
+	bool bOverride_RestDensity = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Override", meta = (EditCondition = "bOverride_RestDensity", ClampMin = "0.1"))
+	float Override_RestDensity = 1200.0f;
+
+	/** Override Compliance from preset */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Override", meta = (InlineEditConditionToggle))
+	bool bOverride_Compliance = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Override", meta = (EditCondition = "bOverride_Compliance", ClampMin = "0.0"))
+	float Override_Compliance = 0.01f;
+
+	/** Override SmoothingRadius from preset */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Override", meta = (InlineEditConditionToggle))
+	bool bOverride_SmoothingRadius = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Override", meta = (EditCondition = "bOverride_SmoothingRadius", ClampMin = "1.0"))
+	float Override_SmoothingRadius = 20.0f;
+
+	/** Override ViscosityCoefficient from preset */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Override", meta = (InlineEditConditionToggle))
+	bool bOverride_ViscosityCoefficient = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Override", meta = (EditCondition = "bOverride_ViscosityCoefficient", ClampMin = "0.0", ClampMax = "1.0"))
+	float Override_ViscosityCoefficient = 0.5f;
+
+	/** Override Gravity from preset */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Override", meta = (InlineEditConditionToggle))
+	bool bOverride_Gravity = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Override", meta = (EditCondition = "bOverride_Gravity"))
+	FVector Override_Gravity = FVector(0.0f, 0.0f, -980.0f);
+
+	/** Override AdhesionStrength from preset */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Override", meta = (InlineEditConditionToggle))
+	bool bOverride_AdhesionStrength = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Override", meta = (EditCondition = "bOverride_AdhesionStrength", ClampMin = "0.0", ClampMax = "1.0"))
+	float Override_AdhesionStrength = 0.5f;
 
 	//========================================
 	// Rendering
@@ -290,6 +340,37 @@ public:
 	/** Build simulation params for context */
 	FKawaiiFluidSimulationParams BuildSimulationParams() const;
 
+	//========================================
+	// Override System
+	//========================================
+
+	/** Returns true if any override is enabled */
+	bool HasAnyOverride() const
+	{
+		return bOverride_RestDensity || bOverride_Compliance || bOverride_SmoothingRadius ||
+		       bOverride_ViscosityCoefficient || bOverride_Gravity || bOverride_AdhesionStrength;
+	}
+
+	/** Should this component use independent simulation? (explicit flag OR has overrides) */
+	bool ShouldSimulateIndependently() const
+	{
+		return bIndependentSimulation || HasAnyOverride();
+	}
+
+	/**
+	 * Get effective preset for simulation
+	 * Returns RuntimePreset if overrides exist, otherwise returns original Preset
+	 * Called by Subsystem before passing to Context
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Fluid")
+	UKawaiiFluidPresetDataAsset* GetEffectivePreset();
+
+	/** Update RuntimePreset with current override values */
+	void UpdateRuntimePreset();
+
+	/** Mark RuntimePreset as needing update */
+	void MarkRuntimePresetDirty() { bRuntimePresetDirty = true; }
+
 	/** Update render data (call after simulation) */
 	void UpdateRenderData();
 
@@ -297,6 +378,17 @@ public:
 	void UpdateDebugInstances();
 
 private:
+	//========================================
+	// Runtime Preset (Override System)
+	//========================================
+
+	/** Runtime preset with overrides applied (Transient - not saved) */
+	UPROPERTY(Transient)
+	TObjectPtr<UKawaiiFluidPresetDataAsset> RuntimePreset;
+
+	/** Flag indicating RuntimePreset needs update */
+	bool bRuntimePresetDirty = true;
+
 	//========================================
 	// Simulation Data
 	//========================================

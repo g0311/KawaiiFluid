@@ -173,7 +173,15 @@ void UKawaiiFluidSimulationComponent::TickComponent(float DeltaTime, ELevelTick 
 
 void UKawaiiFluidSimulationComponent::InitializeSpatialHash()
 {
-	float CellSize = Preset ? Preset->SmoothingRadius : 20.0f;
+	float CellSize = 20.0f;
+	if (bOverride_SmoothingRadius)
+	{
+		CellSize = Override_SmoothingRadius;
+	}
+	else if (Preset)
+	{
+		CellSize = Preset->SmoothingRadius;
+	}
 	SpatialHash = MakeShared<FSpatialHash>(CellSize);
 }
 
@@ -515,6 +523,115 @@ FKawaiiFluidSimulationParams UKawaiiFluidSimulationComponent::BuildSimulationPar
 	}
 
 	return Params;
+}
+
+//========================================
+// Override System
+//========================================
+
+#if WITH_EDITOR
+void UKawaiiFluidSimulationComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	const FName PropertyName = PropertyChangedEvent.GetPropertyName();
+	const FString PropertyNameStr = PropertyName.ToString();
+
+	// Mark RuntimePreset dirty when override properties change
+	if (PropertyNameStr.StartsWith(TEXT("bOverride_")) || PropertyNameStr.StartsWith(TEXT("Override_")))
+	{
+		MarkRuntimePresetDirty();
+	}
+
+	// Also mark dirty when Preset reference changes
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationComponent, Preset))
+	{
+		MarkRuntimePresetDirty();
+	}
+}
+#endif
+
+UKawaiiFluidPresetDataAsset* UKawaiiFluidSimulationComponent::GetEffectivePreset()
+{
+	// No overrides - return original preset
+	if (!HasAnyOverride())
+	{
+		return Preset;
+	}
+
+	// Update RuntimePreset if dirty
+	if (bRuntimePresetDirty)
+	{
+		UpdateRuntimePreset();
+	}
+
+	return RuntimePreset ? RuntimePreset : Preset;
+}
+
+void UKawaiiFluidSimulationComponent::UpdateRuntimePreset()
+{
+	if (!HasAnyOverride() || !Preset)
+	{
+		RuntimePreset = nullptr;
+		bRuntimePresetDirty = false;
+		return;
+	}
+
+	// Create or update RuntimePreset from original Preset
+	if (!RuntimePreset)
+	{
+		RuntimePreset = DuplicateObject<UKawaiiFluidPresetDataAsset>(Preset, this);
+	}
+	else
+	{
+		// Copy ALL values from original preset (in case it changed)
+		RuntimePreset->ContextClass = Preset->ContextClass;
+		RuntimePreset->RestDensity = Preset->RestDensity;
+		RuntimePreset->ParticleMass = Preset->ParticleMass;
+		RuntimePreset->SmoothingRadius = Preset->SmoothingRadius;
+		RuntimePreset->SubstepDeltaTime = Preset->SubstepDeltaTime;
+		RuntimePreset->MaxSubsteps = Preset->MaxSubsteps;
+		RuntimePreset->Gravity = Preset->Gravity;
+		RuntimePreset->Compliance = Preset->Compliance;
+		RuntimePreset->ViscosityCoefficient = Preset->ViscosityCoefficient;
+		RuntimePreset->AdhesionStrength = Preset->AdhesionStrength;
+		RuntimePreset->AdhesionRadius = Preset->AdhesionRadius;
+		RuntimePreset->DetachThreshold = Preset->DetachThreshold;
+		RuntimePreset->Restitution = Preset->Restitution;
+		RuntimePreset->Friction = Preset->Friction;
+		RuntimePreset->CollisionChannel = Preset->CollisionChannel;
+		RuntimePreset->ParticleRadius = Preset->ParticleRadius;
+		RuntimePreset->Color = Preset->Color;
+		RuntimePreset->MaxParticles = Preset->MaxParticles;
+	}
+
+	// Apply overrides
+	if (bOverride_RestDensity)
+	{
+		RuntimePreset->RestDensity = Override_RestDensity;
+	}
+	if (bOverride_Compliance)
+	{
+		RuntimePreset->Compliance = Override_Compliance;
+	}
+	if (bOverride_SmoothingRadius)
+	{
+		RuntimePreset->SmoothingRadius = Override_SmoothingRadius;
+	}
+	if (bOverride_ViscosityCoefficient)
+	{
+		RuntimePreset->ViscosityCoefficient = Override_ViscosityCoefficient;
+	}
+	if (bOverride_Gravity)
+	{
+		RuntimePreset->Gravity = Override_Gravity;
+	}
+	if (bOverride_AdhesionStrength)
+	{
+		RuntimePreset->AdhesionStrength = Override_AdhesionStrength;
+	}
+
+	bRuntimePresetDirty = false;
 }
 
 void UKawaiiFluidSimulationComponent::UpdateRenderData()

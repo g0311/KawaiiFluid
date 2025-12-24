@@ -207,11 +207,11 @@ UKawaiiFluidSimulationContext* UKawaiiFluidSimulatorSubsystem::GetOrCreateContex
 
 void UKawaiiFluidSimulatorSubsystem::SimulateIndependentComponents(float DeltaTime)
 {
-	// Collect independent components
+	// Collect independent components (explicit flag OR has overrides)
 	TArray<UKawaiiFluidSimulationComponent*> IndependentComponents;
 	for (UKawaiiFluidSimulationComponent* Component : AllComponents)
 	{
-		if (Component && Component->bSimulationEnabled && Component->bIndependentSimulation)
+		if (Component && Component->bSimulationEnabled && Component->ShouldSimulateIndependently())
 		{
 			IndependentComponents.Add(Component);
 		}
@@ -225,13 +225,14 @@ void UKawaiiFluidSimulatorSubsystem::SimulateIndependentComponents(float DeltaTi
 	// Simulate each independently (can use ParallelFor for true independence)
 	for (UKawaiiFluidSimulationComponent* Component : IndependentComponents)
 	{
-		UKawaiiFluidPresetDataAsset* Preset = Component->Preset;
-		if (!Preset)
+		// Get effective preset (RuntimePreset if overrides, otherwise original Preset)
+		UKawaiiFluidPresetDataAsset* EffectivePreset = Component->GetEffectivePreset();
+		if (!EffectivePreset)
 		{
 			continue;
 		}
 
-		UKawaiiFluidSimulationContext* Context = GetOrCreateContext(Preset);
+		UKawaiiFluidSimulationContext* Context = GetOrCreateContext(EffectivePreset);
 		if (!Context)
 		{
 			continue;
@@ -251,7 +252,7 @@ void UKawaiiFluidSimulatorSubsystem::SimulateIndependentComponents(float DeltaTi
 		Params.InteractionComponents.Append(GlobalInteractionComponents);
 
 		float AccumulatedTime = Component->GetAccumulatedTime();
-		Context->Simulate(Particles, Preset, Params, *SpatialHash, DeltaTime, AccumulatedTime);
+		Context->Simulate(Particles, EffectivePreset, Params, *SpatialHash, DeltaTime, AccumulatedTime);
 		Component->SetAccumulatedTime(AccumulatedTime);
 		Component->ResetExternalForce();
 	}
@@ -332,10 +333,10 @@ UKawaiiFluidSimulatorSubsystem::GroupComponentsByPreset() const
 
 	for (UKawaiiFluidSimulationComponent* Component : AllComponents)
 	{
-		// Only batch non-independent, enabled components
+		// Only batch non-independent, enabled components (no overrides)
 		if (Component &&
 		    Component->bSimulationEnabled &&
-		    !Component->bIndependentSimulation &&
+		    !Component->ShouldSimulateIndependently() &&
 		    Component->Preset)
 		{
 			Result.FindOrAdd(Component->Preset).Add(Component);
