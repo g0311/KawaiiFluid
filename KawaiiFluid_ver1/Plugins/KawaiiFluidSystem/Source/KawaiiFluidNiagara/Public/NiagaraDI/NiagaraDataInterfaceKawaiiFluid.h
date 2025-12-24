@@ -47,7 +47,7 @@ struct FNDIKawaiiFluid_InstanceData
  * 
  * @note 현재 UKawaiiFluidDummyComponent만 지원 (테스트용)
  */
-UCLASS(EditInlineNew, Category = "KawaiiFluid", meta = (DisplayName = "Kawaii Fluid Dummy Data"))
+UCLASS(EditInlineNew, Category = "KawaiiFluid", meta = (DisplayName = "Kawaii Fluid Data"))
 class KAWAIIFLUIDNIAGARA_API UNiagaraDataInterfaceKawaiiFluid : public UNiagaraDataInterface
 {
 	GENERATED_UCLASS_BODY()

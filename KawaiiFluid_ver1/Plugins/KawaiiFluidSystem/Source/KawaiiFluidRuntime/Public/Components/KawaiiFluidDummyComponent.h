@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Components/ActorComponent.h"
+#include "Components/SceneComponent.h"
 #include "Core/KawaiiRenderParticle.h"
 #include "Rendering/IKawaiiFluidRenderable.h"
 #include "Rendering/KawaiiFluidRenderingMode.h"
@@ -33,7 +33,7 @@ class FKawaiiFluidRenderResource;
  * @endcode
  */
 UCLASS(ClassGroup=(KawaiiFluid), meta=(BlueprintSpawnableComponent, DisplayName="Fluid Dummy (Test)"))
-class KAWAIIFLUIDRUNTIME_API UKawaiiFluidDummyComponent : public UActorComponent, public IKawaiiFluidRenderable
+class KAWAIIFLUIDRUNTIME_API UKawaiiFluidDummyComponent : public USceneComponent, public IKawaiiFluidRenderable
 {
 	GENERATED_BODY()
 
@@ -97,9 +97,10 @@ public:
 	/** 
 	 * 렌더링 방식 선택
 	 * - DebugMesh: Instanced Static Mesh
-	 * - Niagara: Niagara Particles (테스트)
 	 * - SSFR: Screen Space Fluid Rendering
 	 * - Both: 둘 다 (디버그용)
+	 * 
+	 * @note Niagara 렌더링은 Blueprint에서 수동으로 NiagaraComponent 추가하세요!
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Test|Rendering")
 	EKawaiiFluidRenderingMode RenderingMode = EKawaiiFluidRenderingMode::SSFR;
@@ -107,14 +108,6 @@ public:
 	/** 디버그 메시 컴포넌트 (자동 생성) */
 	UPROPERTY()
 	UInstancedStaticMeshComponent* DebugMeshComponent;
-
-	/** Niagara 컴포넌트 (Niagara 모드 시 자동 생성) */
-	UPROPERTY()
-	class UNiagaraComponent* NiagaraComponent;
-
-	/** Niagara System 템플릿 (Niagara 모드 사용 시) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Test|Rendering", meta = (EditCondition = "RenderingMode == EKawaiiFluidRenderingMode::Niagara"))
-	class UNiagaraSystem* NiagaraSystemTemplate;
 
 	//========================================
 	// 블루프린트 함수
@@ -232,9 +225,6 @@ private:
 
 	/** 디버그 메시 초기화 */
 	void InitializeDebugMesh();
-
-	/** Niagara 초기화 */
-	void InitializeNiagara();
 
 	/** 디버그 메시 업데이트 */
 	void UpdateDebugMeshInstances();

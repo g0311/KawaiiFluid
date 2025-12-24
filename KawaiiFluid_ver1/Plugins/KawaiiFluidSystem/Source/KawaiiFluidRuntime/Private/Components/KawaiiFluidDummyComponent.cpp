@@ -4,8 +4,6 @@
 #include "Rendering/KawaiiFluidRenderResource.h"
 #include "Rendering/FluidRendererSubsystem.h"
 #include "Components/InstancedStaticMeshComponent.h"
-#include "NiagaraComponent.h"
-#include "NiagaraSystem.h"
 #include "Engine/World.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -25,22 +23,16 @@ void UKawaiiFluidDummyComponent::BeginPlay()
 	// Render Resource 초기화
 	InitializeRenderResource();
 
-	// Debug Mesh 초기화
+	// Debug Mesh 초기화 (선택적)
 	if (bEnableRendering && ShouldUseDebugMesh())
 	{
 		InitializeDebugMesh();
 	}
 
-	// Niagara 초기화
-	if (bEnableRendering && ShouldUseNiagara())
-	{
-		InitializeNiagara();
-	}
-
 	// 테스트 데이터 생성
 	GenerateTestParticles();
 
-	// ✅ FluidRendererSubsystem에 Component로 등록
+	// FluidRendererSubsystem에 등록
 	if (bEnableRendering)
 	{
 		if (UWorld* World = GetWorld())
@@ -60,14 +52,11 @@ void UKawaiiFluidDummyComponent::BeginPlay()
 			}
 		}
 	}
-
-	UE_LOG(LogTemp, Log, TEXT("KawaiiFluidDummyComponent: Generated %d test particles"),
-		TestParticles.Num());
 }
 
 void UKawaiiFluidDummyComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	// ✅ FluidRendererSubsystem에서 Component 해제
+	// FluidRendererSubsystem에서 Component 해제
 	if (UWorld* World = GetWorld())
 	{
 		if (UFluidRendererSubsystem* Subsystem = World->GetSubsystem<UFluidRendererSubsystem>())
@@ -126,13 +115,6 @@ void UKawaiiFluidDummyComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	{
 		UpdateDebugMeshInstances();
 	}
-
-	// Niagara 업데이트
-	if (ShouldUseNiagara() && NiagaraComponent)
-	{
-		// Niagara Data Interface가 자동으로 데이터 가져감
-		// 추가 업데이트 필요 없음
-	}
 }
 
 void UKawaiiFluidDummyComponent::InitializeRenderResource()
@@ -159,22 +141,29 @@ void UKawaiiFluidDummyComponent::InitializeDebugMesh()
 	AActor* Owner = GetOwner();
 	if (!Owner)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidDummyComponent: No Owner Actor for debug mesh"));
 		return;
 	}
 
-	// ✅ this를 Outer로 사용 (Component 생명주기 동기화)
+	// ✅ Owner를 Outer로 사용 (FluidSimulationComponent와 동일)
 	DebugMeshComponent = NewObject<UInstancedStaticMeshComponent>(
-		this,  // ← Owner 대신 this! (생명주기 동기화)
+		Owner,  // ← Owner를 Outer로 사용!
 		UInstancedStaticMeshComponent::StaticClass(),
 		TEXT("DebugMesh")
 	);
 
 	if (DebugMeshComponent)
 	{
-		// ✅ Owner의 RootComponent에 Attach
-		DebugMeshComponent->SetupAttachment(Owner->GetRootComponent());
-		DebugMeshComponent->RegisterComponent();
 		DebugMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		
+		// ✅ SetAbsolute로 부모 transform 무시 (FluidSimulationComponent와 동일)
+		DebugMeshComponent->SetAbsolute(true, true, true);
+		
+		DebugMeshComponent->RegisterComponent();
+		
+		// ✅ KeepWorldTransform 사용
+		DebugMeshComponent->AttachToComponent(Owner->GetRootComponent(), 
+			FAttachmentTransformRules::KeepWorldTransform);
 
 		// ✅ LoadObject 사용 (런타임 안전)
 		UStaticMesh* SphereMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
@@ -198,56 +187,11 @@ void UKawaiiFluidDummyComponent::InitializeDebugMesh()
 			UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidDummyComponent: Failed to load default material"));
 		}
 
-		UE_LOG(LogTemp, Log, TEXT("KawaiiFluidDummyComponent: Debug Mesh created"));
-	}
-}
-
-void UKawaiiFluidDummyComponent::InitializeNiagara()
-{
-	// 이미 생성되었으면 스킵
-	if (NiagaraComponent && NiagaraComponent->IsValidLowLevel())
-	{
-		NiagaraComponent->SetVisibility(true);
-		return;
-	}
-
-	AActor* Owner = GetOwner();
-	if (!Owner)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidDummyComponent: No owner for Niagara component"));
-		return;
-	}
-
-	if (!NiagaraSystemTemplate)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidDummyComponent: No Niagara System Template assigned"));
-		return;
-	}
-
-	// Niagara Component 생성
-	NiagaraComponent = NewObject<UNiagaraComponent>(
-		this,
-		UNiagaraComponent::StaticClass(),
-		TEXT("NiagaraFluid")
-	);
-
-	if (NiagaraComponent)
-	{
-		// Owner의 RootComponent에 Attach
-		NiagaraComponent->SetupAttachment(Owner->GetRootComponent());
-		NiagaraComponent->RegisterComponent();
-		
-		// Niagara System 설정
-		NiagaraComponent->SetAsset(NiagaraSystemTemplate);
-		
-		// Auto Activate
-		NiagaraComponent->Activate(true);
-
-		UE_LOG(LogTemp, Log, TEXT("KawaiiFluidDummyComponent: Niagara Component created and activated"));
+		UE_LOG(LogTemp, Log, TEXT("KawaiiFluidDummyComponent: Debug Mesh created successfully"));
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("KawaiiFluidDummyComponent: Failed to create Niagara Component"));
+		UE_LOG(LogTemp, Error, TEXT("KawaiiFluidDummyComponent: Failed to create DebugMeshComponent"));
 	}
 }
 
@@ -332,20 +276,23 @@ void UKawaiiFluidDummyComponent::GenerateStaticData()
 	TestParticles.Empty();
 	TestParticles.Reserve(ParticleCount);
 
-	AActor* Owner = GetOwner();
-	const FVector BaseLocation = Owner ? Owner->GetActorLocation() : FVector::ZeroVector;
+	// ✅ USceneComponent의 GetComponentLocation() 사용
+	const FVector BaseLocation = GetComponentLocation();
+	const FQuat ComponentRotation = GetComponentQuat();
 
 	for (int32 i = 0; i < ParticleCount; ++i)
 	{
 		FKawaiiRenderParticle Particle;
 
-		FVector RandomOffset = FVector(
+		FVector LocalOffset = FVector(
 			FMath::FRandRange(-SpawnExtent.X, SpawnExtent.X),
 			FMath::FRandRange(-SpawnExtent.Y, SpawnExtent.Y),
 			FMath::FRandRange(-SpawnExtent.Z, SpawnExtent.Z)
 		);
 
-		Particle.Position = FVector3f(BaseLocation + RandomOffset);
+		// ✅ Component 회전 적용
+		FVector WorldOffset = ComponentRotation.RotateVector(LocalOffset);
+		Particle.Position = FVector3f(BaseLocation + WorldOffset);
 		Particle.Velocity = FVector3f::ZeroVector;
 		Particle.Radius = ParticleRadius;
 		Particle.Padding = 0.0f;
@@ -359,8 +306,10 @@ void UKawaiiFluidDummyComponent::GenerateGridPattern()
 	TestParticles.Empty();
 
 	const int32 GridSize = FMath::CeilToInt(FMath::Pow(ParticleCount, 1.0f / 3.0f));
-	AActor* Owner = GetOwner();
-	const FVector BaseLocation = Owner ? Owner->GetActorLocation() : FVector::ZeroVector;
+	
+	// ✅ USceneComponent의 GetComponentLocation() 사용
+	const FVector BaseLocation = GetComponentLocation();
+	const FQuat ComponentRotation = GetComponentQuat();
 	const float Spacing = ParticleRadius * 2.5f;
 
 	int32 Count = 0;
@@ -372,13 +321,15 @@ void UKawaiiFluidDummyComponent::GenerateGridPattern()
 			{
 				FKawaiiRenderParticle Particle;
 
-				FVector GridPos = FVector(
+				FVector LocalPos = FVector(
 					(x - GridSize / 2) * Spacing,
 					(y - GridSize / 2) * Spacing,
 					(z - GridSize / 2) * Spacing
 				);
 
-				Particle.Position = FVector3f(BaseLocation + GridPos);
+				// ✅ Component 회전 적용
+				FVector WorldPos = ComponentRotation.RotateVector(LocalPos);
+				Particle.Position = FVector3f(BaseLocation + WorldPos);
 				Particle.Velocity = FVector3f::ZeroVector;
 				Particle.Radius = ParticleRadius;
 				Particle.Padding = 0.0f;
@@ -395,8 +346,9 @@ void UKawaiiFluidDummyComponent::GenerateSpherePattern()
 	TestParticles.Empty();
 	TestParticles.Reserve(ParticleCount);
 
-	AActor* Owner = GetOwner();
-	const FVector BaseLocation = Owner ? Owner->GetActorLocation() : FVector::ZeroVector;
+	// ✅ USceneComponent의 GetComponentLocation() 사용
+	const FVector BaseLocation = GetComponentLocation();
+	const FQuat ComponentRotation = GetComponentQuat();
 	const float SphereRadius = SpawnExtent.X;
 
 	for (int32 i = 0; i < ParticleCount; ++i)
@@ -407,13 +359,15 @@ void UKawaiiFluidDummyComponent::GenerateSpherePattern()
 		float Phi = FMath::Acos(1.0f - 2.0f * (i + 0.5f) / ParticleCount);
 		float Theta = PI * (1.0f + FMath::Sqrt(5.0f)) * i;
 
-		FVector SpherePos = FVector(
+		FVector LocalPos = FVector(
 			FMath::Cos(Theta) * FMath::Sin(Phi),
 			FMath::Sin(Theta) * FMath::Sin(Phi),
 			FMath::Cos(Phi)
 		) * SphereRadius;
 
-		Particle.Position = FVector3f(BaseLocation + SpherePos);
+		// ✅ Component 회전 적용
+		FVector WorldPos = ComponentRotation.RotateVector(LocalPos);
+		Particle.Position = FVector3f(BaseLocation + WorldPos);
 		Particle.Velocity = FVector3f::ZeroVector;
 		Particle.Radius = ParticleRadius;
 		Particle.Padding = 0.0f;
@@ -426,8 +380,8 @@ void UKawaiiFluidDummyComponent::UpdateAnimatedParticles(float DeltaTime)
 {
 	AnimationTime += DeltaTime * AnimationSpeed;
 
-	AActor* Owner = GetOwner();
-	const FVector BaseLocation = Owner ? Owner->GetActorLocation() : FVector::ZeroVector;
+	// ✅ USceneComponent의 GetComponentLocation() 사용
+	const FVector BaseLocation = GetComponentLocation();
 
 	if (DataMode == EKawaiiFluidDummyGenMode::Animated)
 	{

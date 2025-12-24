@@ -140,34 +140,14 @@ void UNiagaraDataInterfaceKawaiiFluid::ValidateFunction(const FNiagaraFunctionSi
 	// 부모 클래스 검증 먼저 수행
 	Super::ValidateFunction(Function, OutValidationErrors);
 
-	// SourceDummyActor가 설정되지 않았으면 경고
-	if (SourceDummyActor.IsNull())
-	{
-		OutValidationErrors.Add(NSLOCTEXT("NiagaraKawaiiFluid", 
-			"NoSourceActorError", 
-			"Source Dummy Actor is not set. Please assign an Actor with UKawaiiFluidDummyComponent in the Details panel."));
-		return;
-	}
+	// ⚠️ ValidateFunction은 컴파일 타임에 실행되므로
+	// Runtime 값 (SourceDummyActor)을 확인할 수 없음!
+	// 
+	// 대신 런타임 에러는 InitPerInstanceData()에서 처리됨
+	// 여기서는 함수 시그니처만 검증
 
-	// SourceDummyActor가 유효하지만 DummyComponent가 없는 경우 (런타임에만 확인 가능하지만 힌트 제공)
-	// 에디터 환경에서 Actor가 로드되어 있다면 검증 가능
-	if (SourceDummyActor.IsValid())
-	{
-		AActor* Actor = SourceDummyActor.Get();
-		if (Actor)
-		{
-			UKawaiiFluidDummyComponent* DummyComp = Actor->FindComponentByClass<UKawaiiFluidDummyComponent>();
-			if (!DummyComp)
-			{
-				OutValidationErrors.Add(FText::Format(
-					NSLOCTEXT("NiagaraKawaiiFluid", 
-						"NoComponentError", 
-						"Actor '{0}' does not have a UKawaiiFluidDummyComponent. Please select an Actor with this component."),
-					FText::FromString(Actor->GetName())
-				));
-			}
-		}
-	}
+	// 추가 검증이 필요하다면 함수 파라미터 타입 등만 확인
+	// 예: GetParticlePosition의 Index가 Int인지 확인
 }
 
 //========================================
@@ -204,6 +184,13 @@ bool UNiagaraDataInterfaceKawaiiFluid::InitPerInstanceData(void* PerInstanceData
 {
 	FNDIKawaiiFluid_InstanceData* InstanceData = new (PerInstanceData) FNDIKawaiiFluid_InstanceData();
 
+	// ✅ Runtime 검증: User Parameter 연결 확인
+	if (SourceDummyActor.IsNull())
+	{
+		UE_LOG(LogTemp, Error, TEXT("UNiagaraDataInterfaceKawaiiFluid: SourceDummyActor is not set! Please assign an Actor in User Parameters."));
+		return true; // 초기화는 성공하지만 데이터 없음
+	}
+
 	// Actor에서 UKawaiiFluidDummyComponent 찾기
 	if (SourceDummyActor.IsValid())
 	{
@@ -214,12 +201,23 @@ bool UNiagaraDataInterfaceKawaiiFluid::InitPerInstanceData(void* PerInstanceData
 			if (DummyComp)
 			{
 				InstanceData->SourceComponent = DummyComp;
-				UE_LOG(LogTemp, Log, TEXT("Niagara DI: Found DummyComponent on %s"), *Actor->GetName());
+				
+				// ✅ 초기 CachedParticleCount 설정 (Tick 전에!)
+				const TArray<FKawaiiRenderParticle>& Particles = DummyComp->GetRenderParticles();
+				InstanceData->CachedParticleCount = Particles.Num();
+				
+				UE_LOG(LogTemp, Log, TEXT("Niagara DI: Found DummyComponent on %s (Particles: %d)"), 
+					*Actor->GetName(), InstanceData->CachedParticleCount);
 			}
 			else
 			{
-				UE_LOG(LogTemp, Warning, TEXT("Niagara DI: No DummyComponent found on %s"), *Actor->GetName());
+				UE_LOG(LogTemp, Error, TEXT("Niagara DI: Actor '%s' does not have UKawaiiFluidDummyComponent!"), 
+					*Actor->GetName());
 			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("Niagara DI: SourceDummyActor is invalid (Actor deleted or not loaded)"));
 		}
 	}
 
@@ -266,14 +264,28 @@ bool UNiagaraDataInterfaceKawaiiFluid::PerInstanceTick(void* PerInstanceData,
 	const TArray<FKawaiiRenderParticle>& Particles = DummyComp->GetRenderParticles();
 	InstanceData->CachedParticleCount = Particles.Num();
 
+	// 🔴 BREAKPOINT: PIE 실행 중에만 로그 출력
+	#if !UE_BUILD_SHIPPING
+	static bool bFirstTick = true;
+	if (bFirstTick && Particles.Num() > 0)
+	{
+		// ✅ World가 Game World인지 확인 (PIE, Standalone 등)
+		if (UWorld* World = DummyComp->GetWorld())
+		{
+			if (World->IsGameWorld())
+			{
+				UE_LOG(LogTemp, Error, TEXT("🔴 BREAKPOINT: PerInstanceTick - CachedParticleCount=%d (PIE)"), 
+					InstanceData->CachedParticleCount);
+				bFirstTick = false;
+			}
+		}
+	}
+	#endif
+
 	if (Particles.Num() == 0)
 	{
 		return false;
 	}
-
-	// GPU 버퍼 업데이트 (GPU Compute Simulation용, 현재는 사용 안 함)
-	// CPU VM Functions에서는 DummyComp를 직접 참조하므로 불필요
-	// UpdateGPUBuffers_RenderThread(InstanceData, Particles);
 
 	return true;
 }
@@ -335,10 +347,32 @@ void UNiagaraDataInterfaceKawaiiFluid::VMGetParticleCount(FVectorVMExternalFunct
 	VectorVM::FUserPtrHandler<FNDIKawaiiFluid_InstanceData> InstanceData(Context);
 	FNDIOutputParam<int32> OutCount(Context);
 
+	int32 Count = InstanceData->CachedParticleCount;
+
 	for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 	{
-		OutCount.SetAndAdvance(InstanceData->CachedParticleCount);
+		OutCount.SetAndAdvance(Count);
 	}
+
+	// ✅ PIE 실행 중에만 로그 출력 (첫 호출 시)
+	#if !UE_BUILD_SHIPPING
+	static bool bFirstCall = true;
+	if (bFirstCall && Count > 0)
+	{
+		// World 상태 확인 (InstanceData의 SourceComponent 사용)
+		if (InstanceData->SourceComponent.IsValid())
+		{
+			if (UWorld* World = InstanceData->SourceComponent->GetWorld())
+			{
+				if (World->IsGameWorld())
+				{
+					UE_LOG(LogTemp, Warning, TEXT("🎯 VMGetParticleCount called: %d particles (PIE)"), Count);
+					bFirstCall = false;
+				}
+			}
+		}
+	}
+	#endif
 }
 
 void UNiagaraDataInterfaceKawaiiFluid::VMGetParticlePosition(FVectorVMExternalFunctionContext& Context)
@@ -361,6 +395,24 @@ void UNiagaraDataInterfaceKawaiiFluid::VMGetParticlePosition(FVectorVMExternalFu
 	}
 
 	const TArray<FKawaiiRenderParticle>& Particles = DummyComp->GetRenderParticles();
+
+	// ✅ PIE 실행 중에만 로그 출력 (첫 호출 시)
+	#if !UE_BUILD_SHIPPING
+	static bool bFirstCall = true;
+	if (bFirstCall && Particles.Num() > 0)
+	{
+		if (UWorld* World = DummyComp->GetWorld())
+		{
+			if (World->IsGameWorld())
+			{
+				UE_LOG(LogTemp, Warning, TEXT("🎯 VMGetParticlePosition called: %d instances (PIE)"), Context.GetNumInstances());
+				UE_LOG(LogTemp, Warning, TEXT("  → First Particle Position: (%f, %f, %f)"), 
+					Particles[0].Position.X, Particles[0].Position.Y, Particles[0].Position.Z);
+				bFirstCall = false;
+			}
+		}
+	}
+	#endif
 
 	for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 	{

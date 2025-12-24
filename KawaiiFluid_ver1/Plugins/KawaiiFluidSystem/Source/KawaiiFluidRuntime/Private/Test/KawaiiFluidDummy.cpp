@@ -15,8 +15,9 @@ AKawaiiFluidDummy::AKawaiiFluidDummy()
 	RootSceneComponent = CreateDefaultSubobject<USceneComponent>(TEXT("RootComponent"));
 	RootComponent = RootSceneComponent;
 
-	// ✅ DummyComponent 생성 (실제 구현)
+	// ✅ DummyComponent 생성 및 Attach
 	DummyComponent = CreateDefaultSubobject<UKawaiiFluidDummyComponent>(TEXT("DummyComponent"));
+	DummyComponent->SetupAttachment(RootSceneComponent);
 
 	UE_LOG(LogTemp, Log, TEXT("AKawaiiFluidDummy: Created with UKawaiiFluidDummyComponent wrapper (Legacy)"));
 }
