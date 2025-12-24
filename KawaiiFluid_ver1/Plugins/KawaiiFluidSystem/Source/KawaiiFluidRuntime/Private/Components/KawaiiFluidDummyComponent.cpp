@@ -4,6 +4,8 @@
 #include "Rendering/KawaiiFluidRenderResource.h"
 #include "Rendering/FluidRendererSubsystem.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "NiagaraComponent.h"
+#include "NiagaraSystem.h"
 #include "Engine/World.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -27,6 +29,12 @@ void UKawaiiFluidDummyComponent::BeginPlay()
 	if (bEnableRendering && ShouldUseDebugMesh())
 	{
 		InitializeDebugMesh();
+	}
+
+	// Niagara 초기화
+	if (bEnableRendering && ShouldUseNiagara())
+	{
+		InitializeNiagara();
 	}
 
 	// 테스트 데이터 생성
@@ -118,6 +126,13 @@ void UKawaiiFluidDummyComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	{
 		UpdateDebugMeshInstances();
 	}
+
+	// Niagara 업데이트
+	if (ShouldUseNiagara() && NiagaraComponent)
+	{
+		// Niagara Data Interface가 자동으로 데이터 가져감
+		// 추가 업데이트 필요 없음
+	}
 }
 
 void UKawaiiFluidDummyComponent::InitializeRenderResource()
@@ -184,6 +199,55 @@ void UKawaiiFluidDummyComponent::InitializeDebugMesh()
 		}
 
 		UE_LOG(LogTemp, Log, TEXT("KawaiiFluidDummyComponent: Debug Mesh created"));
+	}
+}
+
+void UKawaiiFluidDummyComponent::InitializeNiagara()
+{
+	// 이미 생성되었으면 스킵
+	if (NiagaraComponent && NiagaraComponent->IsValidLowLevel())
+	{
+		NiagaraComponent->SetVisibility(true);
+		return;
+	}
+
+	AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidDummyComponent: No owner for Niagara component"));
+		return;
+	}
+
+	if (!NiagaraSystemTemplate)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidDummyComponent: No Niagara System Template assigned"));
+		return;
+	}
+
+	// Niagara Component 생성
+	NiagaraComponent = NewObject<UNiagaraComponent>(
+		this,
+		UNiagaraComponent::StaticClass(),
+		TEXT("NiagaraFluid")
+	);
+
+	if (NiagaraComponent)
+	{
+		// Owner의 RootComponent에 Attach
+		NiagaraComponent->SetupAttachment(Owner->GetRootComponent());
+		NiagaraComponent->RegisterComponent();
+		
+		// Niagara System 설정
+		NiagaraComponent->SetAsset(NiagaraSystemTemplate);
+		
+		// Auto Activate
+		NiagaraComponent->Activate(true);
+
+		UE_LOG(LogTemp, Log, TEXT("KawaiiFluidDummyComponent: Niagara Component created and activated"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("KawaiiFluidDummyComponent: Failed to create Niagara Component"));
 	}
 }
 

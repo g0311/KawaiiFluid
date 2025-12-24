@@ -1,0 +1,530 @@
+﻿// Copyright KawaiiFluid Team. All Rights Reserved.
+
+#include "NiagaraDI/NiagaraDataInterfaceKawaiiFluid.h"
+#include "Components/KawaiiFluidDummyComponent.h"
+#include "Core/KawaiiRenderParticle.h"
+#include "NiagaraShader.h"
+#include "NiagaraSystemInstance.h"
+#include "NiagaraCompileHashVisitor.h"
+#include "NiagaraTypes.h"
+#include "ShaderParameterUtils.h"
+#include "RHICommandList.h"
+
+//========================================
+// 함수 이름 정의
+//========================================
+
+const FName UNiagaraDataInterfaceKawaiiFluid::GetParticleCountName(TEXT("GetParticleCount"));
+const FName UNiagaraDataInterfaceKawaiiFluid::GetParticlePositionName(TEXT("GetParticlePosition"));
+const FName UNiagaraDataInterfaceKawaiiFluid::GetParticleVelocityName(TEXT("GetParticleVelocity"));
+const FName UNiagaraDataInterfaceKawaiiFluid::GetParticleRadiusName(TEXT("GetParticleRadius"));
+
+//========================================
+// 생성자
+//========================================
+
+UNiagaraDataInterfaceKawaiiFluid::UNiagaraDataInterfaceKawaiiFluid(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+	, bAutoUpdate(true)
+	, UpdateInterval(0.0f)
+{
+}
+
+//========================================
+// Niagara Type Registry 등록 (필수!)
+//========================================
+
+void UNiagaraDataInterfaceKawaiiFluid::PostInitProperties()
+{
+	Super::PostInitProperties();
+
+	// CDO (Class Default Object)일 때만 Type Registry에 등록
+	if (HasAnyFlags(RF_ClassDefaultObject))
+	{
+		// AllowAnyVariable: 변수 타입으로 사용 가능
+		// AllowParameter: User Parameter로 추가 가능
+		ENiagaraTypeRegistryFlags Flags = 
+			ENiagaraTypeRegistryFlags::AllowAnyVariable | 
+			ENiagaraTypeRegistryFlags::AllowParameter;
+		
+		FNiagaraTypeRegistry::Register(FNiagaraTypeDefinition(GetClass()), Flags);
+		
+		UE_LOG(LogTemp, Warning, TEXT("✅ UNiagaraDataInterfaceKawaiiFluid registered with Niagara Type Registry"));
+	}
+}
+
+//========================================
+// UPROPERTY 동기화
+//========================================
+
+bool UNiagaraDataInterfaceKawaiiFluid::CopyToInternal(UNiagaraDataInterface* Destination) const
+{
+	if (!Super::CopyToInternal(Destination))
+	{
+		return false;
+	}
+
+	UNiagaraDataInterfaceKawaiiFluid* DestTyped = CastChecked<UNiagaraDataInterfaceKawaiiFluid>(Destination);
+	DestTyped->SourceDummyActor = SourceDummyActor;
+	DestTyped->bAutoUpdate = bAutoUpdate;
+	DestTyped->UpdateInterval = UpdateInterval;
+
+	return true;
+}
+
+//========================================
+// 함수 시그니처 등록
+//========================================
+
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceKawaiiFluid::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
+{
+	// 1. GetParticleCount
+	{
+		FNiagaraFunctionSignature Sig;
+		Sig.Name = GetParticleCountName;
+		Sig.bMemberFunction = true;
+		Sig.bRequiresContext = false;
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("KawaiiFluid")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("Count")));
+		Sig.SetDescription(NSLOCTEXT("Niagara", "KawaiiFluid_GetParticleCount", "Returns the total number of fluid particles"));
+		OutFunctions.Add(Sig);
+	}
+
+	// 2. GetParticlePosition
+	{
+		FNiagaraFunctionSignature Sig;
+		Sig.Name = GetParticlePositionName;
+		Sig.bMemberFunction = true;
+		Sig.bRequiresContext = false;
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("KawaiiFluid")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("Index")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Position")));
+		Sig.SetDescription(NSLOCTEXT("Niagara", "KawaiiFluid_GetParticlePosition", "Returns position of particle at given index"));
+		OutFunctions.Add(Sig);
+	}
+
+	// 3. GetParticleVelocity
+	{
+		FNiagaraFunctionSignature Sig;
+		Sig.Name = GetParticleVelocityName;
+		Sig.bMemberFunction = true;
+		Sig.bRequiresContext = false;
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("KawaiiFluid")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("Index")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Velocity")));
+		Sig.SetDescription(NSLOCTEXT("Niagara", "KawaiiFluid_GetParticleVelocity", "Returns velocity of particle at given index"));
+		OutFunctions.Add(Sig);
+	}
+
+	// 4. GetParticleRadius
+	{
+		FNiagaraFunctionSignature Sig;
+		Sig.Name = GetParticleRadiusName;
+		Sig.bMemberFunction = true;
+		Sig.bRequiresContext = false;
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("KawaiiFluid")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("Radius")));
+		Sig.SetDescription(NSLOCTEXT("Niagara", "KawaiiFluid_GetParticleRadius", "Returns rendering radius for fluid particles"));
+		OutFunctions.Add(Sig);
+	}
+}
+#endif
+
+//========================================
+// 함수 유효성 검사 (컴파일 타임)
+//========================================
+
+void UNiagaraDataInterfaceKawaiiFluid::ValidateFunction(const FNiagaraFunctionSignature& Function, TArray<FText>& OutValidationErrors)
+{
+	// 부모 클래스 검증 먼저 수행
+	Super::ValidateFunction(Function, OutValidationErrors);
+
+	// SourceDummyActor가 설정되지 않았으면 경고
+	if (SourceDummyActor.IsNull())
+	{
+		OutValidationErrors.Add(NSLOCTEXT("NiagaraKawaiiFluid", 
+			"NoSourceActorError", 
+			"Source Dummy Actor is not set. Please assign an Actor with UKawaiiFluidDummyComponent in the Details panel."));
+		return;
+	}
+
+	// SourceDummyActor가 유효하지만 DummyComponent가 없는 경우 (런타임에만 확인 가능하지만 힌트 제공)
+	// 에디터 환경에서 Actor가 로드되어 있다면 검증 가능
+	if (SourceDummyActor.IsValid())
+	{
+		AActor* Actor = SourceDummyActor.Get();
+		if (Actor)
+		{
+			UKawaiiFluidDummyComponent* DummyComp = Actor->FindComponentByClass<UKawaiiFluidDummyComponent>();
+			if (!DummyComp)
+			{
+				OutValidationErrors.Add(FText::Format(
+					NSLOCTEXT("NiagaraKawaiiFluid", 
+						"NoComponentError", 
+						"Actor '{0}' does not have a UKawaiiFluidDummyComponent. Please select an Actor with this component."),
+					FText::FromString(Actor->GetName())
+				));
+			}
+		}
+	}
+}
+
+//========================================
+// VM 함수 바인딩
+//========================================
+
+void UNiagaraDataInterfaceKawaiiFluid::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, 
+                                                               void* InstanceData, 
+                                                               FVMExternalFunction& OutFunc)
+{
+	if (BindingInfo.Name == GetParticleCountName)
+	{
+		OutFunc = FVMExternalFunction::CreateUObject(this, &UNiagaraDataInterfaceKawaiiFluid::VMGetParticleCount);
+	}
+	else if (BindingInfo.Name == GetParticlePositionName)
+	{
+		OutFunc = FVMExternalFunction::CreateUObject(this, &UNiagaraDataInterfaceKawaiiFluid::VMGetParticlePosition);
+	}
+	else if (BindingInfo.Name == GetParticleVelocityName)
+	{
+		OutFunc = FVMExternalFunction::CreateUObject(this, &UNiagaraDataInterfaceKawaiiFluid::VMGetParticleVelocity);
+	}
+	else if (BindingInfo.Name == GetParticleRadiusName)
+	{
+		OutFunc = FVMExternalFunction::CreateUObject(this, &UNiagaraDataInterfaceKawaiiFluid::VMGetParticleRadius);
+	}
+}
+
+//========================================
+// Per-Instance 데이터 관리
+//========================================
+
+bool UNiagaraDataInterfaceKawaiiFluid::InitPerInstanceData(void* PerInstanceData, FNiagaraSystemInstance* SystemInstance)
+{
+	FNDIKawaiiFluid_InstanceData* InstanceData = new (PerInstanceData) FNDIKawaiiFluid_InstanceData();
+
+	// Actor에서 UKawaiiFluidDummyComponent 찾기
+	if (SourceDummyActor.IsValid())
+	{
+		AActor* Actor = SourceDummyActor.Get();
+		if (Actor)
+		{
+			UKawaiiFluidDummyComponent* DummyComp = Actor->FindComponentByClass<UKawaiiFluidDummyComponent>();
+			if (DummyComp)
+			{
+				InstanceData->SourceComponent = DummyComp;
+				UE_LOG(LogTemp, Log, TEXT("Niagara DI: Found DummyComponent on %s"), *Actor->GetName());
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("Niagara DI: No DummyComponent found on %s"), *Actor->GetName());
+			}
+		}
+	}
+
+	return true;
+}
+
+void UNiagaraDataInterfaceKawaiiFluid::DestroyPerInstanceData(void* PerInstanceData, FNiagaraSystemInstance* SystemInstance)
+{
+	FNDIKawaiiFluid_InstanceData* InstanceData = static_cast<FNDIKawaiiFluid_InstanceData*>(PerInstanceData);
+	InstanceData->~FNDIKawaiiFluid_InstanceData();
+}
+
+//========================================
+// 매 프레임 업데이트
+//========================================
+
+bool UNiagaraDataInterfaceKawaiiFluid::PerInstanceTick(void* PerInstanceData, 
+                                                         FNiagaraSystemInstance* SystemInstance, 
+                                                         float DeltaSeconds)
+{
+	FNDIKawaiiFluid_InstanceData* InstanceData = static_cast<FNDIKawaiiFluid_InstanceData*>(PerInstanceData);
+	
+	if (!bAutoUpdate)
+	{
+		return false;
+	}
+
+	// 업데이트 간격 체크
+	InstanceData->LastUpdateTime += DeltaSeconds;
+	if (UpdateInterval > 0.0f && InstanceData->LastUpdateTime < UpdateInterval)
+	{
+		return false;
+	}
+	InstanceData->LastUpdateTime = 0.0f;
+
+	// Component 유효성 체크
+	UKawaiiFluidDummyComponent* DummyComp = InstanceData->SourceComponent.Get();
+	if (!DummyComp)
+	{
+		return false;
+	}
+
+	// 파티클 데이터 가져오기
+	const TArray<FKawaiiRenderParticle>& Particles = DummyComp->GetRenderParticles();
+	InstanceData->CachedParticleCount = Particles.Num();
+
+	if (Particles.Num() == 0)
+	{
+		return false;
+	}
+
+	// GPU 버퍼 업데이트 (GPU Compute Simulation용, 현재는 사용 안 함)
+	// CPU VM Functions에서는 DummyComp를 직접 참조하므로 불필요
+	// UpdateGPUBuffers_RenderThread(InstanceData, Particles);
+
+	return true;
+}
+
+//========================================
+// GPU 버퍼 업데이트 (렌더 스레드)
+//========================================
+
+void UNiagaraDataInterfaceKawaiiFluid::UpdateGPUBuffers_RenderThread(FNDIKawaiiFluid_InstanceData* InstanceData, 
+                                                                       const TArray<FKawaiiRenderParticle>& Particles)
+{
+	int32 ParticleCount = Particles.Num();
+
+	// 렌더 스레드로 전송
+	ENQUEUE_RENDER_COMMAND(UpdateKawaiiFluidBuffers)(
+		[InstanceData, Particles, ParticleCount](FRHICommandListImmediate& RHICmdList)
+		{
+			// 버퍼 재할당이 필요한지 체크
+			if (InstanceData->BufferCapacity < ParticleCount)
+			{
+				int32 NewCapacity = FMath::Max(ParticleCount, 1024);
+				InstanceData->BufferCapacity = NewCapacity;
+
+				// Particle Buffer 생성 (FKawaiiRenderParticle 크기 = 32 bytes)
+				// UE 5.7 API: FRHIBufferCreateDesc 사용 (builder 패턴)
+				FRHIBufferCreateDesc BufferDesc;
+				BufferDesc.Size = NewCapacity * sizeof(FKawaiiRenderParticle);
+				BufferDesc.Usage = BUF_ShaderResource | BUF_Dynamic;
+				BufferDesc.DebugName = TEXT("KawaiiFluid_Particles");
+				
+				InstanceData->ParticleBuffer = RHICmdList.CreateBuffer(BufferDesc);
+				
+				// SRV 생성 (UE 5.7 API: FRHIViewDesc 사용)
+				InstanceData->ParticleSRV = RHICmdList.CreateShaderResourceView(
+					InstanceData->ParticleBuffer,
+					FRHIViewDesc::CreateBufferSRV()
+						.SetType(FRHIViewDesc::EBufferType::Typed)
+						.SetFormat(PF_R32_FLOAT)
+				);
+			}
+
+			// FKawaiiRenderParticle 직접 복사 (변환 없음)
+			void* Data = RHICmdList.LockBuffer(InstanceData->ParticleBuffer, 0, 
+			                                    ParticleCount * sizeof(FKawaiiRenderParticle), 
+			                                    RLM_WriteOnly);
+			FMemory::Memcpy(Data, Particles.GetData(), 
+			                 ParticleCount * sizeof(FKawaiiRenderParticle));
+			RHICmdList.UnlockBuffer(InstanceData->ParticleBuffer);
+		}
+	);
+}
+
+//========================================
+// VM 함수 구현 (CPU 시뮬레이션용)
+//========================================
+
+void UNiagaraDataInterfaceKawaiiFluid::VMGetParticleCount(FVectorVMExternalFunctionContext& Context)
+{
+	VectorVM::FUserPtrHandler<FNDIKawaiiFluid_InstanceData> InstanceData(Context);
+	FNDIOutputParam<int32> OutCount(Context);
+
+	for (int32 i = 0; i < Context.GetNumInstances(); ++i)
+	{
+		OutCount.SetAndAdvance(InstanceData->CachedParticleCount);
+	}
+}
+
+void UNiagaraDataInterfaceKawaiiFluid::VMGetParticlePosition(FVectorVMExternalFunctionContext& Context)
+{
+	VectorVM::FUserPtrHandler<FNDIKawaiiFluid_InstanceData> InstanceData(Context);
+	FNDIInputParam<int32> InIndex(Context);
+	FNDIOutputParam<FVector3f> OutPosition(Context);
+
+	// DummyComponent에서 파티클 데이터 가져오기
+	UKawaiiFluidDummyComponent* DummyComp = InstanceData->SourceComponent.Get();
+	if (!DummyComp)
+	{
+		// Component 없으면 제로 반환
+		for (int32 i = 0; i < Context.GetNumInstances(); ++i)
+		{
+			InIndex.GetAndAdvance();
+			OutPosition.SetAndAdvance(FVector3f::ZeroVector);
+		}
+		return;
+	}
+
+	const TArray<FKawaiiRenderParticle>& Particles = DummyComp->GetRenderParticles();
+
+	for (int32 i = 0; i < Context.GetNumInstances(); ++i)
+	{
+		int32 Index = InIndex.GetAndAdvance();
+		if (Particles.IsValidIndex(Index))
+		{
+			OutPosition.SetAndAdvance(Particles[Index].Position);
+		}
+		else
+		{
+			OutPosition.SetAndAdvance(FVector3f::ZeroVector);
+		}
+	}
+}
+
+void UNiagaraDataInterfaceKawaiiFluid::VMGetParticleVelocity(FVectorVMExternalFunctionContext& Context)
+{
+	VectorVM::FUserPtrHandler<FNDIKawaiiFluid_InstanceData> InstanceData(Context);
+	FNDIInputParam<int32> InIndex(Context);
+	FNDIOutputParam<FVector3f> OutVelocity(Context);
+
+	// DummyComponent에서 파티클 데이터 가져오기
+	UKawaiiFluidDummyComponent* DummyComp = InstanceData->SourceComponent.Get();
+	if (!DummyComp)
+	{
+		// Component 없으면 제로 반환
+		for (int32 i = 0; i < Context.GetNumInstances(); ++i)
+		{
+			InIndex.GetAndAdvance();
+			OutVelocity.SetAndAdvance(FVector3f::ZeroVector);
+		}
+		return;
+	}
+
+	const TArray<FKawaiiRenderParticle>& Particles = DummyComp->GetRenderParticles();
+
+	for (int32 i = 0; i < Context.GetNumInstances(); ++i)
+	{
+		int32 Index = InIndex.GetAndAdvance();
+		if (Particles.IsValidIndex(Index))
+		{
+			OutVelocity.SetAndAdvance(Particles[Index].Velocity);
+		}
+		else
+		{
+			OutVelocity.SetAndAdvance(FVector3f::ZeroVector);
+		}
+	}
+}
+
+void UNiagaraDataInterfaceKawaiiFluid::VMGetParticleRadius(FVectorVMExternalFunctionContext& Context)
+{
+	VectorVM::FUserPtrHandler<FNDIKawaiiFluid_InstanceData> InstanceData(Context);
+	FNDIOutputParam<float> OutRadius(Context);
+
+	UKawaiiFluidDummyComponent* DummyComp = InstanceData->SourceComponent.Get();
+	float Radius = DummyComp ? DummyComp->GetParticleRenderRadius() : 5.0f;
+
+	for (int32 i = 0; i < Context.GetNumInstances(); ++i)
+	{
+		OutRadius.SetAndAdvance(Radius);
+	}
+}
+
+//========================================
+// 기타 오버라이드
+//========================================
+
+bool UNiagaraDataInterfaceKawaiiFluid::Equals(const UNiagaraDataInterface* Other) const
+{
+	if (!Super::Equals(Other))
+	{
+		return false;
+	}
+
+	const UNiagaraDataInterfaceKawaiiFluid* OtherTyped = CastChecked<const UNiagaraDataInterfaceKawaiiFluid>(Other);
+	return SourceDummyActor == OtherTyped->SourceDummyActor &&
+	       bAutoUpdate == OtherTyped->bAutoUpdate &&
+	       FMath::IsNearlyEqual(UpdateInterval, OtherTyped->UpdateInterval);
+}
+
+void UNiagaraDataInterfaceKawaiiFluid::ProvidePerInstanceDataForRenderThread(void* DataForRenderThread, 
+                                                                              void* PerInstanceData, 
+                                                                              const FNiagaraSystemInstanceID& SystemInstance)
+{
+	// 렌더 스레드로 인스턴스 데이터 복사
+	FNDIKawaiiFluid_InstanceData* SourceData = static_cast<FNDIKawaiiFluid_InstanceData*>(PerInstanceData);
+	FNDIKawaiiFluid_InstanceData* DestData = new (DataForRenderThread) FNDIKawaiiFluid_InstanceData();
+	
+	*DestData = *SourceData;
+}
+
+//========================================
+// GPU 함수 HLSL 생성 (에디터 전용)
+//========================================
+
+#if WITH_EDITORONLY_DATA
+
+void UNiagaraDataInterfaceKawaiiFluid::GetParameterDefinitionHLSL(const FNiagaraDataInterfaceGPUParamInfo& ParamInfo, 
+                                                                    FString& OutHLSL)
+{
+	OutHLSL += TEXT("Buffer<float4> {ParameterName}_ParticleBuffer;\n");
+	OutHLSL += TEXT("int {ParameterName}_ParticleCount;\n");
+}
+
+bool UNiagaraDataInterfaceKawaiiFluid::GetFunctionHLSL(const FNiagaraDataInterfaceGPUParamInfo& ParamInfo, 
+                                                         const FNiagaraDataInterfaceGeneratedFunction& FunctionInfo, 
+                                                         int FunctionInstanceIndex, 
+                                                         FString& OutHLSL)
+{
+	if (FunctionInfo.DefinitionName == GetParticleCountName)
+	{
+		OutHLSL += FString::Printf(TEXT("void %s(out int Count) { Count = {ParameterName}_ParticleCount; }\n"), 
+		                            *FunctionInfo.InstanceName);
+		return true;
+	}
+	else if (FunctionInfo.DefinitionName == GetParticlePositionName)
+	{
+		// FKawaiiRenderParticle = 32 bytes = float4 × 2
+		// float4[0] = Position.xyz + Velocity.x
+		// float4[1] = Velocity.yz + Radius + Padding
+		OutHLSL += FString::Printf(TEXT("void %s(int Index, out float3 Position) {\n"), 
+		                            *FunctionInfo.InstanceName);
+		OutHLSL += TEXT("    float4 Data0 = {ParameterName}_ParticleBuffer[Index * 2 + 0];\n");
+		OutHLSL += TEXT("    Position = Data0.xyz;\n");
+		OutHLSL += TEXT("}\n");
+		return true;
+	}
+	else if (FunctionInfo.DefinitionName == GetParticleVelocityName)
+	{
+		// Velocity는 Data0.w + Data1.xy
+		OutHLSL += FString::Printf(TEXT("void %s(int Index, out float3 Velocity) {\n"), 
+		                            *FunctionInfo.InstanceName);
+		OutHLSL += TEXT("    float4 Data0 = {ParameterName}_ParticleBuffer[Index * 2 + 0];\n");
+		OutHLSL += TEXT("    float4 Data1 = {ParameterName}_ParticleBuffer[Index * 2 + 1];\n");
+		OutHLSL += TEXT("    Velocity = float3(Data0.w, Data1.xy);\n");
+		OutHLSL += TEXT("}\n");
+		return true;
+	}
+	else if (FunctionInfo.DefinitionName == GetParticleRadiusName)
+	{
+		// Radius는 Data1.z (인덱스 0 기준)
+		OutHLSL += FString::Printf(TEXT("void %s(out float Radius) {\n"), 
+		                            *FunctionInfo.InstanceName);
+		OutHLSL += TEXT("    float4 Data1 = {ParameterName}_ParticleBuffer[0 * 2 + 1];\n");
+		OutHLSL += TEXT("    Radius = Data1.z;\n");
+		OutHLSL += TEXT("}\n");
+		return true;
+	}
+
+	return false;
+}
+
+bool UNiagaraDataInterfaceKawaiiFluid::AppendCompileHash(FNiagaraCompileHashVisitor* InVisitor) const
+{
+	if (!Super::AppendCompileHash(InVisitor))
+	{
+		return false;
+	}
+
+	// 버전 업데이트 (구조 변경)
+	InVisitor->UpdatePOD(TEXT("KawaiiFluidNiagaraDI"), (int32)2);
+	
+	return true;
+}
+
+#endif // WITH_EDITORONLY_DATA

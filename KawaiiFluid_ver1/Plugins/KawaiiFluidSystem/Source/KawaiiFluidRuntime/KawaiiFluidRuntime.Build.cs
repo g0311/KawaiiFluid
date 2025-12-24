@@ -45,7 +45,8 @@ public class KawaiiFluidRuntime : ModuleRules
 				"Engine",
 				"RenderCore",
 				"Renderer",
-				"RHI"
+				"RHI",
+				"Niagara"  // Niagara Component 사용을 위해 추가
 			}
 		);
 

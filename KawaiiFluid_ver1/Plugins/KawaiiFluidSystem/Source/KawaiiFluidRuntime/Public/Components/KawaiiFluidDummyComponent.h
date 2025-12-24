@@ -97,6 +97,7 @@ public:
 	/** 
 	 * 렌더링 방식 선택
 	 * - DebugMesh: Instanced Static Mesh
+	 * - Niagara: Niagara Particles (테스트)
 	 * - SSFR: Screen Space Fluid Rendering
 	 * - Both: 둘 다 (디버그용)
 	 */
@@ -106,6 +107,14 @@ public:
 	/** 디버그 메시 컴포넌트 (자동 생성) */
 	UPROPERTY()
 	UInstancedStaticMeshComponent* DebugMeshComponent;
+
+	/** Niagara 컴포넌트 (Niagara 모드 시 자동 생성) */
+	UPROPERTY()
+	class UNiagaraComponent* NiagaraComponent;
+
+	/** Niagara System 템플릿 (Niagara 모드 사용 시) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Test|Rendering", meta = (EditCondition = "RenderingMode == EKawaiiFluidRenderingMode::Niagara"))
+	class UNiagaraSystem* NiagaraSystemTemplate;
 
 	//========================================
 	// 블루프린트 함수
@@ -122,6 +131,12 @@ public:
 	/** 현재 파티클 수 반환 */
 	UFUNCTION(BlueprintPure, Category = "Test")
 	int32 GetCurrentParticleCount() const { return TestParticles.Num(); }
+
+	/** Niagara Data Interface를 위한 파티클 데이터 접근 */
+	const TArray<FKawaiiRenderParticle>& GetRenderParticles() const 
+	{ 
+		return TestParticles; 
+	}
 
 	/** 테스트 패턴 변경 */
 	UFUNCTION(BlueprintCallable, Category = "Test")
@@ -170,6 +185,13 @@ public:
 		       RenderingMode == EKawaiiFluidRenderingMode::Both;
 	}
 
+	/** Niagara 렌더링 사용 여부 */
+	bool ShouldUseNiagara() const
+	{
+		return RenderingMode == EKawaiiFluidRenderingMode::Niagara || 
+		       RenderingMode == EKawaiiFluidRenderingMode::Both;
+	}
+
 	virtual UInstancedStaticMeshComponent* GetDebugMeshComponent() const override
 	{
 		return DebugMeshComponent;
@@ -210,6 +232,9 @@ private:
 
 	/** 디버그 메시 초기화 */
 	void InitializeDebugMesh();
+
+	/** Niagara 초기화 */
+	void InitializeNiagara();
 
 	/** 디버그 메시 업데이트 */
 	void UpdateDebugMeshInstances();
