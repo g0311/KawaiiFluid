@@ -3,6 +3,7 @@
 #include "Rendering/FluidRendererSubsystem.h"
 #include "Rendering/FluidSceneViewExtension.h"
 #include "Rendering/IKawaiiFluidRenderable.h"
+#include "Components/KawaiiFluidRenderController.h"
 #include "Core/FluidSimulator.h"
 
 void UFluidRendererSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -21,6 +22,7 @@ void UFluidRendererSubsystem::Deinitialize()
 	ViewExtension.Reset();
 
 	RegisteredRenderables.Empty();
+	RegisteredRenderControllers.Empty();
 	RegisteredSimulators.Empty();
 
 	Super::Deinitialize();
@@ -221,3 +223,47 @@ void UFluidRendererSubsystem::UnregisterSimulator(AFluidSimulator* Simulator)
 		UE_LOG(LogTemp, Log, TEXT("FluidRendererSubsystem: Unregistered Simulator (legacy) %s"), *Simulator->GetName());
 	}
 }
+
+//========================================
+// 신규 아키텍처: RenderController 관리
+//========================================
+
+void UFluidRendererSubsystem::RegisterRenderController(UKawaiiFluidRenderController* Controller)
+{
+	if (!Controller)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("FluidRendererSubsystem: RegisterRenderController - Controller is null"));
+		return;
+	}
+
+	if (RegisteredRenderControllers.Contains(Controller))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("FluidRendererSubsystem: RenderController already registered: %s"), 
+			*Controller->GetName());
+		return;
+	}
+
+	RegisteredRenderControllers.Add(Controller);
+	
+	UE_LOG(LogTemp, Log, TEXT("FluidRendererSubsystem: Registered RenderController %s (Total: %d)"), 
+		*Controller->GetName(), 
+		RegisteredRenderControllers.Num());
+}
+
+void UFluidRendererSubsystem::UnregisterRenderController(UKawaiiFluidRenderController* Controller)
+{
+	if (!Controller)
+	{
+		return;
+	}
+
+	int32 Removed = RegisteredRenderControllers.Remove(Controller);
+	
+	if (Removed > 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("FluidRendererSubsystem: Unregistered RenderController %s (Remaining: %d)"), 
+			*Controller->GetName(), 
+			RegisteredRenderControllers.Num());
+	}
+}
+

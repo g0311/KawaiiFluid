@@ -10,16 +10,18 @@
 class AFluidSimulator;
 class FFluidSceneViewExtension;
 class IKawaiiFluidRenderable;
+class UKawaiiFluidRenderController;
 
 /**
  * 유체 렌더링 월드 서브시스템
  *
  * 역할:
- * - IKawaiiFluidRenderable 인터페이스 구현 객체 통합 관리
+ * - IKawaiiFluidRenderable 인터페이스 구현 객체 통합 관리 (레거시)
+ * - UKawaiiFluidRenderController 통합 관리 (신규 아키텍처)
  * - SSFR 렌더링 파이프라인 제공 (ViewExtension)
  * - DebugMesh 렌더링은 Unreal 기본 파이프라인 사용
  *
- * @note SSFR 모드 객체만 ViewExtension에서 처리됨
+ * @note 하이브리드 방식: 레거시(IKawaiiFluidRenderable)와 신규(RenderController) 모두 지원
  */
 UCLASS()
 class KAWAIIFLUIDRUNTIME_API UFluidRendererSubsystem : public UWorldSubsystem
@@ -57,6 +59,19 @@ public:
 	TArray<IKawaiiFluidRenderable*> GetAllRenderables() const;
 
 	//========================================
+	// 신규 아키텍처: RenderController 관리
+	//========================================
+
+	/** RenderController 등록 (자동 호출됨) */
+	void RegisterRenderController(UKawaiiFluidRenderController* Controller);
+
+	/** RenderController 해제 */
+	void UnregisterRenderController(UKawaiiFluidRenderController* Controller);
+
+	/** 등록된 모든 RenderController 반환 */
+	const TArray<UKawaiiFluidRenderController*>& GetAllRenderControllers() const { return RegisteredRenderControllers; }
+
+	//========================================
 	// 레거시 호환성 (기존 코드 지원)
 	//========================================
 
@@ -88,6 +103,10 @@ private:
 	/** 등록된 렌더링 가능한 모든 객체 (Actor와 Component 모두 지원) */
 	UPROPERTY()
 	TArray<TScriptInterface<IKawaiiFluidRenderable>> RegisteredRenderables;
+
+	/** 등록된 RenderController들 (신규 아키텍처) */
+	UPROPERTY()
+	TArray<UKawaiiFluidRenderController*> RegisteredRenderControllers;
 
 	//========================================
 	// 레거시 저장소 (호환성 유지)
