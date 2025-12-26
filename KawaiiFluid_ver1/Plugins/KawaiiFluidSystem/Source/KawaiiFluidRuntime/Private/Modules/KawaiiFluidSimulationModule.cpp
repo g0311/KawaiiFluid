@@ -351,3 +351,24 @@ bool UKawaiiFluidSimulationModule::GetParticleInfo(int32 ParticleIndex, FVector&
 
 	return true;
 }
+
+//========================================
+// IKawaiiFluidDataProvider Interface
+//========================================
+
+float UKawaiiFluidSimulationModule::GetParticleRenderRadius() const
+{
+	// Preset에서 가져오기
+	if (Preset)
+	{
+		return Preset->ParticleRadius;
+	}
+	return 10.0f; // 기본값
+}
+
+FString UKawaiiFluidSimulationModule::GetDebugName() const
+{
+	AActor* Owner = GetOwnerActor();
+	return FString::Printf(TEXT("SimulationModule_%s"),
+		Owner ? *Owner->GetName() : TEXT("NoOwner"));
+}

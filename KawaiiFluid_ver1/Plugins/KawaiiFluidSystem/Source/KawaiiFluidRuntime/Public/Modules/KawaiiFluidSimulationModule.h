@@ -6,6 +6,7 @@
 #include "UObject/Object.h"
 #include "Core/FluidParticle.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
+#include "Interfaces/IKawaiiFluidDataProvider.h"
 #include "KawaiiFluidSimulationModule.generated.h"
 
 /** Collision event callback type */
@@ -36,7 +37,7 @@ class UFluidInteractionComponent;
  * - Blueprint에서 직접 함수 호출 가능
  */
 UCLASS(DefaultToInstanced, EditInlineNew, BlueprintType)
-class KAWAIIFLUIDRUNTIME_API UKawaiiFluidSimulationModule : public UObject
+class KAWAIIFLUIDRUNTIME_API UKawaiiFluidSimulationModule : public UObject, public IKawaiiFluidDataProvider
 {
 	GENERATED_BODY()
 
@@ -89,18 +90,18 @@ public:
 	bool HasAnyOverride() const;
 
 	//========================================
-	// 파티클 데이터 접근
+	// 파티클 데이터 접근 (IKawaiiFluidDataProvider 구현)
 	//========================================
 
-	/** 파티클 배열 (읽기 전용) */
-	const TArray<FFluidParticle>& GetParticles() const { return Particles; }
+	/** 파티클 배열 (읽기 전용) - IKawaiiFluidDataProvider::GetParticles() */
+	virtual const TArray<FFluidParticle>& GetParticles() const override { return Particles; }
 
 	/** 파티클 배열 (수정 가능 - Subsystem/Context 용) */
 	TArray<FFluidParticle>& GetParticlesMutable() { return Particles; }
 
-	/** 파티클 수 */
+	/** 파티클 수 - IKawaiiFluidDataProvider::GetParticleCount() */
 	UFUNCTION(BlueprintPure, Category = "Fluid")
-	int32 GetParticleCount() const { return Particles.Num(); }
+	virtual int32 GetParticleCount() const override { return Particles.Num(); }
 
 	//========================================
 	// 파티클 생성/삭제
@@ -382,4 +383,17 @@ private:
 public:
 	/** Get particle last event time map (for cooldown tracking) */
 	TMap<int32, float>& GetParticleLastEventTimeMap() { return ParticleLastEventTime; }
+
+	//========================================
+	// IKawaiiFluidDataProvider Interface (나머지 메서드)
+	//========================================
+
+	/** Get particle render radius - IKawaiiFluidDataProvider */
+	virtual float GetParticleRenderRadius() const override;
+
+	/** Data validity check - IKawaiiFluidDataProvider */
+	virtual bool IsDataValid() const override { return Particles.Num() > 0; }
+
+	/** Get debug name - IKawaiiFluidDataProvider */
+	virtual FString GetDebugName() const override;
 };

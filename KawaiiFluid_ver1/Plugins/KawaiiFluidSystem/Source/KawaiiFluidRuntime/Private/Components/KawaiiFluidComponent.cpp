@@ -4,7 +4,11 @@
 #include "Core/KawaiiFluidSimulatorSubsystem.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
 #include "Modules/KawaiiFluidSimulationModule.h"
+#include "Modules/KawaiiFluidRenderingModule.h"
 #include "Data/KawaiiFluidPresetDataAsset.h"
+#include "Rendering/FluidRendererSubsystem.h"
+#include "Rendering/KawaiiFluidISMRenderer.h"
+#include "Rendering/KawaiiFluidSSFRRenderer.h"
 
 UKawaiiFluidComponent::UKawaiiFluidComponent()
 {
@@ -13,6 +17,9 @@ UKawaiiFluidComponent::UKawaiiFluidComponent()
 
 	// 시뮬레이션 모듈 생성
 	SimulationModule = CreateDefaultSubobject<UKawaiiFluidSimulationModule>(TEXT("SimulationModule"));
+
+	// 렌더링 모듈 생성
+	RenderingModule = CreateDefaultSubobject<UKawaiiFluidRenderingModule>(TEXT("RenderingModule"));
 }
 
 void UKawaiiFluidComponent::BeginPlay()
@@ -42,9 +49,37 @@ void UKawaiiFluidComponent::BeginPlay()
 		}
 	}
 
-	// 렌더 모듈 초기화...
+	// 렌더링 모듈 초기화
+	if (bEnableRendering && RenderingModule && SimulationModule)
 	{
-		
+		// 1. RenderingModule 초기화 (SimulationModule을 IKawaiiFluidDataProvider로 전달)
+		RenderingModule->Initialize(GetWorld(), GetOwner(), SimulationModule);
+
+		// 2. ISM 렌더러 설정 적용
+		if (UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer())
+		{
+			ISMRenderer->ApplySettings(ISMSettings);
+		}
+
+		// 3. SSFR 렌더러 설정 적용
+		if (UKawaiiFluidSSFRRenderer* SSFRRenderer = RenderingModule->GetSSFRRenderer())
+		{
+			SSFRRenderer->ApplySettings(SSFRSettings);
+		}
+
+		// 4. FluidRendererSubsystem에 등록
+		if (UWorld* World = GetWorld())
+		{
+			if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+			{
+				RendererSubsystem->RegisterRenderingModule(RenderingModule);
+			}
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("KawaiiFluidComponent [%s]: Rendering initialized (ISM: %s, SSFR: %s)"),
+			*GetName(),
+			ISMSettings.bEnabled ? TEXT("Enabled") : TEXT("Disabled"),
+			SSFRSettings.bEnabled ? TEXT("Enabled") : TEXT("Disabled"));
 	}
 
 	// Module을 Subsystem에 등록 (Component가 아닌 Module!)
@@ -67,6 +102,23 @@ void UKawaiiFluidComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	// 이벤트 클리어
 	OnParticleHit.Clear();
 
+	// 렌더링 모듈 정리
+	if (RenderingModule)
+	{
+		// FluidRendererSubsystem에서 등록 해제
+		if (UWorld* World = GetWorld())
+		{
+			if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+			{
+				RendererSubsystem->UnregisterRenderingModule(RenderingModule);
+			}
+		}
+
+		// RenderingModule 정리
+		RenderingModule->Cleanup();
+		RenderingModule = nullptr;
+	}
+
 	// 시뮬레이션 모듈 정리
 	if (SimulationModule)
 	{
@@ -87,6 +139,12 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 	{
 		ProcessContinuousSpawn(DeltaTime);
 	}
+
+	// 렌더링 업데이트
+	if (RenderingModule)
+	{
+		RenderingModule->UpdateRenderers();
+	}
 }
 
 #if WITH_EDITOR
@@ -102,16 +160,18 @@ void UKawaiiFluidComponent::PostEditChangeProperty(FPropertyChangedEvent& Proper
 #endif
 
 //========================================
-// IKawaiiFluidRenderable Interface
+// IKawaiiFluidRenderable Interface (Legacy)
 //========================================
 
 FKawaiiFluidRenderResource* UKawaiiFluidComponent::GetFluidRenderResource() const
 {
+	// RenderingModule로 대체됨
 	return nullptr;
 }
 
 bool UKawaiiFluidComponent::IsFluidRenderResourceValid() const
 {
+	// RenderingModule로 대체됨
 	return false;
 }
 
@@ -122,11 +182,14 @@ float UKawaiiFluidComponent::GetParticleRenderRadius() const
 
 FString UKawaiiFluidComponent::GetDebugName() const
 {
-	return FString::Printf(TEXT("KawaiiFluid_%s"), *GetName());
+	AActor* Owner = GetOwner();
+	return FString::Printf(TEXT("FluidComponent_%s"),
+		Owner ? *Owner->GetName() : TEXT("NoOwner"));
 }
 
 bool UKawaiiFluidComponent::ShouldUseSSFR() const
 {
+	// RenderingModule로 대체됨
 	return false;
 }
 

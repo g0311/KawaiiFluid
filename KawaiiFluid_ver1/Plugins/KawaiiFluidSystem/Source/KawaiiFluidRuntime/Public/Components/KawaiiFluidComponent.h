@@ -7,8 +7,11 @@
 #include "Rendering/IKawaiiFluidRenderable.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
 #include "Modules/KawaiiFluidSimulationModule.h"
+#include "Rendering/KawaiiFluidRendererSettings.h"
 #include "KawaiiFluidComponent.generated.h"
+
 class FKawaiiFluidRenderResource;
+class UKawaiiFluidRenderingModule;
 
 /**
  * Particle hit event delegate
@@ -63,7 +66,7 @@ public:
 #endif
 
 	//========================================
-	// IKawaiiFluidRenderable Interface
+	// IKawaiiFluidRenderable Interface (Legacy)
 	//========================================
 
 	virtual FKawaiiFluidRenderResource* GetFluidRenderResource() const override;
@@ -82,7 +85,6 @@ public:
 	/** 시뮬레이션 모듈 - 파티클/콜라이더/외력 등 모든 API 제공 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Instanced, Category = "Fluid")
 	TObjectPtr<UKawaiiFluidSimulationModule> SimulationModule;
-	// TODO: UKawaiiFluidRenderingModule* RenderingModule;
 
 	//========================================
 	// Configuration
@@ -91,6 +93,22 @@ public:
 	/** Use world collision */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Collision")
 	bool bUseWorldCollision = true;
+
+	//========================================
+	// Rendering Settings
+	//========================================
+
+	/** Enable rendering */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering")
+	bool bEnableRendering = true;
+
+	/** ISM Renderer Settings */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering", meta = (EditCondition = "bEnableRendering", DisplayName = "ISM Settings"))
+	FKawaiiFluidISMRendererSettings ISMSettings;
+
+	/** SSFR Renderer Settings */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering", meta = (EditCondition = "bEnableRendering", DisplayName = "SSFR Settings"))
+	FKawaiiFluidSSFRRendererSettings SSFRSettings;
 
 	//========================================
 	// Auto Spawn
@@ -153,6 +171,14 @@ public:
 	FOnFluidParticleHitComponent OnParticleHit;
 
 private:
+	//========================================
+	// Rendering Module (Internal)
+	//========================================
+
+	/** Rendering module - renderer management */
+	UPROPERTY()
+	TObjectPtr<UKawaiiFluidRenderingModule> RenderingModule;
+
 	//========================================
 	// Continuous Spawn
 	//========================================
