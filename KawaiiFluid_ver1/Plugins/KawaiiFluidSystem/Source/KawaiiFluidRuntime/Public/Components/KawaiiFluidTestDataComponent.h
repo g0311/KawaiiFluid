@@ -10,7 +10,7 @@
 #include "Rendering/KawaiiFluidRendererSettings.h"
 #include "KawaiiFluidTestDataComponent.generated.h"
 
-class UKawaiiFluidRenderController;
+class UKawaiiFluidRenderingModule;
 
 /**
  * 새 아키텍처 테스트용 유체 데이터 제공 컴포넌트
@@ -184,9 +184,9 @@ protected:
 	// 내부 렌더링 (Details Panel에 노출 안 됨)
 	//========================================
 
-	/** Internal render controller (not exposed in Details panel) */
+	/** Internal rendering module (not exposed in Details panel) */
 	UPROPERTY()
-	TObjectPtr<UKawaiiFluidRenderController> RenderController;
+	TObjectPtr<UKawaiiFluidRenderingModule> RenderingModule;
 
 	//========================================
 	// 내부 메서드

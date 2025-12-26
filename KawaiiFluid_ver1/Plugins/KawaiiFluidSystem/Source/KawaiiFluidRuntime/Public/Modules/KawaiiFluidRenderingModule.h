@@ -6,13 +6,13 @@
 #include "UObject/Object.h"
 #include "Interfaces/IKawaiiFluidDataProvider.h"
 #include "Core/KawaiiRenderParticle.h"
-#include "KawaiiFluidRenderController.generated.h"
+#include "KawaiiFluidRenderingModule.generated.h"
 
 class UKawaiiFluidISMRenderer;
 class UKawaiiFluidSSFRRenderer;
 
 /**
- * Fluid Rendering Controller (UObject-based)
+ * Fluid Rendering Module (UObject-based)
  *
  * Orchestrates fluid rendering by owning and managing internal renderer instances.
  * Receives simulation data from DataProvider and distributes to enabled renderers.
@@ -29,22 +29,22 @@ class UKawaiiFluidSSFRRenderer;
  * Usage:
  * @code
  * // Owned internally by TestDataComponent
- * RenderController = NewObject<UKawaiiFluidRenderController>(this);
- * RenderController->bEnableISMRenderer = true;
- * RenderController->bEnableSSFRRenderer = false;
- * RenderController->Initialize(GetWorld(), GetOwner(), this);
+ * RenderingModule = NewObject<UKawaiiFluidRenderingModule>(this);
+ * RenderingModule->bEnableISMRenderer = true;
+ * RenderingModule->bEnableSSFRRenderer = false;
+ * RenderingModule->Initialize(GetWorld(), GetOwner(), this);
  * @endcode
  */
 UCLASS()
-class KAWAIIFLUIDRUNTIME_API UKawaiiFluidRenderController : public UObject
+class KAWAIIFLUIDRUNTIME_API UKawaiiFluidRenderingModule : public UObject
 {
 	GENERATED_BODY()
 
 public:
-	UKawaiiFluidRenderController();
+	UKawaiiFluidRenderingModule();
 
 	/**
-	 * Initialize RenderController
+	 * Initialize RenderingModule
 	 *
 	 * Called by owning component after creation.
 	 * Creates both renderer instances and sets their enabled state.

@@ -1,18 +1,18 @@
 // Copyright KawaiiFluid Team. All Rights Reserved.
 
-#include "Rendering/KawaiiFluidRenderController.h"
+#include "Modules/KawaiiFluidRenderingModule.h"
 #include "Rendering/KawaiiFluidISMRenderer.h"
 #include "Rendering/KawaiiFluidSSFRRenderer.h"
 #include "Core/FluidParticle.h"
 
-UKawaiiFluidRenderController::UKawaiiFluidRenderController()
+UKawaiiFluidRenderingModule::UKawaiiFluidRenderingModule()
 {
 	// Create renderer instances as default subobjects (Instanced pattern)
 	ISMRenderer = CreateDefaultSubobject<UKawaiiFluidISMRenderer>(TEXT("ISMRenderer"));
 	SSFRRenderer = CreateDefaultSubobject<UKawaiiFluidSSFRRenderer>(TEXT("SSFRRenderer"));
 }
 
-void UKawaiiFluidRenderController::Initialize(UWorld* InWorld, AActor* InOwner, IKawaiiFluidDataProvider* InDataProvider)
+void UKawaiiFluidRenderingModule::Initialize(UWorld* InWorld, AActor* InOwner, IKawaiiFluidDataProvider* InDataProvider)
 {
 	CachedWorld = InWorld;
 	CachedOwner = InOwner;
@@ -29,12 +29,12 @@ void UKawaiiFluidRenderController::Initialize(UWorld* InWorld, AActor* InOwner, 
 		SSFRRenderer->Initialize(InWorld, InOwner);
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("RenderController: Initialized (ISM: %s, SSFR: %s)"),
+	UE_LOG(LogTemp, Log, TEXT("RenderingModule: Initialized (ISM: %s, SSFR: %s)"),
 		ISMRenderer && ISMRenderer->IsEnabled() ? TEXT("Enabled") : TEXT("Disabled"),
 		SSFRRenderer && SSFRRenderer->IsEnabled() ? TEXT("Enabled") : TEXT("Disabled"));
 }
 
-void UKawaiiFluidRenderController::Cleanup()
+void UKawaiiFluidRenderingModule::Cleanup()
 {
 	if (ISMRenderer)
 	{
@@ -51,7 +51,7 @@ void UKawaiiFluidRenderController::Cleanup()
 	CachedOwner = nullptr;
 }
 
-void UKawaiiFluidRenderController::UpdateRenderers()
+void UKawaiiFluidRenderingModule::UpdateRenderers()
 {
 	if (!DataProviderPtr || !DataProviderPtr->IsDataValid())
 	{
@@ -70,7 +70,7 @@ void UKawaiiFluidRenderController::UpdateRenderers()
 	}
 }
 
-int32 UKawaiiFluidRenderController::GetParticleCount() const
+int32 UKawaiiFluidRenderingModule::GetParticleCount() const
 {
 	if (DataProviderPtr)
 	{

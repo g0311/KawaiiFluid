@@ -1,7 +1,7 @@
 // Copyright KawaiiFluid Team. All Rights Reserved.
 
 #include "Components/KawaiiFluidTestDataComponent.h"
-#include "Rendering/KawaiiFluidRenderController.h"
+#include "Modules/KawaiiFluidRenderingModule.h"
 #include "Rendering/FluidRendererSubsystem.h"
 #include "Rendering/KawaiiFluidISMRenderer.h"
 #include "Rendering/KawaiiFluidSSFRRenderer.h"
@@ -13,8 +13,8 @@ UKawaiiFluidTestDataComponent::UKawaiiFluidTestDataComponent()
 	PrimaryComponentTick.bStartWithTickEnabled = true;
 	PrimaryComponentTick.TickGroup = TG_PrePhysics;
 
-	// Create default subobject for render controller (Instanced pattern)
-	RenderController = CreateDefaultSubobject<UKawaiiFluidRenderController>(TEXT("RenderController"));
+	// Create default subobject for rendering module (Instanced pattern)
+	RenderingModule = CreateDefaultSubobject<UKawaiiFluidRenderingModule>(TEXT("RenderingModule"));
 }
 
 void UKawaiiFluidTestDataComponent::BeginPlay()
@@ -24,18 +24,18 @@ void UKawaiiFluidTestDataComponent::BeginPlay()
 	// Generate test data
 	GenerateTestParticles();
 
-	// Initialize render controller if rendering is enabled
-	if (bEnableRendering && RenderController)
+	// Initialize rendering module if rendering is enabled
+	if (bEnableRendering && RenderingModule)
 	{
-		RenderController->Initialize(GetWorld(), GetOwner(), this);
+		RenderingModule->Initialize(GetWorld(), GetOwner(), this);
 
 		// Apply settings from structs to renderers
-		if (UKawaiiFluidISMRenderer* ISMRenderer = RenderController->GetISMRenderer())
+		if (UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer())
 		{
 			ISMRenderer->ApplySettings(ISMSettings);
 		}
 
-		if (UKawaiiFluidSSFRRenderer* SSFRRenderer = RenderController->GetSSFRRenderer())
+		if (UKawaiiFluidSSFRRenderer* SSFRRenderer = RenderingModule->GetSSFRRenderer())
 		{
 			SSFRRenderer->ApplySettings(SSFRSettings);
 		}
@@ -45,11 +45,11 @@ void UKawaiiFluidTestDataComponent::BeginPlay()
 		{
 			if (UFluidRendererSubsystem* Subsystem = World->GetSubsystem<UFluidRendererSubsystem>())
 			{
-				Subsystem->RegisterRenderController(RenderController);
+				Subsystem->RegisterRenderingModule(RenderingModule);
 			}
 		}
 
-		UE_LOG(LogTemp, Log, TEXT("KawaiiFluidTestDataComponent: Initialized with %d particles and RenderController (ISM: %s, SSFR: %s)"),
+		UE_LOG(LogTemp, Log, TEXT("KawaiiFluidTestDataComponent: Initialized with %d particles and RenderingModule (ISM: %s, SSFR: %s)"),
 			TestParticles.Num(),
 			ISMSettings.bEnabled ? TEXT("Enabled") : TEXT("Disabled"),
 			SSFRSettings.bEnabled ? TEXT("Enabled") : TEXT("Disabled"));
@@ -63,20 +63,20 @@ void UKawaiiFluidTestDataComponent::BeginPlay()
 
 void UKawaiiFluidTestDataComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	if (RenderController)
+	if (RenderingModule)
 	{
 		// Unregister from subsystem
 		if (UWorld* World = GetWorld())
 		{
 			if (UFluidRendererSubsystem* Subsystem = World->GetSubsystem<UFluidRendererSubsystem>())
 			{
-				Subsystem->UnregisterRenderController(RenderController);
+				Subsystem->UnregisterRenderingModule(RenderingModule);
 			}
 		}
 
-		// Cleanup render controller
-		RenderController->Cleanup();
-		RenderController = nullptr;
+		// Cleanup rendering module
+		RenderingModule->Cleanup();
+		RenderingModule = nullptr;
 	}
 
 	Super::EndPlay(EndPlayReason);
@@ -96,9 +96,9 @@ void UKawaiiFluidTestDataComponent::TickComponent(float DeltaTime, ELevelTick Ti
 	}
 
 	// Update rendering
-	if (RenderController)
+	if (RenderingModule)
 	{
-		RenderController->UpdateRenderers();
+		RenderingModule->UpdateRenderers();
 	}
 }
 

@@ -10,18 +10,18 @@
 class AFluidSimulator;
 class FFluidSceneViewExtension;
 class IKawaiiFluidRenderable;
-class UKawaiiFluidRenderController;
+class UKawaiiFluidRenderingModule;
 
 /**
  * 유체 렌더링 월드 서브시스템
  *
  * 역할:
  * - IKawaiiFluidRenderable 인터페이스 구현 객체 통합 관리 (레거시)
- * - UKawaiiFluidRenderController 통합 관리 (신규 아키텍처)
+ * - UKawaiiFluidRenderingModule 통합 관리 (신규 아키텍처)
  * - SSFR 렌더링 파이프라인 제공 (ViewExtension)
  * - ISM 렌더링은 Unreal 기본 파이프라인 사용
  *
- * @note 하이브리드 방식: 레거시(IKawaiiFluidRenderable)와 신규(RenderController) 모두 지원
+ * @note 하이브리드 방식: 레거시(IKawaiiFluidRenderable)와 신규(RenderingModule) 모두 지원
  */
 UCLASS()
 class KAWAIIFLUIDRUNTIME_API UFluidRendererSubsystem : public UWorldSubsystem
@@ -59,17 +59,17 @@ public:
 	TArray<IKawaiiFluidRenderable*> GetAllRenderables() const;
 
 	//========================================
-	// 신규 아키텍처: RenderController 관리
+	// 신규 아키텍처: RenderingModule 관리
 	//========================================
 
-	/** RenderController 등록 (자동 호출됨) */
-	void RegisterRenderController(UKawaiiFluidRenderController* Controller);
+	/** RenderingModule 등록 (자동 호출됨) */
+	void RegisterRenderingModule(UKawaiiFluidRenderingModule* Module);
 
-	/** RenderController 해제 */
-	void UnregisterRenderController(UKawaiiFluidRenderController* Controller);
+	/** RenderingModule 해제 */
+	void UnregisterRenderingModule(UKawaiiFluidRenderingModule* Module);
 
-	/** 등록된 모든 RenderController 반환 */
-	const TArray<UKawaiiFluidRenderController*>& GetAllRenderControllers() const { return RegisteredRenderControllers; }
+	/** 등록된 모든 RenderingModule 반환 */
+	const TArray<UKawaiiFluidRenderingModule*>& GetAllRenderingModules() const { return RegisteredRenderingModules; }
 
 	//========================================
 	// 레거시 호환성 (기존 코드 지원)
@@ -104,9 +104,9 @@ private:
 	UPROPERTY()
 	TArray<TScriptInterface<IKawaiiFluidRenderable>> RegisteredRenderables;
 
-	/** 등록된 RenderController들 (신규 아키텍처) */
+	/** 등록된 RenderingModule들 (신규 아키텍처) */
 	UPROPERTY()
-	TArray<UKawaiiFluidRenderController*> RegisteredRenderControllers;
+	TArray<UKawaiiFluidRenderingModule*> RegisteredRenderingModules;
 
 	//========================================
 	// 레거시 저장소 (호환성 유지)

@@ -5,7 +5,7 @@
 #include "Rendering/FluidRendererSubsystem.h"
 #include "Rendering/IKawaiiFluidRenderable.h"
 #include "Rendering/KawaiiFluidRenderResource.h"
-#include "Rendering/KawaiiFluidRenderController.h"
+#include "Modules/KawaiiFluidRenderingModule.h"
 #include "Rendering/KawaiiFluidSSFRRenderer.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "RenderGraphBuilder.h"
@@ -50,13 +50,13 @@ namespace
 			}
 		}
 
-		// New: Collect from RenderControllers
-		const TArray<UKawaiiFluidRenderController*>& Controllers = Subsystem->GetAllRenderControllers();
-		for (UKawaiiFluidRenderController* Controller : Controllers)
+		// New: Collect from RenderingModules
+		const TArray<UKawaiiFluidRenderingModule*>& Modules = Subsystem->GetAllRenderingModules();
+		for (UKawaiiFluidRenderingModule* Module : Modules)
 		{
-			if (!Controller) continue;
+			if (!Module) continue;
 
-			UKawaiiFluidSSFRRenderer* SSFRRenderer = Controller->GetSSFRRenderer();
+			UKawaiiFluidSSFRRenderer* SSFRRenderer = Module->GetSSFRRenderer();
 			if (SSFRRenderer && SSFRRenderer->IsRenderingActive())
 			{
 				FKawaiiFluidRenderResource* Resource = SSFRRenderer->GetFluidRenderResource();
@@ -64,7 +64,7 @@ namespace
 				{
 					OutResources.Add(Resource);
 					OutRadii.Add(SSFRRenderer->GetCachedParticleRadius());
-					OutDebugNames.Add(TEXT("SSFR_RenderController"));
+					OutDebugNames.Add(TEXT("SSFR_RenderingModule"));
 				}
 			}
 		}

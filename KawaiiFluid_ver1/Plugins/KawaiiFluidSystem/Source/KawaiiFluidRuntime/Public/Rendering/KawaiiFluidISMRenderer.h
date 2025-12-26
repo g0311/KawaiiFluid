@@ -21,7 +21,7 @@
  * - Velocity-based color and rotation
  * - Absolute world coordinates
  *
- * Note: This is NOT an ActorComponent - it's owned internally by RenderController.
+ * Note: This is NOT an ActorComponent - it's owned internally by RenderingModule.
  * The ISMComponent inside IS a component, created and attached to the owner actor.
  */
 UCLASS()

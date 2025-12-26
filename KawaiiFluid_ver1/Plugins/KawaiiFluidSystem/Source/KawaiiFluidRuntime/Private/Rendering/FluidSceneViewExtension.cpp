@@ -17,7 +17,7 @@
 #include "PixelShaderUtils.h"
 #include "SceneTextureParameters.h"
 #include "Rendering/FluidCompositeShaders.h"
-#include "Rendering/KawaiiFluidRenderController.h"
+#include "Modules/KawaiiFluidRenderingModule.h"
 #include "Rendering/KawaiiFluidSSFRRenderer.h"
 
 static TRefCountPtr<IPooledRenderTarget> GFluidCompositeDebug_KeepAlive;
@@ -144,10 +144,10 @@ void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 
 				// 유효성 검사 (Legacy + New Architecture 모두 지원)
 				bool bHasAnyRenderables = SubsystemPtr && SubsystemPtr->GetAllRenderables().Num() > 0;
-				bool bHasAnyControllers = SubsystemPtr && SubsystemPtr->GetAllRenderControllers().Num() > 0;
+				bool bHasAnyModules = SubsystemPtr && SubsystemPtr->GetAllRenderingModules().Num() > 0;
 
 				if (!SubsystemPtr || !SubsystemPtr->RenderingParameters.bEnableRendering ||
-					(!bHasAnyRenderables && !bHasAnyControllers))
+					(!bHasAnyRenderables && !bHasAnyModules))
 				{
 					return InInputs.ReturnUntouchedSceneColorForPostProcessing(GraphBuilder);
 				}
@@ -187,13 +187,13 @@ void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 					}
 				}
 
-				// New: Collect from RenderControllers
-				const TArray<UKawaiiFluidRenderController*>& Controllers = SubsystemPtr->GetAllRenderControllers();
-				for (UKawaiiFluidRenderController* Controller : Controllers)
+				// New: Collect from RenderingModules
+				const TArray<UKawaiiFluidRenderingModule*>& Modules = SubsystemPtr->GetAllRenderingModules();
+				for (UKawaiiFluidRenderingModule* Module : Modules)
 				{
-					if (!Controller) continue;
+					if (!Module) continue;
 
-					UKawaiiFluidSSFRRenderer* SSFRRenderer = Controller->GetSSFRRenderer();
+					UKawaiiFluidSSFRRenderer* SSFRRenderer = Module->GetSSFRRenderer();
 					if (SSFRRenderer && SSFRRenderer->IsRenderingActive())
 					{
 						TotalRadius += SSFRRenderer->GetCachedParticleRadius();
@@ -309,13 +309,13 @@ void FFluidSceneViewExtension::RenderSmoothingPass(FRDGBuilder& GraphBuilder,
 		}
 	}
 
-	// New: Collect from RenderControllers
-	const TArray<UKawaiiFluidRenderController*>& Controllers = SubsystemPtr->GetAllRenderControllers();
-	for (UKawaiiFluidRenderController* Controller : Controllers)
+	// New: Collect from RenderingModules
+	const TArray<UKawaiiFluidRenderingModule*>& Modules = SubsystemPtr->GetAllRenderingModules();
+	for (UKawaiiFluidRenderingModule* Module : Modules)
 	{
-		if (!Controller) continue;
+		if (!Module) continue;
 
-		UKawaiiFluidSSFRRenderer* SSFRRenderer = Controller->GetSSFRRenderer();
+		UKawaiiFluidSSFRRenderer* SSFRRenderer = Module->GetSSFRRenderer();
 		if (SSFRRenderer && SSFRRenderer->IsRenderingActive())
 		{
 			TotalRadius += SSFRRenderer->GetCachedParticleRadius();

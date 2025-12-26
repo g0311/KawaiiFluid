@@ -25,7 +25,7 @@ class FKawaiiFluidRenderResource;
  * - Reflection/refraction/fresnel effects
  * - Custom rendering pipeline via ViewExtension
  *
- * Note: This is NOT an ActorComponent - it's owned internally by RenderController.
+ * Note: This is NOT an ActorComponent - it's owned internally by RenderingModule.
  * Pure UObject implementation (no component dependencies).
  */
 UCLASS()
