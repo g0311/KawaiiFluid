@@ -209,20 +209,20 @@ void UKawaiiFluidISMRenderer::InitializeISM()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidISMRenderer: No particle mesh available"));
 	}
-
+	
 	// Material setup
+	if (!ParticleMaterial)
+	{
+		ParticleMaterial = GetDefaultParticleMaterial();
+	}
+	
 	if (ParticleMaterial)
 	{
 		ISMComponent->SetMaterial(0, ParticleMaterial);
 	}
-	else if (!ParticleMesh)
+	else
 	{
-		// Load default material if no mesh
-		UMaterialInterface* DefaultMaterial = GetDefaultParticleMaterial();
-		if (DefaultMaterial)
-		{
-			ISMComponent->SetMaterial(0, DefaultMaterial);
-		}
+		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidISMRenderer: No particle material available"));
 	}
 
 	// Custom data setup (for color variation)
