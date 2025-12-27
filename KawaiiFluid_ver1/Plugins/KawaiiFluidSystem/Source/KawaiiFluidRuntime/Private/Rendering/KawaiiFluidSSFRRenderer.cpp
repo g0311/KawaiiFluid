@@ -136,14 +136,22 @@ void UKawaiiFluidSSFRRenderer::UpdateRendering(const IKawaiiFluidDataProvider* D
 	// Get particle radius from simulation
 	float ParticleRadius = DataProvider->GetParticleRadius();
 
-	// Override with LocalParameters.ParticleRenderRadius if bUseSimulationRadius is false
+	// Determine which radius to use for rendering
+	float RenderRadius;
 	if (bUseSimulationRadius)
 	{
-		LocalParameters.ParticleRenderRadius = ParticleRadius;
+		// Use simulation particle radius (from Preset->ParticleRadius)
+		RenderRadius = ParticleRadius;
+		LocalParameters.ParticleRenderRadius = RenderRadius;
+	}
+	else
+	{
+		// Use manually configured render radius from Settings
+		RenderRadius = LocalParameters.ParticleRenderRadius;
 	}
 
 	// Update GPU resources (ViewExtension will handle rendering automatically)
-	UpdateGPUResources(SimParticles, ParticleRadius);
+	UpdateGPUResources(SimParticles, RenderRadius);
 
 	// Update stats
 	LastRenderedParticleCount = NumParticles;
