@@ -160,7 +160,7 @@ void MainPS(
 
     // 7. Alpha 계산
     // 두께가 있으면 불투명, 반사가 강하면 불투명
-    float Alpha = saturate(1.0 - exp(-Thickness * 0.1));
+    float Alpha = saturate(1.0 - exp(-Thickness * 0.005));
     Alpha = max(Alpha, Fresnel * 0.8); 
 
     // C++ BlendState: (SrcAlpha, InvSrcAlpha) 사용 중이므로
