@@ -27,6 +27,14 @@ void UFluidRendererComponent::BeginPlay()
 			if (Subsystem)
 			{
 				Subsystem->RegisterSimulator(OwnerSimulator);
+
+				// 로컬 파라미터를 Subsystem에 동기화
+				if (bUseLocalParameters)
+				{
+					Subsystem->RenderingParameters = RenderingParameters;
+					UE_LOG(LogTemp, Log, TEXT("FluidRendererComponent: Synced local parameters to Subsystem (Quality=%d, BlurRadius=%d)"),
+						(int32)RenderingParameters.Quality, RenderingParameters.BilateralFilterRadius);
+				}
 			}
 		}
 	}
@@ -103,6 +111,22 @@ void UFluidRendererComponent::SetRenderingQuality(EFluidRenderingQuality Quality
 		RenderingParameters.SmoothingStrength = 0.8f;
 		break;
 	}
+
+	// Subsystem에 즉시 동기화
+	if (bUseLocalParameters)
+	{
+		UWorld* World = GetWorld();
+		if (World)
+		{
+			UFluidRendererSubsystem* Subsystem = World->GetSubsystem<UFluidRendererSubsystem>();
+			if (Subsystem)
+			{
+				Subsystem->RenderingParameters = RenderingParameters;
+				UE_LOG(LogTemp, Log, TEXT("FluidRendererComponent: Updated Subsystem quality to %d (BlurRadius=%d)"),
+					(int32)Quality, RenderingParameters.BilateralFilterRadius);
+			}
+		}
+	}
 }
 
 void UFluidRendererComponent::SetRenderingEnabled(bool bEnabled)
@@ -135,6 +159,12 @@ void UFluidRendererComponent::SetRenderingEnabled(bool bEnabled)
 	if (bEnabled)
 	{
 		Subsystem->RegisterSimulator(OwnerSimulator);
+
+		// 활성화 시 파라미터도 동기화
+		if (bUseLocalParameters)
+		{
+			Subsystem->RenderingParameters = RenderingParameters;
+		}
 	}
 	else
 	{

@@ -264,8 +264,7 @@ bool UKawaiiFluidSimulationComponent::ShouldUseSSFR() const
 
 bool UKawaiiFluidSimulationComponent::ShouldUseDebugMesh() const
 {
-	return bEnableDebugRendering &&
-	       RenderingMode == EKawaiiFluidRenderingMode::ISM;
+	return RenderingMode == EKawaiiFluidRenderingMode::ISM;
 }
 
 UInstancedStaticMeshComponent* UKawaiiFluidSimulationComponent::GetDebugMeshComponent() const

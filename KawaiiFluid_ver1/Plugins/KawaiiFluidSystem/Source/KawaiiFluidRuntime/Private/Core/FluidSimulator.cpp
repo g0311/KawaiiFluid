@@ -66,9 +66,13 @@ AFluidSimulator::AFluidSimulator()
 	EventCountThisFrame = 0;
 	CurrentGameTime = 0.0f;
 
-	// 디버그 렌더링 기본값
-	bEnableDebugRendering = true;
-	DebugParticleRadius = 5.0f;
+	// 렌더링 기본값
+	ParticleRenderRadius = 50.0f;
+	SmoothingStrength = 0.6f;
+	BlurRadiusPixels = 40.0f;
+	DepthFalloffMultiplier = 8.0f;
+	SmoothingIterations = 3;
+	bEnableDebugRendering = false;
 	bSpawnOnBeginPlay = true;
 	AutoSpawnCount = 100;
 	AutoSpawnRadius = 50.0f;
@@ -419,7 +423,7 @@ void AFluidSimulator::HandleWorldCollision()
 	}
 
 	const float CellSize = SpatialHash->GetCellSize();
-	const float ParticleRadius = DebugParticleRadius;
+	const float ParticleRadius = ParticleRenderRadius;
 
 	// 1. SpatialHash에서 셀들 가져와서 배열로 변환 (Physics Lock 밖에서 준비)
 	const auto& Grid = SpatialHash->GetGrid();
@@ -1037,7 +1041,7 @@ void AFluidSimulator::UpdateDebugInstances()
 	}
 
 	// 스케일 계산 (기본 Sphere는 지름 100cm = 반지름 50cm)
-	const float Scale = DebugParticleRadius / 50.0f;
+	const float Scale = ParticleRenderRadius / 50.0f;
 	const FVector ScaleVec(Scale, Scale, Scale);
 
 	// 각 입자 위치로 인스턴스 트랜스폼 업데이트
@@ -1080,7 +1084,7 @@ TArray<FKawaiiRenderParticle> AFluidSimulator::ConvertToRenderParticles() const
 		// FVector (double) -> FVector3f (float) 변환
 		RenderParticle.Position = FVector3f(SimParticle.Position);
 		RenderParticle.Velocity = FVector3f(SimParticle.Velocity);
-		RenderParticle.Radius = DebugParticleRadius; // 디버그 반경 사용
+		RenderParticle.Radius = ParticleRenderRadius; // 디버그 반경 사용
 		RenderParticle.Padding = 0.0f;
 
 		RenderParticles.Add(RenderParticle);

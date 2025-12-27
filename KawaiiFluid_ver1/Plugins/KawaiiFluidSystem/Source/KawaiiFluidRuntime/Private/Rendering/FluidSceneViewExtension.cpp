@@ -8,6 +8,7 @@
 #include "FluidSmoothingPass.h"
 #include "FluidThicknessPass.h"
 #include "IKawaiiFluidRenderable.h"
+#include "Core/FluidSimulator.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphEvent.h"
 #include "RenderGraphUtils.h"
@@ -169,8 +170,6 @@ void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 
 				// Smoothing
 				FRDGTextureRef SmoothedDepthTexture = nullptr;
-				float BlurRadius = (float)SubsystemPtr->RenderingParameters.BilateralFilterRadius;
-
 				// Calculate DepthFalloff based on average ParticleRenderRadius
 				float AverageParticleRadius = 10.0f; // Default fallback
 				float TotalRadius = 0.0f;
@@ -206,11 +205,38 @@ void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 					AverageParticleRadius = TotalRadius / ValidCount;
 				}
 
-				// Dynamic calculation: DepthFalloff = ParticleRadius * 0.7
-				float DepthFalloff = AverageParticleRadius * 0.7f;
+				// SSFR 파라미터 (FluidSimulator에서 가져오기)
+				float BlurRadius = 40.0f;
+				float DepthFalloffMultiplier = 8.0f;
+				int32 NumIterations = 3;
+				float SmoothingStrength = 0.6f;
+
+				// Legacy: FluidSimulator가 있으면 파라미터 가져오기
+				for (IKawaiiFluidRenderable* Renderable : Renderables)
+				{
+					if (Renderable && Renderable->ShouldUseSSFR())
+					{
+						// FluidSimulator로 캐스팅 시도
+						if (AFluidSimulator* Simulator = Cast<AFluidSimulator>(Renderable))
+						{
+							BlurRadius = Simulator->BlurRadiusPixels * Simulator->SmoothingStrength;
+							DepthFalloffMultiplier = Simulator->DepthFalloffMultiplier;
+							NumIterations = Simulator->SmoothingIterations;
+							SmoothingStrength = Simulator->SmoothingStrength;
+							break;  // 첫 번째 시뮬레이터 사용
+						}
+					}
+				}
+
+				const float DepthFalloff = AverageParticleRadius * DepthFalloffMultiplier;
+
+				UE_LOG(LogTemp, Warning, TEXT("=== Smoothing Fix Params ==="));
+				UE_LOG(LogTemp, Warning, TEXT("ParticleRadius (World): %.1f"), AverageParticleRadius);
+				UE_LOG(LogTemp, Warning, TEXT("BlurRadius (Pixel): %.1f"), BlurRadius);
+				UE_LOG(LogTemp, Warning, TEXT("DepthFalloff (World): %.1f"), DepthFalloff);
 
 				RenderFluidSmoothingPass(GraphBuilder, View, DepthTexture, SmoothedDepthTexture,
-				                         BlurRadius, DepthFalloff);
+				                         BlurRadius, DepthFalloff, NumIterations);
 				if (!SmoothedDepthTexture) return InInputs.
 					ReturnUntouchedSceneColorForPostProcessing(GraphBuilder);
 
@@ -331,8 +357,11 @@ void FFluidSceneViewExtension::RenderSmoothingPass(FRDGBuilder& GraphBuilder,
 	// Dynamic calculation: DepthFalloff = ParticleRadius * 0.7
 	float DepthFalloff = AverageParticleRadius * 0.7f;
 
+	// Use default iterations (3)
+	int32 NumIterations = 3;
+
 	RenderFluidSmoothingPass(GraphBuilder, View, InputDepthTexture, OutSmoothedDepthTexture,
-	                         BlurRadius, DepthFalloff);
+	                         BlurRadius, DepthFalloff, NumIterations);
 }
 
 void FFluidSceneViewExtension::RenderNormalPass(FRDGBuilder& GraphBuilder, const FSceneView& View,

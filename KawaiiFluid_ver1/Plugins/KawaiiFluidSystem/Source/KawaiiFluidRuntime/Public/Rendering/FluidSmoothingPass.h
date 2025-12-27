@@ -20,4 +20,5 @@ void RenderFluidSmoothingPass(
 	FRDGTextureRef InputDepthTexture,
 	FRDGTextureRef& OutSmoothedDepthTexture,
 	float BlurRadius = 5.0f,
-	float DepthFalloff = 0.05f);
+	float DepthFalloff = 0.05f,
+	int32 NumIterations = 3);

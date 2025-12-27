@@ -77,7 +77,7 @@ public:
 
 	virtual float GetParticleRenderRadius() const override
 	{
-		return DebugParticleRadius;
+		return ParticleRenderRadius;
 	}
 
 	virtual FString GetDebugName() const override
@@ -92,8 +92,7 @@ public:
 
 	virtual bool ShouldUseDebugMesh() const override
 	{
-		return bEnableDebugRendering && 
-		       RenderingMode == EKawaiiFluidRenderingMode::ISM;
+		return RenderingMode == EKawaiiFluidRenderingMode::ISM;
 	}
 
 	virtual UInstancedStaticMeshComponent* GetDebugMeshComponent() const override
@@ -240,32 +239,68 @@ public:
 	bool GetParticleInfo(int32 ParticleIndex, FVector& OutPosition, FVector& OutVelocity, float& OutDensity) const;
 
 	//========================================
-	// 디버그 시각화
+	// 렌더링 설정
 	//========================================
 
-	/** 디버그 렌더링 활성화 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Debug")
-	bool bEnableDebugRendering;
-
-	/** 디버그 입자 크기 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Debug", meta = (ClampMin = "0.1", ClampMax = "20.0", EditCondition = "bEnableDebugRendering"))
-	float DebugParticleRadius;
-
-	/** 디버그 메시 컴포넌트 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Debug")
-	UInstancedStaticMeshComponent* DebugMeshComponent;
-
-	//========================================
-	// 렌더링 방식 선택
-	//========================================
-
-	/** 
+	/**
 	 * 렌더링 방식 선택
-	 * - ISM: Instanced Static Mesh
-	 * - SSFR: Screen Space Fluid Rendering
+	 * - ISM: Instanced Static Mesh (빠름, 개별 구체)
+	 * - SSFR: Screen Space Fluid Rendering (느림, 매끄러운 표면)
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering")
 	EKawaiiFluidRenderingMode RenderingMode = EKawaiiFluidRenderingMode::ISM;
+
+	/**
+	 * 파티클 렌더링 반지름 (SSFR + ISM 공통)
+	 * - SSFR: Depth Pass에서 구체 크기 결정 (중요!)
+	 * - ISM: 디버그 메시 크기
+	 * - 권장값: SmoothingRadius * 0.75 ~ 1.0
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering", meta = (ClampMin = "1.0", ClampMax = "200.0"))
+	float ParticleRenderRadius = 50.0f;
+
+	/**
+	 * SSFR 스무딩 강도 (0=없음, 1=최대)
+	 * NVIDIA Flex의 "Smoothing" 파라미터와 동일
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering|SSFR", meta = (ClampMin = "0.0", ClampMax = "1.0", EditCondition = "RenderingMode == EKawaiiFluidRenderingMode::SSFR"))
+	float SmoothingStrength = 0.6f;
+
+	/**
+	 * SSFR 블러 반경 (화면 픽셀 단위)
+	 * 값이 클수록 더 매끄럽지만 성능 저하
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering|SSFR", meta = (ClampMin = "10.0", ClampMax = "100.0", EditCondition = "RenderingMode == EKawaiiFluidRenderingMode::SSFR"))
+	float BlurRadiusPixels = 40.0f;
+
+	/**
+	 * SSFR 깊이 허용 오차 배율
+	 * 값이 클수록 파티클 간 틈을 더 적극적으로 메움
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering|SSFR", meta = (ClampMin = "1.0", ClampMax = "20.0", EditCondition = "RenderingMode == EKawaiiFluidRenderingMode::SSFR"))
+	float DepthFalloffMultiplier = 8.0f;
+
+	/**
+	 * SSFR 스무딩 반복 횟수
+	 * 많을수록 품질 좋지만 성능 저하
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering|SSFR", meta = (ClampMin = "1", ClampMax = "10", EditCondition = "RenderingMode == EKawaiiFluidRenderingMode::SSFR"))
+	int32 SmoothingIterations = 3;
+
+	//========================================
+	// 디버그 시각화
+	//========================================
+
+	/**
+	 * 디버그 메시 오버레이 (개발용)
+	 * SSFR 위에 구체를 겹쳐 그려서 파티클 위치 확인
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Debug")
+	bool bEnableDebugRendering = false;
+
+	/** 디버그 메시 컴포넌트 (내부용) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Debug")
+	UInstancedStaticMeshComponent* DebugMeshComponent;
 
 	//========================================
 	// 자동 스폰

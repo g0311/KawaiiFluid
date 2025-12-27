@@ -56,71 +56,92 @@ void RenderFluidSmoothingPass(
 	FRDGTextureRef InputDepthTexture,
 	FRDGTextureRef& OutSmoothedDepthTexture,
 	float BlurRadius,
-	float DepthFalloff)
+	float DepthFalloff,
+	int32 NumIterations)
 {
-	RDG_EVENT_SCOPE(GraphBuilder, "FluidSmoothingPass");
+	RDG_EVENT_SCOPE(GraphBuilder, "FluidSmoothingPass (Multi-Iteration)");
 	check(InputDepthTexture);
+
+	// Clamp iterations to reasonable range
+	NumIterations = FMath::Clamp(NumIterations, 1, 5);
 
 	FIntPoint TextureSize = InputDepthTexture->Desc.Extent;
 
-	// Create intermediate texture for horizontal pass output
 	FRDGTextureDesc IntermediateDesc = FRDGTextureDesc::Create2D(
 		TextureSize,
 		PF_R32_FLOAT,
 		FClearValueBinding::None,
 		TexCreate_ShaderResource | TexCreate_UAV);
 
-	FRDGTextureRef IntermediateTexture = GraphBuilder.CreateTexture(
-		IntermediateDesc, TEXT("FluidDepthIntermediate"));
-
-	// 최종 결과 버퍼 생성
-	OutSmoothedDepthTexture = GraphBuilder.CreateTexture(IntermediateDesc,
-	                                                     TEXT("FluidDepthSmoothed"));
-
 	FGlobalShaderMap* GlobalShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 	TShaderMapRef<FFluidBilateralBlurCS> ComputeShader(GlobalShaderMap);
 
+	// Current input/output for iteration loop
+	FRDGTextureRef CurrentInput = InputDepthTexture;
+
 	//=============================================================================
-	// Pass 1: Horizontal Blur
+	// Multiple Iterations (NVIDIA Flex style)
 	//=============================================================================
+	for (int32 Iteration = 0; Iteration < NumIterations; ++Iteration)
 	{
-		auto* PassParameters = GraphBuilder.AllocParameters<FFluidBilateralBlurCS::FParameters>();
+		// Create textures for this iteration
+		FRDGTextureRef HorizontalOutput = GraphBuilder.CreateTexture(
+			IntermediateDesc, TEXT("FluidDepthHorizontal"));
 
-		PassParameters->InputTexture = InputDepthTexture;
-		PassParameters->TextureSize = FVector2f(TextureSize.X, TextureSize.Y);
+		FRDGTextureRef VerticalOutput = GraphBuilder.CreateTexture(
+			IntermediateDesc, TEXT("FluidDepthVertical"));
 
-		PassParameters->BlurDirection = FIntPoint(1, 0);
-		PassParameters->BlurRadius = BlurRadius;
-		PassParameters->BlurDepthFalloff = DepthFalloff;
-		PassParameters->OutputTexture = GraphBuilder.CreateUAV(IntermediateTexture);
+		// NVIDIA Flex: Use consistent parameters across iterations
+		// Multiple passes naturally fill gaps without scaling
+		float IterationBlurRadius = BlurRadius;
+		float IterationDepthFalloff = DepthFalloff;
 
-		FComputeShaderUtils::AddPass(
-			GraphBuilder,
-			RDG_EVENT_NAME("HorizontalBlur"),
-			ComputeShader,
-			PassParameters,
-			FComputeShaderUtils::GetGroupCount(TextureSize, 8));
+		//=============================================================================
+		// Horizontal Blur
+		//=============================================================================
+		{
+			auto* PassParameters = GraphBuilder.AllocParameters<FFluidBilateralBlurCS::FParameters>();
+
+			PassParameters->InputTexture = CurrentInput;
+			PassParameters->TextureSize = FVector2f(TextureSize.X, TextureSize.Y);
+			PassParameters->BlurDirection = FIntPoint(1, 0);
+			PassParameters->BlurRadius = IterationBlurRadius;
+			PassParameters->BlurDepthFalloff = IterationDepthFalloff;
+			PassParameters->OutputTexture = GraphBuilder.CreateUAV(HorizontalOutput);
+
+			FComputeShaderUtils::AddPass(
+				GraphBuilder,
+				RDG_EVENT_NAME("Iteration%d_HorizontalBlur", Iteration),
+				ComputeShader,
+				PassParameters,
+				FComputeShaderUtils::GetGroupCount(TextureSize, 8));
+		}
+
+		//=============================================================================
+		// Vertical Blur
+		//=============================================================================
+		{
+			auto* PassParameters = GraphBuilder.AllocParameters<FFluidBilateralBlurCS::FParameters>();
+
+			PassParameters->InputTexture = HorizontalOutput;
+			PassParameters->TextureSize = FVector2f(TextureSize.X, TextureSize.Y);
+			PassParameters->BlurDirection = FIntPoint(0, 1);
+			PassParameters->BlurRadius = IterationBlurRadius;
+			PassParameters->BlurDepthFalloff = IterationDepthFalloff;
+			PassParameters->OutputTexture = GraphBuilder.CreateUAV(VerticalOutput);
+
+			FComputeShaderUtils::AddPass(
+				GraphBuilder,
+				RDG_EVENT_NAME("Iteration%d_VerticalBlur", Iteration),
+				ComputeShader,
+				PassParameters,
+				FComputeShaderUtils::GetGroupCount(TextureSize, 8));
+		}
+
+		// Use this iteration's output as next iteration's input
+		CurrentInput = VerticalOutput;
 	}
 
-	//=============================================================================
-	// Pass 2: Vertical Blur
-	//=============================================================================
-	{
-		auto* PassParameters = GraphBuilder.AllocParameters<FFluidBilateralBlurCS::FParameters>();
-
-		PassParameters->InputTexture = IntermediateTexture;
-		PassParameters->TextureSize = FVector2f(TextureSize.X, TextureSize.Y);
-
-		PassParameters->BlurDirection = FIntPoint(0, 1);
-		PassParameters->BlurRadius = BlurRadius;
-		PassParameters->BlurDepthFalloff = DepthFalloff;
-		PassParameters->OutputTexture = GraphBuilder.CreateUAV(OutSmoothedDepthTexture);
-
-		FComputeShaderUtils::AddPass(
-			GraphBuilder,
-			RDG_EVENT_NAME("VerticalBlur"),
-			ComputeShader,
-			PassParameters,
-			FComputeShaderUtils::GetGroupCount(TextureSize, 8));
-	}
+	// Final output
+	OutSmoothedDepthTexture = CurrentInput;
 }
