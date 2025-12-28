@@ -7,21 +7,16 @@
 #include "FluidRenderingParameters.h"
 #include "FluidRendererSubsystem.generated.h"
 
-class AFluidSimulator;
 class FFluidSceneViewExtension;
-class IKawaiiFluidRenderable;
 class UKawaiiFluidRenderingModule;
 
 /**
  * 유체 렌더링 월드 서브시스템
  *
  * 역할:
- * - IKawaiiFluidRenderable 인터페이스 구현 객체 통합 관리 (레거시)
- * - UKawaiiFluidRenderingModule 통합 관리 (신규 아키텍처)
+ * - UKawaiiFluidRenderingModule 통합 관리
  * - SSFR 렌더링 파이프라인 제공 (ViewExtension)
  * - ISM 렌더링은 Unreal 기본 파이프라인 사용
- *
- * @note 하이브리드 방식: 레거시(IKawaiiFluidRenderable)와 신규(RenderingModule) 모두 지원
  */
 UCLASS()
 class KAWAIIFLUIDRUNTIME_API UFluidRendererSubsystem : public UWorldSubsystem
@@ -35,31 +30,7 @@ public:
 	// End of USubsystem interface
 
 	//========================================
-	// 통합 렌더링 관리 (IKawaiiFluidRenderable)
-	//========================================
-
-	/** Component 등록 (Component 기반 Renderable) */
-	UFUNCTION(BlueprintCallable, Category = "Fluid Rendering")
-	void RegisterRenderableComponent(UActorComponent* Component);
-
-	/** Component 해제 */
-	UFUNCTION(BlueprintCallable, Category = "Fluid Rendering")
-	void UnregisterRenderableComponent(UActorComponent* Component);
-
-	/** Actor의 Component 자동 검색 후 등록 */
-	void RegisterRenderableActor(AActor* Actor);
-
-	/** 렌더링 가능한 액터 등록 (레거시, Actor 기반) */
-	void RegisterRenderable(AActor* Actor);
-
-	/** 렌더링 가능한 액터 해제 (레거시) */
-	void UnregisterRenderable(AActor* Actor);
-
-	/** 등록된 모든 렌더링 가능한 객체 반환 (Actor + Component) */
-	TArray<IKawaiiFluidRenderable*> GetAllRenderables() const;
-
-	//========================================
-	// 신규 아키텍처: RenderingModule 관리
+	// RenderingModule 관리
 	//========================================
 
 	/** RenderingModule 등록 (자동 호출됨) */
@@ -70,19 +41,6 @@ public:
 
 	/** 등록된 모든 RenderingModule 반환 */
 	const TArray<UKawaiiFluidRenderingModule*>& GetAllRenderingModules() const { return RegisteredRenderingModules; }
-
-	//========================================
-	// 레거시 호환성 (기존 코드 지원)
-	//========================================
-
-	/** 시뮬레이터 등록 (내부적으로 RegisterRenderable 호출) */
-	void RegisterSimulator(AFluidSimulator* Simulator);
-
-	/** 시뮬레이터 해제 (내부적으로 UnregisterRenderable 호출) */
-	void UnregisterSimulator(AFluidSimulator* Simulator);
-
-	/** 등록된 모든 시뮬레이터 (레거시) */
-	const TArray<AFluidSimulator*>& GetRegisteredSimulators() const { return RegisteredSimulators; }
 
 	//========================================
 	// 렌더링 파라미터
@@ -96,33 +54,10 @@ public:
 	TSharedPtr<FFluidSceneViewExtension, ESPMode::ThreadSafe> GetViewExtension() const { return ViewExtension; }
 
 private:
-	//========================================
-	// 통합 저장소
-	//========================================
-
-	/** 등록된 렌더링 가능한 모든 객체 (Actor와 Component 모두 지원) */
-	UPROPERTY()
-	TArray<TScriptInterface<IKawaiiFluidRenderable>> RegisteredRenderables;
-
-	/** 등록된 RenderingModule들 (신규 아키텍처) */
+	/** 등록된 RenderingModule들 */
 	UPROPERTY()
 	TArray<UKawaiiFluidRenderingModule*> RegisteredRenderingModules;
 
-	//========================================
-	// 레거시 저장소 (호환성 유지)
-	//========================================
-
-	/** 등록된 시뮬레이터들 (레거시) */
-	UPROPERTY()
-	TArray<AFluidSimulator*> RegisteredSimulators;
-
 	/** Scene View Extension (렌더링 파이프라인 인젝션) */
 	TSharedPtr<FFluidSceneViewExtension, ESPMode::ThreadSafe> ViewExtension;
-
-	//========================================
-	// Internal Helper
-	//========================================
-
-	/** UObject가 IKawaiiFluidRenderable 인터페이스를 구현하는지 확인 */
-	bool IsValidRenderable(UObject* Object) const;
 };

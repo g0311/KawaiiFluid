@@ -1,17 +1,14 @@
 ﻿// Copyright KawaiiFluid Team. All Rights Reserved.
 
 #include "Components/FluidInteractionComponent.h"
-#include "Core/FluidSimulator.h"
 #include "Core/KawaiiFluidSimulatorSubsystem.h"
 #include "Components/KawaiiFluidSimulationComponent.h"
 #include "Collision/MeshFluidCollider.h"
-#include "Kismet/GameplayStatics.h"
 
 UFluidInteractionComponent::UFluidInteractionComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 
-	TargetSimulator = nullptr;
 	TargetSubsystem = nullptr;
 	bCanAttachFluid = true;
 	AdhesionMultiplier = 1.0f;
@@ -28,10 +25,9 @@ void UFluidInteractionComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Try to find target automatically
-	if (!TargetSimulator && !TargetSubsystem)
+	// Find subsystem automatically
+	if (!TargetSubsystem)
 	{
-		// First try new subsystem (preferred)
 		UWorld* World = GetWorld();
 		if (World)
 		{
@@ -39,15 +35,6 @@ void UFluidInteractionComponent::BeginPlay()
 		}
 	}
 
-	if (!TargetSimulator)
-	{
-		AActor* FoundActor = UGameplayStatics::GetActorOfClass(GetWorld(), AFluidSimulator::StaticClass());
-		if (FoundActor)
-		{
-			TargetSimulator = Cast<AFluidSimulator>(FoundActor);
-		}
-	}
-	
 	if (bAutoCreateCollider)
 	{
 		CreateAutoCollider();
@@ -67,7 +54,7 @@ void UFluidInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickT
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	if (!TargetSimulator && !TargetSubsystem)
+	if (!TargetSubsystem)
 	{
 		return;
 	}
@@ -137,16 +124,6 @@ void UFluidInteractionComponent::CreateAutoCollider()
 
 void UFluidInteractionComponent::RegisterWithSimulator()
 {
-	// Legacy: AFluidSimulator
-	if (TargetSimulator)
-	{
-		if (AutoCollider)
-		{
-			TargetSimulator->RegisterCollider(AutoCollider);
-		}
-		TargetSimulator->RegisterInteractionComponent(this);
-	}
-	// New: Subsystem (global collider + interaction component)
 	if (TargetSubsystem)
 	{
 		if (AutoCollider)
@@ -159,16 +136,6 @@ void UFluidInteractionComponent::RegisterWithSimulator()
 
 void UFluidInteractionComponent::UnregisterFromSimulator()
 {
-	// Legacy: AFluidSimulator
-	if (TargetSimulator)
-	{
-		if (AutoCollider)
-		{
-			TargetSimulator->UnregisterCollider(AutoCollider);
-		}
-		TargetSimulator->UnregisterInteractionComponent(this);
-	}
-	// New: Subsystem (global collider + interaction component)
 	if (TargetSubsystem)
 	{
 		if (AutoCollider)
@@ -183,18 +150,6 @@ void UFluidInteractionComponent::UpdateAttachedParticleCount()
 {
 	AActor* Owner = GetOwner();
 	int32 Count = 0;
-
-	if (TargetSimulator)
-	{
-		const TArray<FFluidParticle>& Particles = TargetSimulator->GetParticles();
-		for (const FFluidParticle& Particle : Particles)
-		{
-			if (Particle.bIsAttached && Particle.AttachedActor.Get() == Owner)
-			{
-				++Count;
-			}
-		}
-	}
 
 	if (TargetSubsystem)
 	{
@@ -232,11 +187,6 @@ void UFluidInteractionComponent::DetachAllFluid()
 			}
 		}
 	};
-
-	if (TargetSimulator)
-	{
-		DetachFromParticles(TargetSimulator->GetParticlesMutable());
-	}
 
 	if (TargetSubsystem)
 	{
@@ -281,11 +231,6 @@ void UFluidInteractionComponent::PushFluid(FVector Direction, float Force)
 		}
 	};
 
-	if (TargetSimulator)
-	{
-		PushParticles(TargetSimulator->GetParticlesMutable());
-	}
-
 	if (TargetSubsystem)
 	{
 		for (UKawaiiFluidSimulationComponent* Comp : TargetSubsystem->GetAllComponents())
@@ -294,14 +239,6 @@ void UFluidInteractionComponent::PushFluid(FVector Direction, float Force)
 			PushParticles(Comp->GetParticlesMutable());
 		}
 	}
-}
-
-void UFluidInteractionComponent::SetTargetSimulator(AFluidSimulator* Simulator)
-{
-	UnregisterFromSimulator();
-	TargetSimulator = Simulator;
-	TargetSubsystem = nullptr;
-	RegisterWithSimulator();
 }
 
 void UFluidInteractionComponent::DetectCollidingParticles()
@@ -333,11 +270,6 @@ void UFluidInteractionComponent::DetectCollidingParticles()
 			}
 		}
 	};
-
-	if (TargetSimulator)
-	{
-		CountColliding(TargetSimulator->GetParticles());
-	}
 
 	if (TargetSubsystem)
 	{

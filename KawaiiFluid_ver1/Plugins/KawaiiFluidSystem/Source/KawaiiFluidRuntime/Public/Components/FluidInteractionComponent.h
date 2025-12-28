@@ -6,7 +6,6 @@
 #include "Components/ActorComponent.h"
 #include "FluidInteractionComponent.generated.h"
 
-class AFluidSimulator;
 class UKawaiiFluidSimulatorSubsystem;
 class UFluidCollider;
 
@@ -38,11 +37,7 @@ public:
 
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
-	/** Target simulator (Legacy - Actor based) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Interaction")
-	AFluidSimulator* TargetSimulator;
-
-	/** Cached subsystem reference (New system) */
+	/** Cached subsystem reference */
 	UPROPERTY(Transient)
 	UKawaiiFluidSimulatorSubsystem* TargetSubsystem;
 
@@ -109,14 +104,11 @@ public:
 	void PushFluid(FVector Direction, float Force);
 
 	UFUNCTION(BlueprintCallable, Category = "Fluid Interaction")
-	void SetTargetSimulator(AFluidSimulator* Simulator);
-
-	UFUNCTION(BlueprintCallable, Category = "Fluid Interaction")
 	bool IsWet() const { return bIsWet; }
 
-	/** Check if any fluid target is valid */
+	/** Check if subsystem is valid */
 	UFUNCTION(BlueprintCallable, Category = "Fluid Interaction")
-	bool HasValidTarget() const { return TargetSimulator != nullptr || TargetSubsystem != nullptr; }
+	bool HasValidTarget() const { return TargetSubsystem != nullptr; }
 
 protected:
 	virtual void BeginPlay() override;

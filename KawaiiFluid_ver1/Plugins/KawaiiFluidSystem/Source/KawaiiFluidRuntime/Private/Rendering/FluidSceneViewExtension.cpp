@@ -7,16 +7,11 @@
 #include "FluidRendererSubsystem.h"
 #include "FluidSmoothingPass.h"
 #include "FluidThicknessPass.h"
-#include "IKawaiiFluidRenderable.h"
-#include "Core/FluidSimulator.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphEvent.h"
-#include "RenderGraphUtils.h"
-#include "PostProcess/PostProcessInputs.h"
 #include "ScreenPass.h"
 #include "PostProcess/PostProcessMaterialInputs.h"
 #include "PixelShaderUtils.h"
-#include "SceneTextureParameters.h"
 #include "Rendering/FluidCompositeShaders.h"
 #include "Modules/KawaiiFluidRenderingModule.h"
 #include "Rendering/KawaiiFluidSSFRRenderer.h"
@@ -146,12 +141,10 @@ void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 			{
 				UFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
 
-				// 유효성 검사 (Legacy + New Architecture 모두 지원)
-				bool bHasAnyRenderables = SubsystemPtr && SubsystemPtr->GetAllRenderables().Num() > 0;
+				// 유효성 검사
 				bool bHasAnyModules = SubsystemPtr && SubsystemPtr->GetAllRenderingModules().Num() > 0;
 
-				if (!SubsystemPtr || !SubsystemPtr->RenderingParameters.bEnableRendering ||
-					(!bHasAnyRenderables && !bHasAnyModules))
+				if (!SubsystemPtr || !SubsystemPtr->RenderingParameters.bEnableRendering || !bHasAnyModules)
 				{
 					return InInputs.ReturnUntouchedSceneColorForPostProcessing(GraphBuilder);
 				}
@@ -187,19 +180,8 @@ void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 					}
 				}
 
-				// Check if we have any renderers (Legacy or Batched)
-				TArray<IKawaiiFluidRenderable*> LegacyRenderables = SubsystemPtr->GetAllRenderables();
-				bool bHasLegacySSFR = false;
-				for (IKawaiiFluidRenderable* Renderable : LegacyRenderables)
-				{
-					if (Renderable && Renderable->ShouldUseSSFR())
-					{
-						bHasLegacySSFR = true;
-						break;
-					}
-				}
-
-				if (!bHasLegacySSFR && CustomBatches.Num() == 0 && GBufferBatches.Num() == 0)
+				// Check if we have any renderers
+				if (CustomBatches.Num() == 0 && GBufferBatches.Num() == 0)
 				{
 					return InInputs.ReturnUntouchedSceneColorForPostProcessing(GraphBuilder);
 				}
@@ -235,94 +217,7 @@ void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 				}
 
 				// ============================================
-				// LEGACY PATH: IKawaiiFluidRenderable (AFluidSimulator)
-				// ============================================
-				if (bHasLegacySSFR)
-				{
-					RDG_EVENT_SCOPE(GraphBuilder, "LegacyFluidRendering");
-
-					// Depth Pass
-					FRDGTextureRef DepthTexture = nullptr;
-					RenderFluidDepthPass(GraphBuilder, View, SubsystemPtr, SceneDepthTexture, DepthTexture);
-
-					if (DepthTexture)
-					{
-						// Calculate legacy parameters
-						float AverageParticleRadius = 10.0f;
-						float TotalRadius = 0.0f;
-						int ValidCount = 0;
-
-						for (IKawaiiFluidRenderable* Renderable : LegacyRenderables)
-						{
-							if (Renderable && Renderable->ShouldUseSSFR())
-							{
-								TotalRadius += Renderable->GetParticleRadius();
-								ValidCount++;
-							}
-						}
-
-						if (ValidCount > 0)
-						{
-							AverageParticleRadius = TotalRadius / ValidCount;
-						}
-
-						// SSFR 파라미터 (FluidSimulator에서 가져오기)
-						float BlurRadius = 40.0f;
-						float DepthFalloffMultiplier = 8.0f;
-						int32 NumIterations = 3;
-
-						for (IKawaiiFluidRenderable* Renderable : LegacyRenderables)
-						{
-							if (Renderable && Renderable->ShouldUseSSFR())
-							{
-								if (AFluidSimulator* Simulator = Cast<AFluidSimulator>(Renderable))
-								{
-									BlurRadius = Simulator->BlurRadiusPixels * Simulator->SmoothingStrength;
-									DepthFalloffMultiplier = Simulator->DepthFalloffMultiplier;
-									NumIterations = Simulator->SmoothingIterations;
-									break;
-								}
-							}
-						}
-
-						const float DepthFalloff = AverageParticleRadius * DepthFalloffMultiplier;
-
-						// Smoothing Pass
-						FRDGTextureRef SmoothedDepthTexture = nullptr;
-						RenderFluidSmoothingPass(GraphBuilder, View, DepthTexture, SmoothedDepthTexture,
-						                         BlurRadius, DepthFalloff, NumIterations);
-
-						if (SmoothedDepthTexture)
-						{
-							// Normal Pass
-							FRDGTextureRef NormalTexture = nullptr;
-							RenderFluidNormalPass(GraphBuilder, View, SmoothedDepthTexture, NormalTexture);
-
-							// Thickness Pass
-							FRDGTextureRef ThicknessTexture = nullptr;
-							RenderFluidThicknessPass(GraphBuilder, View, SubsystemPtr, ThicknessTexture);
-
-							if (NormalTexture && ThicknessTexture)
-							{
-								// Composite Pass (Legacy uses Subsystem->RenderingParameters)
-								RenderFluidCompositePass_Internal(
-									GraphBuilder,
-									View,
-									SubsystemPtr->RenderingParameters,
-									SmoothedDepthTexture,
-									NormalTexture,
-									ThicknessTexture,
-									SceneDepthTexture,
-									SceneColorInput.Texture,
-									Output
-								);
-							}
-						}
-					}
-				}
-
-				// ============================================
-				// NEW PATH: Custom Mode Batched Rendering
+				// Custom Mode Batched Rendering
 				// ============================================
 				for (auto& Batch : CustomBatches)
 				{
@@ -426,99 +321,4 @@ void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 			}
 		));
 	}
-}
-
-void FFluidSceneViewExtension::RenderDepthPass(FRDGBuilder& GraphBuilder, const FSceneView& View)
-{
-	UFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
-	if (!SubsystemPtr)
-	{
-		return;
-	}
-
-	FRDGTextureRef DepthTexture = nullptr;
-	RenderFluidDepthPass(GraphBuilder, View, SubsystemPtr, nullptr, DepthTexture);
-}
-
-void FFluidSceneViewExtension::RenderSmoothingPass(FRDGBuilder& GraphBuilder,
-                                                   const FSceneView& View,
-                                                   FRDGTextureRef InputDepthTexture,
-                                                   FRDGTextureRef& OutSmoothedDepthTexture)
-{
-	UFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
-	if (!SubsystemPtr || !InputDepthTexture)
-	{
-		return;
-	}
-
-	float BlurRadius = static_cast<float>(SubsystemPtr->RenderingParameters.BilateralFilterRadius);
-
-	// Calculate DepthFalloff based on average ParticleRenderRadius
-	float AverageParticleRadius = 10.0f; // Default fallback
-	float TotalRadius = 0.0f;
-	int ValidCount = 0;
-
-	// Legacy: Collect from IKawaiiFluidRenderable
-	TArray<IKawaiiFluidRenderable*> Renderables = SubsystemPtr->GetAllRenderables();
-	for (IKawaiiFluidRenderable* Renderable : Renderables)
-	{
-		if (Renderable && Renderable->ShouldUseSSFR())
-		{
-			TotalRadius += Renderable->GetParticleRadius();
-			ValidCount++;
-		}
-	}
-
-	// New: Collect from RenderingModules
-	const TArray<UKawaiiFluidRenderingModule*>& Modules = SubsystemPtr->GetAllRenderingModules();
-	for (UKawaiiFluidRenderingModule* Module : Modules)
-	{
-		if (!Module) continue;
-
-		UKawaiiFluidSSFRRenderer* SSFRRenderer = Module->GetSSFRRenderer();
-		if (SSFRRenderer && SSFRRenderer->IsRenderingActive())
-		{
-			TotalRadius += SSFRRenderer->GetCachedParticleRadius();
-			ValidCount++;
-		}
-	}
-
-	if (ValidCount > 0)
-	{
-		AverageParticleRadius = TotalRadius / ValidCount;
-	}
-
-	// Dynamic calculation: DepthFalloff = ParticleRadius * 0.7
-	float DepthFalloff = AverageParticleRadius * 0.7f;
-
-	// Use default iterations (3)
-	int32 NumIterations = 3;
-
-	RenderFluidSmoothingPass(GraphBuilder, View, InputDepthTexture, OutSmoothedDepthTexture,
-	                         BlurRadius, DepthFalloff, NumIterations);
-}
-
-void FFluidSceneViewExtension::RenderNormalPass(FRDGBuilder& GraphBuilder, const FSceneView& View,
-                                                FRDGTextureRef SmoothedDepthTexture,
-                                                FRDGTextureRef& OutNormalTexture)
-{
-	if (!SmoothedDepthTexture)
-	{
-		return;
-	}
-
-	RenderFluidNormalPass(GraphBuilder, View, SmoothedDepthTexture, OutNormalTexture);
-}
-
-void FFluidSceneViewExtension::RenderThicknessPass(FRDGBuilder& GraphBuilder,
-                                                   const FSceneView& View,
-                                                   FRDGTextureRef& OutThicknessTexture)
-{
-	UFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
-	if (!SubsystemPtr)
-	{
-		return;
-	}
-
-	RenderFluidThicknessPass(GraphBuilder, View, SubsystemPtr, OutThicknessTexture);
 }

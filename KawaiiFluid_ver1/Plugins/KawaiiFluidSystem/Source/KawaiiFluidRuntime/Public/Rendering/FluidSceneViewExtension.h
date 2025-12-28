@@ -15,7 +15,7 @@ class KAWAIIFLUIDRUNTIME_API FFluidSceneViewExtension : public FSceneViewExtensi
 {
 public:
 	FFluidSceneViewExtension(const FAutoRegister& AutoRegister, UFluidRendererSubsystem* InSubsystem);
-	virtual ~FFluidSceneViewExtension();
+	virtual ~FFluidSceneViewExtension() override;
 
 	// ISceneViewExtension interface
 	virtual void SetupViewFamily(FSceneViewFamily& InViewFamily) override {}
@@ -36,16 +36,4 @@ public:
 private:
 	/** Subsystem 약한 참조 */
 	TWeakObjectPtr<UFluidRendererSubsystem> Subsystem;
-
-	/** Depth 렌더링 패스 */
-	void RenderDepthPass(FRDGBuilder& GraphBuilder, const FSceneView& View);
-
-	/** Depth Smoothing 패스 */
-	void RenderSmoothingPass(FRDGBuilder& GraphBuilder, const FSceneView& View, FRDGTextureRef InputDepthTexture, FRDGTextureRef& OutSmoothedDepthTexture);
-
-	/** Normal 재구성 패스 */
-	void RenderNormalPass(FRDGBuilder& GraphBuilder, const FSceneView& View, FRDGTextureRef SmoothedDepthTexture, FRDGTextureRef& OutNormalTexture);
-
-	/** Thickness 렌더링 패스 */
-	void RenderThicknessPass(FRDGBuilder& GraphBuilder, const FSceneView& View, FRDGTextureRef& OutThicknessTexture);
 };

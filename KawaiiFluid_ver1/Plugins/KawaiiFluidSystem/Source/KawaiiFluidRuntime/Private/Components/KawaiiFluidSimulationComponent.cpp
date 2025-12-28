@@ -7,10 +7,10 @@
 #include "Core/KawaiiFluidSimulatorSubsystem.h"
 #include "Collision/FluidCollider.h"
 #include "Components/FluidInteractionComponent.h"
-#include "Rendering/KawaiiFluidRenderResource.h"
 #include "Rendering/FluidRendererSubsystem.h"
-#include "Components/InstancedStaticMeshComponent.h"
-#include "UObject/ConstructorHelpers.h"
+#include "Rendering/KawaiiFluidISMRenderer.h"
+#include "Rendering/KawaiiFluidSSFRRenderer.h"
+#include "Modules/KawaiiFluidRenderingModule.h"
 
 UKawaiiFluidSimulationComponent::UKawaiiFluidSimulationComponent()
 {
@@ -34,8 +34,46 @@ void UKawaiiFluidSimulationComponent::BeginPlay()
 	}
 
 	InitializeSpatialHash();
-	InitializeRenderResource();
-	InitializeDebugMesh();
+
+	// Initialize RenderingModule (Modern architecture)
+	if (bEnableRendering)
+	{
+		if (!RenderingModule)
+		{
+			RenderingModule = NewObject<UKawaiiFluidRenderingModule>(this, TEXT("RenderingModule"));
+		}
+
+		if (RenderingModule)
+		{
+			// Initialize with this component as data provider
+			RenderingModule->Initialize(GetWorld(), GetOwner(), this);
+
+			// Apply ISM renderer settings
+			if (UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer())
+			{
+				ISMRenderer->ApplySettings(ISMSettings);
+			}
+
+			// Apply SSFR renderer settings
+			if (UKawaiiFluidSSFRRenderer* SSFRRenderer = RenderingModule->GetSSFRRenderer())
+			{
+				SSFRRenderer->ApplySettings(SSFRSettings);
+			}
+
+			// Register to FluidRendererSubsystem
+			if (UWorld* World = GetWorld())
+			{
+				if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+				{
+					RendererSubsystem->RegisterRenderingModule(RenderingModule);
+					UE_LOG(LogTemp, Log, TEXT("FluidSimulationComponent: Registered RenderingModule to RendererSubsystem (ISM: %s, SSFR: %s): %s"),
+						ISMSettings.bEnabled ? TEXT("Enabled") : TEXT("Disabled"),
+						SSFRSettings.bEnabled ? TEXT("Enabled") : TEXT("Disabled"),
+						*GetName());
+				}
+			}
+		}
+	}
 
 	if (UWorld* World = GetWorld())
 	{
@@ -44,13 +82,6 @@ void UKawaiiFluidSimulationComponent::BeginPlay()
 		{
 			SimSubsystem->RegisterComponent(this);
 			UE_LOG(LogTemp, Log, TEXT("FluidSimulationComponent registered with SimulatorSubsystem: %s"), *GetName());
-		}
-
-		// Register with FluidRendererSubsystem (for rendering)
-		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
-		{
-			RendererSubsystem->RegisterRenderableComponent(this);
-			UE_LOG(LogTemp, Log, TEXT("FluidSimulationComponent registered with RendererSubsystem: %s"), *GetName());
 		}
 	}
 
@@ -69,6 +100,23 @@ void UKawaiiFluidSimulationComponent::EndPlay(const EEndPlayReason::Type EndPlay
 	OnParticleHit.Clear();
 	bEnableParticleHitEvents = false;
 
+	// Cleanup RenderingModule
+	if (RenderingModule)
+	{
+		// Unregister from FluidRendererSubsystem
+		if (UWorld* World = GetWorld())
+		{
+			if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+			{
+				RendererSubsystem->UnregisterRenderingModule(RenderingModule);
+				UE_LOG(LogTemp, Log, TEXT("FluidSimulationComponent: Unregistered RenderingModule from RendererSubsystem: %s"), *GetName());
+			}
+		}
+
+		RenderingModule->Cleanup();
+		RenderingModule = nullptr;
+	}
+
 	if (UWorld* World = GetWorld())
 	{
 		// Unregister from KawaiiFluidSimulatorSubsystem
@@ -77,13 +125,6 @@ void UKawaiiFluidSimulationComponent::EndPlay(const EEndPlayReason::Type EndPlay
 			SimSubsystem->UnregisterComponent(this);
 			UE_LOG(LogTemp, Log, TEXT("FluidSimulationComponent unregistered from SimulatorSubsystem: %s"), *GetName());
 		}
-
-		// Unregister from FluidRendererSubsystem
-		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
-		{
-			RendererSubsystem->UnregisterRenderableComponent(this);
-			UE_LOG(LogTemp, Log, TEXT("FluidSimulationComponent unregistered from RendererSubsystem: %s"), *GetName());
-		}
 	}
 
 	Super::EndPlay(EndPlayReason);
@@ -91,21 +132,6 @@ void UKawaiiFluidSimulationComponent::EndPlay(const EEndPlayReason::Type EndPlay
 
 void UKawaiiFluidSimulationComponent::BeginDestroy()
 {
-	// Release render resource
-	if (RenderResource.IsValid())
-	{
-		ENQUEUE_RENDER_COMMAND(ReleaseFluidRenderResource)(
-			[RenderResource = MoveTemp(RenderResource)](FRHICommandListImmediate& RHICmdList) mutable
-			{
-				if (RenderResource.IsValid())
-				{
-					RenderResource->ReleaseResource();
-					RenderResource.Reset();
-				}
-			}
-		);
-	}
-
 	Super::BeginDestroy();
 }
 
@@ -158,13 +184,10 @@ void UKawaiiFluidSimulationComponent::TickComponent(float DeltaTime, ELevelTick 
 	// Note: Actual simulation is handled by KawaiiFluidSimulatorSubsystem
 	// This tick is for independent mode only or render updates
 
-	// Update render data
-	UpdateRenderData();
-
-	// Update debug mesh
-	if (ShouldUseDebugMesh())
+	// Update RenderingModule
+	if (RenderingModule)
 	{
-		UpdateDebugInstances();
+		RenderingModule->UpdateRenderers();
 	}
 
 	// Reset external force after frame
@@ -185,66 +208,9 @@ void UKawaiiFluidSimulationComponent::InitializeSpatialHash()
 	SpatialHash = MakeShared<FSpatialHash>(CellSize);
 }
 
-void UKawaiiFluidSimulationComponent::InitializeRenderResource()
-{
-	RenderResource = MakeShared<FKawaiiFluidRenderResource>();
-
-	ENQUEUE_RENDER_COMMAND(InitFluidRenderResource)(
-		[RenderResourcePtr = RenderResource.Get()](FRHICommandListImmediate& RHICmdList)
-		{
-			RenderResourcePtr->InitResource(RHICmdList);
-		}
-	);
-}
-
-void UKawaiiFluidSimulationComponent::InitializeDebugMesh()
-{
-	if (!bEnableDebugRendering)
-	{
-		return;
-	}
-
-	AActor* Owner = GetOwner();
-	if (!Owner)
-	{
-		return;
-	}
-
-	// Create instanced mesh component
-	DebugMeshComponent = NewObject<UInstancedStaticMeshComponent>(Owner);
-	DebugMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	DebugMeshComponent->SetAbsolute(true, true, true);  // Absolute location/rotation/scale - ignore parent transform
-	DebugMeshComponent->RegisterComponent();
-	DebugMeshComponent->AttachToComponent(Owner->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
-
-	// Load default sphere mesh
-	static UStaticMesh* SphereMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-	if (SphereMesh)
-	{
-		DebugMeshComponent->SetStaticMesh(SphereMesh);
-	}
-
-	// Load default material
-	static UMaterial* DefaultMaterial = LoadObject<UMaterial>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-	if (DefaultMaterial)
-	{
-		DebugMeshComponent->SetMaterial(0, DefaultMaterial);
-	}
-}
-
 //========================================
-// IKawaiiFluidRenderable Implementation
+// IKawaiiFluidDataProvider Interface Implementation
 //========================================
-
-FKawaiiFluidRenderResource* UKawaiiFluidSimulationComponent::GetFluidRenderResource() const
-{
-	return RenderResource.Get();
-}
-
-bool UKawaiiFluidSimulationComponent::IsFluidRenderResourceValid() const
-{
-	return RenderResource.IsValid() && RenderResource->IsValid();
-}
 
 float UKawaiiFluidSimulationComponent::GetParticleRadius() const
 {
@@ -253,30 +219,25 @@ float UKawaiiFluidSimulationComponent::GetParticleRadius() const
 	return Preset ? Preset->SmoothingRadius : 20.0f;
 }
 
-FString UKawaiiFluidSimulationComponent::GetDebugName() const
+const TArray<FFluidParticle>& UKawaiiFluidSimulationComponent::GetParticles() const
 {
-	AActor* Owner = GetOwner();
-	return FString::Printf(TEXT("SimComponent_%s"), Owner ? *Owner->GetName() : TEXT("NoOwner"));
-}
-
-bool UKawaiiFluidSimulationComponent::ShouldUseSSFR() const
-{
-	return RenderingMode == EKawaiiFluidRenderingMode::SSFR;
-}
-
-bool UKawaiiFluidSimulationComponent::ShouldUseDebugMesh() const
-{
-	return RenderingMode == EKawaiiFluidRenderingMode::ISM;
-}
-
-UInstancedStaticMeshComponent* UKawaiiFluidSimulationComponent::GetDebugMeshComponent() const
-{
-	return DebugMeshComponent;
+	return Particles;
 }
 
 int32 UKawaiiFluidSimulationComponent::GetParticleCount() const
 {
 	return Particles.Num();
+}
+
+bool UKawaiiFluidSimulationComponent::IsDataValid() const
+{
+	return Particles.Num() > 0 && Preset != nullptr;
+}
+
+FString UKawaiiFluidSimulationComponent::GetDebugName() const
+{
+	AActor* Owner = GetOwner();
+	return FString::Printf(TEXT("SimComponent_%s"), Owner ? *Owner->GetName() : TEXT("NoOwner"));
 }
 
 //========================================
@@ -385,11 +346,6 @@ void UKawaiiFluidSimulationComponent::ClearAllParticles()
 {
 	Particles.Empty();
 	ParticleLastEventTime.Empty();
-
-	if (DebugMeshComponent)
-	{
-		DebugMeshComponent->ClearInstances();
-	}
 }
 
 void UKawaiiFluidSimulationComponent::SetContinuousSpawnEnabled(bool bEnabled)
@@ -633,77 +589,3 @@ void UKawaiiFluidSimulationComponent::UpdateRuntimePreset()
 	bRuntimePresetDirty = false;
 }
 
-void UKawaiiFluidSimulationComponent::UpdateRenderData()
-{
-	if (!RenderResource.IsValid() || Particles.Num() == 0)
-	{
-		return;
-	}
-
-	TArray<FKawaiiRenderParticle> RenderParticles = ConvertToRenderParticles();
-	RenderResource->UpdateParticleData(RenderParticles);
-}
-
-void UKawaiiFluidSimulationComponent::UpdateDebugInstances()
-{
-	if (!DebugMeshComponent)
-	{
-		return;
-	}
-
-	const int32 ParticleCount = Particles.Num();
-	const int32 InstanceCount = DebugMeshComponent->GetInstanceCount();
-
-	// Adjust instance count
-	if (InstanceCount < ParticleCount)
-	{
-		for (int32 i = InstanceCount; i < ParticleCount; ++i)
-		{
-			DebugMeshComponent->AddInstance(FTransform::Identity);
-		}
-	}
-	else if (InstanceCount > ParticleCount)
-	{
-		for (int32 i = InstanceCount - 1; i >= ParticleCount; --i)
-		{
-			DebugMeshComponent->RemoveInstance(i);
-		}
-	}
-
-	// Calculate scale (default Sphere has radius 50cm)
-	const float Scale = DebugMeshRadius / 50.0f;
-	const FVector ScaleVec(Scale, Scale, Scale);
-
-	// Update transforms
-	for (int32 i = 0; i < ParticleCount; ++i)
-	{
-		FTransform InstanceTransform;
-		InstanceTransform.SetLocation(Particles[i].Position);
-		InstanceTransform.SetScale3D(ScaleVec);
-
-		DebugMeshComponent->UpdateInstanceTransform(i, InstanceTransform, true, false, false);
-	}
-
-	DebugMeshComponent->MarkRenderStateDirty();
-}
-
-TArray<FKawaiiRenderParticle> UKawaiiFluidSimulationComponent::ConvertToRenderParticles() const
-{
-	TArray<FKawaiiRenderParticle> RenderParticles;
-	RenderParticles.Reserve(Particles.Num());
-
-	float ParticleRadius = Preset ? Preset->ParticleRadius : 5.0f;
-
-	for (const FFluidParticle& SimParticle : Particles)
-	{
-		FKawaiiRenderParticle RenderParticle;
-		RenderParticle.Position = FVector3f(SimParticle.Position);
-		RenderParticle.Velocity = FVector3f(SimParticle.Velocity);
-		RenderParticle.Radius = ParticleRadius;
-		RenderParticle.Padding = 0.0f;
-
-		RenderParticles.Add(RenderParticle);
-	}
-
-	return RenderParticles;
-}

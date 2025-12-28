@@ -9,8 +9,9 @@
 #include "RHIResources.h"
 #include "NiagaraDataInterfaceKawaiiFluid.generated.h"
 
-class UKawaiiFluidDummyComponent;
+class UKawaiiFluidSimulationComponent;
 struct FKawaiiRenderParticle;
+struct FFluidParticle;
 
 /**
  * Per-Instance 데이터 구조체
@@ -18,8 +19,8 @@ struct FKawaiiRenderParticle;
  */
 struct FNDIKawaiiFluid_InstanceData
 {
-	/** 참조하는 FluidDummyComponent (약한 포인터) */
-	TWeakObjectPtr<UKawaiiFluidDummyComponent> SourceComponent;
+	/** 참조하는 FluidSimulationComponent (약한 포인터) */
+	TWeakObjectPtr<UKawaiiFluidSimulationComponent> SourceComponent;
 
 	/** 마지막 업데이트 시간 */
 	float LastUpdateTime = 0.0f;
@@ -42,22 +43,22 @@ struct FNDIKawaiiFluid_InstanceData
 };
 
 /**
- * Kawaii Fluid Data Interface (DummyComponent 전용 테스트)
- * CPU에서 생성한 테스트 파티클 데이터를 Niagara GPU 파티클로 전달
- * 
- * @note 현재 UKawaiiFluidDummyComponent만 지원 (테스트용)
+ * Kawaii Fluid Data Interface
+ * CPU에서 생성한 파티클 데이터를 Niagara GPU 파티클로 전달
+ *
+ * @note UKawaiiFluidSimulationComponent를 사용합니다
  */
 UCLASS(EditInlineNew, Category = "KawaiiFluid", meta = (DisplayName = "Kawaii Fluid Data"))
 class KAWAIIFLUIDNIAGARA_API UNiagaraDataInterfaceKawaiiFluid : public UNiagaraDataInterface
 {
 	GENERATED_UCLASS_BODY()
 
-	/** 
-	 * 연결할 FluidDummyComponent
-	 * @note 반드시 UKawaiiFluidDummyComponent를 가진 Actor를 선택하세요
+	/**
+	 * 연결할 FluidSimulationComponent
+	 * @note 반드시 UKawaiiFluidSimulationComponent를 가진 Actor를 선택하세요
 	 */
 	UPROPERTY(EditAnywhere, Category = "Kawaii Fluid", meta = (AllowedClasses = "/Script/Engine.Actor"))
-	TSoftObjectPtr<AActor> SourceDummyActor;
+	TSoftObjectPtr<AActor> SourceFluidActor;
 
 	/** 자동 업데이트 활성화 (false면 수동 호출 필요) */
 	UPROPERTY(EditAnywhere, Category = "Kawaii Fluid")
@@ -166,8 +167,9 @@ protected:
 
 private:
 	/** GPU 버퍼 업데이트 (렌더 스레드) */
-	void UpdateGPUBuffers_RenderThread(FNDIKawaiiFluid_InstanceData* InstanceData, 
-	                                     const TArray<FKawaiiRenderParticle>& Particles);
+	void UpdateGPUBuffers_RenderThread(FNDIKawaiiFluid_InstanceData* InstanceData,
+	                                     const TArray<FFluidParticle>& Particles,
+	                                     float Radius);
 
 	/** 함수 이름 상수 */
 	static const FName GetParticleCountName;

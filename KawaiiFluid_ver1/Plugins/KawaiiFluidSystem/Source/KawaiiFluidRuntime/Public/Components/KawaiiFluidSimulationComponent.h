@@ -5,17 +5,16 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Core/FluidParticle.h"
-#include "Core/KawaiiRenderParticle.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
-#include "Rendering/IKawaiiFluidRenderable.h"
-#include "Rendering/KawaiiFluidRenderingMode.h"
+#include "Rendering/KawaiiFluidRendererSettings.h"
+#include "Interfaces/IKawaiiFluidDataProvider.h"
 #include "KawaiiFluidSimulationComponent.generated.h"
 
 class UKawaiiFluidPresetDataAsset;
 class UFluidCollider;
 class UFluidInteractionComponent;
-class FKawaiiFluidRenderResource;
 class FSpatialHash;
+class UKawaiiFluidRenderingModule;
 
 /**
  * Particle collision event delegate (Legacy)
@@ -39,10 +38,11 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_FiveParams(
  * - Owns particle array
  * - Manages render resources
  * - Provides gameplay API (SpawnParticles, ApplyForce, etc.)
- * - Implements IKawaiiFluidRenderable
+ *
+ * @note Legacy component - Preview Editor only. Use UKawaiiFluidComponent instead.
  */
 UCLASS(ClassGroup=(KawaiiFluid), meta=(BlueprintSpawnableComponent))
-class KAWAIIFLUIDRUNTIME_API UKawaiiFluidSimulationComponent : public UActorComponent, public IKawaiiFluidRenderable
+class KAWAIIFLUIDRUNTIME_API UKawaiiFluidSimulationComponent : public UActorComponent, public IKawaiiFluidDataProvider
 {
 	GENERATED_BODY()
 
@@ -58,19 +58,17 @@ public:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	virtual void BeginDestroy() override;
-	
+
 	//========================================
-	// IKawaiiFluidRenderable Interface
+	// IKawaiiFluidDataProvider Interface
 	//========================================
 
-	virtual FKawaiiFluidRenderResource* GetFluidRenderResource() const override;
-	virtual bool IsFluidRenderResourceValid() const override;
-	virtual float GetParticleRadius() const override;
-	virtual FString GetDebugName() const override;
-	virtual bool ShouldUseSSFR() const override;
-	virtual bool ShouldUseDebugMesh() const override;
-	virtual UInstancedStaticMeshComponent* GetDebugMeshComponent() const override;
+	virtual const TArray<FFluidParticle>& GetParticles() const override;
 	virtual int32 GetParticleCount() const override;
+	virtual float GetParticleRadius() const override;
+	virtual bool IsDataValid() const override;
+	virtual FString GetDebugName() const override;
+
 
 	//========================================
 	// Configuration
@@ -95,6 +93,22 @@ public:
 	/** Use world collision */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Collision")
 	bool bUseWorldCollision = true;
+
+	//========================================
+	// Rendering Settings
+	//========================================
+
+	/** Enable rendering */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering")
+	bool bEnableRendering = true;
+
+	/** ISM Renderer Settings */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering", meta = (EditCondition = "bEnableRendering", DisplayName = "ISM Settings"))
+	FKawaiiFluidISMRendererSettings ISMSettings;
+
+	/** SSFR Renderer Settings */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering", meta = (EditCondition = "bEnableRendering", DisplayName = "SSFR Settings"))
+	FKawaiiFluidSSFRRendererSettings SSFRSettings;
 
 	//========================================
 	// Preset Overrides (Per-Instance)
@@ -145,22 +159,6 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Override", meta = (EditCondition = "bOverride_AdhesionStrength", ClampMin = "0.0", ClampMax = "1.0"))
 	float Override_AdhesionStrength = 0.5f;
-
-	//========================================
-	// Rendering
-	//========================================
-
-	/** Rendering mode selection */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering")
-	EKawaiiFluidRenderingMode RenderingMode = EKawaiiFluidRenderingMode::ISM;
-
-	/** Enable debug rendering */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Debug")
-	bool bEnableDebugRendering = true;
-
-	/** Debug mesh sphere radius */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Debug", meta = (ClampMin = "0.1", ClampMax = "50.0", EditCondition = "bEnableDebugRendering"))
-	float DebugMeshRadius = 3.0f;
 
 	//========================================
 	// Events
@@ -312,9 +310,6 @@ public:
 	// Direct Access (Advanced)
 	//========================================
 
-	/** Read-only particle array access */
-	const TArray<FFluidParticle>& GetParticles() const { return Particles; }
-
 	/** Writable particle array access (caution: affects simulation) */
 	TArray<FFluidParticle>& GetParticlesMutable() { return Particles; }
 
@@ -371,11 +366,6 @@ public:
 	/** Mark RuntimePreset as needing update */
 	void MarkRuntimePresetDirty() { bRuntimePresetDirty = true; }
 
-	/** Update render data (call after simulation) */
-	void UpdateRenderData();
-
-	/** Update debug mesh instances */
-	void UpdateDebugInstances();
 
 private:
 	//========================================
@@ -435,15 +425,12 @@ private:
 	TSharedPtr<FSpatialHash> SpatialHash;
 
 	//========================================
-	// Rendering Resources
+	// Rendering Module
 	//========================================
 
-	/** GPU render resource */
-	TSharedPtr<FKawaiiFluidRenderResource> RenderResource;
-
-	/** Debug mesh component */
+	/** Rendering module */
 	UPROPERTY()
-	TObjectPtr<UInstancedStaticMeshComponent> DebugMeshComponent;
+	TObjectPtr<UKawaiiFluidRenderingModule> RenderingModule;
 
 	//========================================
 	// Internal Methods
@@ -451,13 +438,4 @@ private:
 
 	/** Initialize spatial hash */
 	void InitializeSpatialHash();
-
-	/** Initialize render resource */
-	void InitializeRenderResource();
-
-	/** Initialize debug mesh */
-	void InitializeDebugMesh();
-
-	/** Convert to render particles */
-	TArray<FKawaiiRenderParticle> ConvertToRenderParticles() const;
 };
