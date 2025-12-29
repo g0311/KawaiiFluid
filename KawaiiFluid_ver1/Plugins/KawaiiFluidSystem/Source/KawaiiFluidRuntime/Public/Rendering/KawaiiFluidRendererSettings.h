@@ -119,7 +119,7 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidSSFRRendererSettings
 	//========================================
 
 	/** Bilateral filter radius */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoothing", meta = (EditCondition = "bEnabled", ClampMin = "1", ClampMax = "50"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoothing", meta = (EditCondition = "bEnabled", ClampMin = "1", ClampMax = "100"))
 	int32 BilateralFilterRadius = 20;
 
 	//========================================
