@@ -99,7 +99,7 @@ void RenderFluidDepthPass(
 
 		// View matrices
 		FMatrix ViewMatrix = View.ViewMatrices.GetViewMatrix();
-		FMatrix ProjectionMatrix = View.ViewMatrices.GetProjectionMatrix();
+		FMatrix ProjectionMatrix = View.ViewMatrices.GetProjectionNoAAMatrix();
 		FMatrix ViewProjectionMatrix = View.ViewMatrices.GetViewProjectionMatrix();
 
 		// Shader Parameters

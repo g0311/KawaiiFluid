@@ -43,7 +43,7 @@ void FFluidCustomComposite::RenderComposite(
 	// View matrices
 	PassParameters->InverseProjectionMatrix =
 		FMatrix44f(View.ViewMatrices.GetInvProjectionMatrix());
-	PassParameters->ProjectionMatrix = FMatrix44f(View.ViewMatrices.GetProjectionMatrix());
+	PassParameters->ProjectionMatrix = FMatrix44f(View.ViewMatrices.GetProjectionNoAAMatrix());
 	PassParameters->ViewMatrix = FMatrix44f(View.ViewMatrices.GetViewMatrix());
 
 	// Rendering parameters

@@ -77,7 +77,7 @@ void RenderFluidNormalPass(
 	PassParameters->InverseTextureSize = FVector2f(1.0f / Extent.X, 1.0f / Extent.Y);
 
 	// 뷰 행렬 설정
-	PassParameters->ProjectionMatrix = FMatrix44f(View.ViewMatrices.GetProjectionMatrix());
+	PassParameters->ProjectionMatrix = FMatrix44f(View.ViewMatrices.GetProjectionNoAAMatrix());
 	PassParameters->InverseProjectionMatrix =
 		FMatrix44f(View.ViewMatrices.GetInvProjectionMatrix());
 
