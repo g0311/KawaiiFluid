@@ -1,0 +1,157 @@
+// Copyright KawaiiFluid Team. All Rights Reserved.
+// SDF (Signed Distance Field) Common Functions for Ray Marching
+
+#pragma once
+
+//=============================================================================
+// SDF Primitives
+//=============================================================================
+
+// Sphere SDF: returns signed distance from point p to sphere surface
+float sdSphere(float3 p, float3 center, float radius)
+{
+	return length(p - center) - radius;
+}
+
+//=============================================================================
+// SDF Operations
+//=============================================================================
+
+// Smooth minimum (polynomial smooth min)
+// k: smoothness factor (higher = smoother blend, typical: 4.0 ~ 16.0)
+// Reference: https://iquilezles.org/articles/smin/
+float smin(float a, float b, float k)
+{
+	float h = max(k - abs(a - b), 0.0) / k;
+	return min(a, b) - h * h * k * 0.25;
+}
+
+// Alternative smooth min (quadratic polynomial)
+// More stable for small k values
+float sminQuadratic(float a, float b, float k)
+{
+	float h = saturate(0.5 + 0.5 * (b - a) / k);
+	return lerp(b, a, h) - k * h * (1.0 - h);
+}
+
+//=============================================================================
+// Metaball SDF Evaluation
+//=============================================================================
+
+// Evaluate metaball SDF from particle positions
+// Uses smooth minimum to blend all particles together
+float EvaluateMetaballSDF(
+	float3 p,
+	StructuredBuffer<float3> ParticlePositions,
+	int ParticleCount,
+	float ParticleRadius,
+	float Smoothness)
+{
+	if (ParticleCount <= 0)
+		return 1e10;  // Very large distance (no particles)
+
+	// Start with first particle
+	float sdf = sdSphere(p, ParticlePositions[0], ParticleRadius);
+
+	// Blend with remaining particles using smooth minimum
+	for (int i = 1; i < ParticleCount; ++i)
+	{
+		float d = sdSphere(p, ParticlePositions[i], ParticleRadius);
+		sdf = smin(sdf, d, Smoothness);
+	}
+
+	return sdf;
+}
+
+//=============================================================================
+// SDF Normal Calculation
+//=============================================================================
+
+// Calculate normal using 3-tap forward difference (optimized)
+// Reference: 4rknova blog - Blob 3D
+float3 CalculateSDFNormal3Tap(
+	float3 p,
+	float centerSDF,
+	StructuredBuffer<float3> ParticlePositions,
+	int ParticleCount,
+	float ParticleRadius,
+	float Smoothness)
+{
+	const float eps = 0.001;
+
+	float3 n;
+	n.x = EvaluateMetaballSDF(p + float3(eps, 0, 0), ParticlePositions, ParticleCount, ParticleRadius, Smoothness) - centerSDF;
+	n.y = EvaluateMetaballSDF(p + float3(0, eps, 0), ParticlePositions, ParticleCount, ParticleRadius, Smoothness) - centerSDF;
+	n.z = EvaluateMetaballSDF(p + float3(0, 0, eps), ParticlePositions, ParticleCount, ParticleRadius, Smoothness) - centerSDF;
+
+	return normalize(n);
+}
+
+// Calculate normal using 6-tap central difference (more accurate)
+float3 CalculateSDFNormal6Tap(
+	float3 p,
+	StructuredBuffer<float3> ParticlePositions,
+	int ParticleCount,
+	float ParticleRadius,
+	float Smoothness)
+{
+	const float eps = 0.001;
+
+	float3 n;
+	n.x = EvaluateMetaballSDF(p + float3(eps, 0, 0), ParticlePositions, ParticleCount, ParticleRadius, Smoothness)
+		- EvaluateMetaballSDF(p - float3(eps, 0, 0), ParticlePositions, ParticleCount, ParticleRadius, Smoothness);
+	n.y = EvaluateMetaballSDF(p + float3(0, eps, 0), ParticlePositions, ParticleCount, ParticleRadius, Smoothness)
+		- EvaluateMetaballSDF(p - float3(0, eps, 0), ParticlePositions, ParticleCount, ParticleRadius, Smoothness);
+	n.z = EvaluateMetaballSDF(p + float3(0, 0, eps), ParticlePositions, ParticleCount, ParticleRadius, Smoothness)
+		- EvaluateMetaballSDF(p - float3(0, 0, eps), ParticlePositions, ParticleCount, ParticleRadius, Smoothness);
+
+	return normalize(n);
+}
+
+//=============================================================================
+// Bounding Box Helpers
+//=============================================================================
+
+// Calculate AABB from particle positions
+void CalculateParticleBounds(
+	StructuredBuffer<float3> ParticlePositions,
+	int ParticleCount,
+	float ParticleRadius,
+	out float3 BoundsMin,
+	out float3 BoundsMax)
+{
+	if (ParticleCount <= 0)
+	{
+		BoundsMin = float3(0, 0, 0);
+		BoundsMax = float3(0, 0, 0);
+		return;
+	}
+
+	BoundsMin = ParticlePositions[0] - ParticleRadius;
+	BoundsMax = ParticlePositions[0] + ParticleRadius;
+
+	for (int i = 1; i < ParticleCount; ++i)
+	{
+		BoundsMin = min(BoundsMin, ParticlePositions[i] - ParticleRadius);
+		BoundsMax = max(BoundsMax, ParticlePositions[i] + ParticleRadius);
+	}
+}
+
+// Ray-AABB intersection test
+// Returns: t values for entry and exit, or (-1, -1) if no intersection
+float2 IntersectRayAABB(float3 rayOrigin, float3 rayDir, float3 boxMin, float3 boxMax)
+{
+	float3 invDir = 1.0 / rayDir;
+	float3 t0 = (boxMin - rayOrigin) * invDir;
+	float3 t1 = (boxMax - rayOrigin) * invDir;
+	float3 tmin = min(t0, t1);
+	float3 tmax = max(t0, t1);
+
+	float tEntry = max(max(tmin.x, tmin.y), tmin.z);
+	float tExit = min(min(tmax.x, tmax.y), tmax.z);
+
+	if (tEntry > tExit || tExit < 0.0)
+		return float2(-1.0, -1.0);  // No intersection
+
+	return float2(max(tEntry, 0.0), tExit);
+}

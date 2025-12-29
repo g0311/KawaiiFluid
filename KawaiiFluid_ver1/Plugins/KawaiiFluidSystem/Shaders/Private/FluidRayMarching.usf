@@ -1,0 +1,298 @@
+// Copyright KawaiiFluid Team. All Rights Reserved.
+// Ray Marching SDF Fluid Rendering Shader
+
+#include "/Engine/Public/Platform.ush"
+#include "/Engine/Private/Common.ush"
+#include "FluidSDFCommon.ush"
+
+//=============================================================================
+// Shader Parameters
+//=============================================================================
+
+// Particle Data
+StructuredBuffer<float3> ParticlePositions;
+int ParticleCount;
+float ParticleRadius;
+
+// Ray Marching Parameters
+float SDFSmoothness;
+int MaxRayMarchSteps;
+float RayMarchHitThreshold;
+float RayMarchMaxDistance;
+
+// Appearance Parameters
+float4 FluidColor;
+float FresnelStrength;
+float RefractiveIndex;
+float AbsorptionCoefficient;
+float SpecularStrength;
+float SpecularRoughness;
+float4 EnvironmentLightColor;
+
+// SSS Parameters
+float SSSIntensity;
+float4 SSSColor;
+
+// Scene Textures
+Texture2D SceneDepthTexture;
+Texture2D SceneColorTexture;
+SamplerState SceneTextureSampler;
+
+// View Matrices
+float4x4 InverseViewMatrix;
+float4x4 InverseProjectionMatrix;
+float4x4 ViewMatrix;
+float4x4 ProjectionMatrix;
+float2 ViewportSize;
+
+// Light Direction accessed from View uniform buffer:
+// View.DirectionalLightDirection, View.DirectionalLightColor
+
+//=============================================================================
+// Ray Marching Result Structure
+//=============================================================================
+
+struct FRayMarchResult
+{
+	bool bHit;
+	float Distance;
+	float3 Position;
+	float3 Normal;
+	float Thickness;
+	float LastSDF;
+};
+
+//=============================================================================
+// Helper Functions
+//=============================================================================
+
+// Convert screen UV to world-space camera ray
+void GetCameraRay(float2 UV, out float3 RayOrigin, out float3 RayDirection)
+{
+	// Extract camera world position from InverseViewMatrix (translation is in 4th row for row-major)
+	RayOrigin = float3(InverseViewMatrix._41, InverseViewMatrix._42, InverseViewMatrix._43);
+
+	// NDC coordinates
+	float2 NDC = UV * 2.0 - 1.0;
+	NDC.y = -NDC.y;  // Flip Y for DirectX
+
+	// Clip space far point
+	float4 ClipFar = float4(NDC, 1.0, 1.0);
+
+	// Transform clip -> view -> world
+	float4 ViewFar = mul(ClipFar, InverseProjectionMatrix);
+	ViewFar /= ViewFar.w;
+	float4 WorldFar = mul(ViewFar, InverseViewMatrix);
+
+	RayDirection = normalize(WorldFar.xyz - RayOrigin);
+}
+
+// Convert device Z to linear depth
+float ConvertDeviceZToLinearDepth(float DeviceZ)
+{
+	// UE4/5 uses reversed-Z
+	float4 ClipPos = float4(0, 0, DeviceZ, 1.0);
+	float4 ViewPos = mul(ClipPos, InverseProjectionMatrix);
+	return ViewPos.z / ViewPos.w;
+}
+
+//=============================================================================
+// Ray Marching
+//=============================================================================
+
+FRayMarchResult RayMarchSDF(float3 ro, float3 rd, float maxDist)
+{
+	FRayMarchResult result;
+	result.bHit = false;
+	result.Distance = 0.0;
+	result.Position = float3(0, 0, 0);
+	result.Normal = float3(0, 1, 0);
+	result.Thickness = 0.0;
+	result.LastSDF = 1e10;
+
+	float t = 0.0;
+	float lastSDF = 1e10;
+
+	// Main ray marching loop
+	for (int i = 0; i < MaxRayMarchSteps && t < maxDist; ++i)
+	{
+		float3 p = ro + rd * t;
+		float sdf = EvaluateMetaballSDF(p, ParticlePositions, ParticleCount, ParticleRadius, SDFSmoothness);
+		lastSDF = sdf;
+
+		// Hit detection
+		if (sdf < RayMarchHitThreshold)
+		{
+			result.bHit = true;
+			result.Distance = t;
+			result.Position = p;
+			result.LastSDF = sdf;
+
+			// Calculate normal using 3-tap (faster)
+			result.Normal = CalculateSDFNormal3Tap(p, sdf, ParticlePositions, ParticleCount, ParticleRadius, SDFSmoothness);
+
+			// Estimate thickness based on SDF and particle radius (simple approximation)
+			// Avoids internal ray marching which causes visible internal boundaries
+			float estimatedThickness = ParticleRadius * 4.0 * (1.0 - saturate(abs(sdf) / ParticleRadius));
+			result.Thickness = max(estimatedThickness, ParticleRadius);
+
+			break;
+		}
+
+		// Adaptive stepping with safety factor (reference: 4rknova blog)
+		t += max(sdf * 0.95, 0.01);
+	}
+
+	return result;
+}
+
+//=============================================================================
+// Shading Functions
+//=============================================================================
+
+// Schlick Fresnel approximation
+float SchlickFresnel(float cosTheta, float F0)
+{
+	return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+// Blinn-Phong specular
+float BlinnPhongSpecular(float3 N, float3 V, float3 L, float roughness)
+{
+	float3 H = normalize(L + V);
+	float NoH = saturate(dot(N, H));
+	float shininess = (1.0 - roughness) * 128.0;
+	return pow(NoH, shininess);
+}
+
+//=============================================================================
+// Vertex Shader (Fullscreen Triangle)
+//=============================================================================
+
+struct FVertexOutput
+{
+	float4 Position : SV_POSITION;
+	float2 UV : TEXCOORD0;
+};
+
+void MainVS(
+	in uint VertexID : SV_VertexID,
+	out FVertexOutput Output)
+{
+	// Generate fullscreen triangle vertices
+	float2 UV = float2((VertexID << 1) & 2, VertexID & 2);
+	Output.UV = UV;
+	Output.Position = float4(UV * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.5, 1.0);
+}
+
+//=============================================================================
+// Pixel Shader
+//=============================================================================
+
+void MainPS(
+	FVertexOutput Input,
+	out float4 OutColor : SV_Target0)
+{
+	float2 UV = Input.UV;
+
+	// Early out if no particles
+	if (ParticleCount <= 0)
+	{
+		discard;
+		return;
+	}
+
+	// Get camera ray
+	float3 RayOrigin, RayDirection;
+	GetCameraRay(UV, RayOrigin, RayDirection);
+
+	// Get scene depth for occlusion
+	float SceneDeviceZ = SceneDepthTexture.SampleLevel(SceneTextureSampler, UV, 0).r;
+	float SceneLinearDepth = ConvertDeviceZToLinearDepth(SceneDeviceZ);
+
+	// Clamp max distance to scene depth
+	float MaxDist = min(RayMarchMaxDistance, SceneLinearDepth * 100.0);  // Convert to world units
+
+	// Ray march
+	FRayMarchResult result = RayMarchSDF(RayOrigin, RayDirection, RayMarchMaxDistance);
+
+	if (!result.bHit)
+	{
+		discard;
+		return;
+	}
+
+	// Depth occlusion test: Compare hit point depth with scene depth
+	// Transform hit position to clip space to get its device Z
+	float4 HitViewPos = mul(float4(result.Position, 1.0), ViewMatrix);
+	float4 HitClipPos = mul(HitViewPos, ProjectionMatrix);
+	float HitDeviceZ = HitClipPos.z / HitClipPos.w;
+
+	// UE5 uses reversed-Z: closer objects have higher Z values
+	// If hit point is behind scene geometry, discard
+	if (HitDeviceZ < SceneDeviceZ)
+	{
+		discard;
+		return;
+	}
+
+	//=========================================================================
+	// Shading
+	//=========================================================================
+
+	float3 N = result.Normal;
+	float3 V = -RayDirection;
+	float3 P = result.Position;
+	float Thickness = result.Thickness;
+
+	// Light direction (from View uniform buffer)
+	float3 L = normalize(-View.DirectionalLightDirection);
+
+	// Fresnel (Schlick approximation)
+	float NoV = saturate(dot(N, V));
+	float Fresnel = SchlickFresnel(NoV, FresnelStrength);
+
+	// Specular (Blinn-Phong)
+	float NoL = saturate(dot(N, L));
+	float Specular = BlinnPhongSpecular(N, V, L, SpecularRoughness) * SpecularStrength * NoL;
+
+	// Beer's Law absorption
+	float AbsorptionFactor = 1.0 - exp(-Thickness * AbsorptionCoefficient * 0.1);
+
+	// Refracted background sampling
+	float3 RefractDir = refract(-V, N, 1.0 / RefractiveIndex);
+	float2 RefractedUV = UV + RefractDir.xy * 0.03;
+	RefractedUV = saturate(RefractedUV);
+	float3 RefractedBackground = SceneColorTexture.Sample(SceneTextureSampler, RefractedUV).rgb;
+
+	// Base color with absorption
+	float3 BaseColor = lerp(RefractedBackground, FluidColor.rgb, AbsorptionFactor);
+
+	//=========================================================================
+	// Subsurface Scattering (SSS) - Jelly Effect
+	//=========================================================================
+
+	// SSS: light passing through thin regions
+	float SSSFactor = saturate(1.0 - Thickness * 0.1) * SSSIntensity;
+	float3 SSSContribution = SSSColor.rgb * SSSFactor * NoL;
+
+	//=========================================================================
+	// Final Composition
+	//=========================================================================
+
+	// Fresnel reflection (environment)
+	float3 ReflectedColor = EnvironmentLightColor.rgb * Fresnel;
+
+	// Combine all lighting
+	float3 FinalColor = BaseColor;
+	FinalColor = lerp(FinalColor, ReflectedColor, Fresnel * 0.5);
+	FinalColor += SSSContribution;
+	FinalColor += Specular * View.DirectionalLightColor.rgb;
+
+	// Alpha based on thickness and fresnel
+	float Alpha = saturate(1.0 - exp(-Thickness * 0.05));
+	Alpha = max(Alpha, Fresnel * 0.5);
+	Alpha = max(Alpha, AbsorptionFactor);
+
+	OutColor = float4(FinalColor, Alpha);
+}
