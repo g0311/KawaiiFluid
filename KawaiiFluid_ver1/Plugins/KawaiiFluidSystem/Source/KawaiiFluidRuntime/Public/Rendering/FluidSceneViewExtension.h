@@ -45,6 +45,9 @@ public:
 	// End of ISceneViewExtension interface
 
 private:
+	/** Check if the view belongs to our Subsystem's World */
+	bool IsViewFromOurWorld(const FSceneView& InView) const;
+
 	/** Subsystem 약한 참조 */
 	TWeakObjectPtr<UFluidRendererSubsystem> Subsystem;
 };

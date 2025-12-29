@@ -33,12 +33,42 @@ FFluidSceneViewExtension::~FFluidSceneViewExtension()
 {
 }
 
+bool FFluidSceneViewExtension::IsViewFromOurWorld(const FSceneView& InView) const
+{
+	UFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
+	if (!SubsystemPtr)
+	{
+		return false;
+	}
+
+	UWorld* OurWorld = SubsystemPtr->GetWorld();
+	if (!OurWorld)
+	{
+		return false;
+	}
+
+	// Get World from View's Family Scene
+	if (InView.Family && InView.Family->Scene)
+	{
+		UWorld* ViewWorld = InView.Family->Scene->GetWorld();
+		return ViewWorld == OurWorld;
+	}
+
+	return false;
+}
+
 void FFluidSceneViewExtension::PostRenderBasePassDeferred_RenderThread(
 	FRDGBuilder& GraphBuilder,
 	FSceneView& InView,
 	const FRenderTargetBindingSlots& RenderTargets,
 	TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTextures)
 {
+	// Only render for views from our World
+	if (!IsViewFromOurWorld(InView))
+	{
+		return;
+	}
+
 	UFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
 	if (!SubsystemPtr || !SubsystemPtr->RenderingParameters.bEnableRendering)
 	{
@@ -179,6 +209,12 @@ void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 			[this](FRDGBuilder& GraphBuilder, const FSceneView& View,
 			       const FPostProcessMaterialInputs& InInputs)
 			{
+				// Only render for views from our World
+				if (!IsViewFromOurWorld(View))
+				{
+					return InInputs.ReturnUntouchedSceneColorForPostProcessing(GraphBuilder);
+				}
+
 				UFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
 
 				// 유효성 검사
