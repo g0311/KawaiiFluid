@@ -8,6 +8,7 @@
 
 class UKawaiiFluidPresetDataAsset;
 class UKawaiiFluidSimulationContext;
+class UKawaiiFluidSimulationModule;
 class FSpatialHash;
 struct FFluidParticle;
 
@@ -83,21 +84,24 @@ public:
 	void UpdateEnvironment();
 
 	//========================================
-	// Particle Access
+	// Particle Access (via SimulationModule)
 	//========================================
 
 	/** Get particles array */
-	TArray<FFluidParticle>& GetParticles() { return Particles; }
-	const TArray<FFluidParticle>& GetParticles() const { return Particles; }
+	TArray<FFluidParticle>& GetParticles();
+	const TArray<FFluidParticle>& GetParticles() const;
 
 	/** Get current particle count */
-	int32 GetParticleCount() const { return Particles.Num(); }
+	int32 GetParticleCount() const;
 
 	/** Get average density */
 	float GetAverageDensity() const;
 
 	/** Get simulation time */
-	float GetSimulationTime() const { return AccumulatedTime; }
+	float GetSimulationTime() const;
+
+	/** Get simulation module */
+	UKawaiiFluidSimulationModule* GetSimulationModule() const { return SimulationModule; }
 
 	//========================================
 	// Visualization
@@ -137,22 +141,16 @@ private:
 	TObjectPtr<UFluidPreviewSettingsObject> PreviewSettingsObject;
 
 	//========================================
-	// Simulation Data
+	// Simulation Data (Module-based)
 	//========================================
 
-	/** Particle array */
-	TArray<FFluidParticle> Particles;
+	/** Simulation module - owns particles, SpatialHash, and provides API */
+	TObjectPtr<UKawaiiFluidSimulationModule> SimulationModule;
 
-	/** Spatial hash for neighbor search */
-	TSharedPtr<FSpatialHash> SpatialHash;
-
-	/** Simulation context */
+	/** Simulation context - physics solver (shared with runtime) */
 	TObjectPtr<UKawaiiFluidSimulationContext> SimulationContext;
 
-	/** Accumulated simulation time */
-	float AccumulatedTime;
-
-	/** Spawn accumulator for fractional particles */
+	/** Spawn accumulator for fractional particles (continuous spawn) */
 	float SpawnAccumulator;
 
 	/** Is simulation running */

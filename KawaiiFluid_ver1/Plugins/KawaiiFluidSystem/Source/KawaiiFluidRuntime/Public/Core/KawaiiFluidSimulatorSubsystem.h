@@ -7,7 +7,6 @@
 #include "Core/KawaiiFluidSimulationTypes.h"
 #include "KawaiiFluidSimulatorSubsystem.generated.h"
 
-class UKawaiiFluidSimulationComponent;
 class UKawaiiFluidComponent;
 class UKawaiiFluidSimulationModule;
 class UKawaiiFluidSimulationContext;
@@ -116,7 +115,7 @@ public:
 
 	/** Get component count */
 	UFUNCTION(BlueprintCallable, Category = "KawaiiFluid|Query")
-	int32 GetComponentCount() const { return AllComponents.Num() + AllFluidComponents.Num(); }
+	int32 GetComponentCount() const { return AllFluidComponents.Num(); }
 
 	//========================================
 	// Context Management
@@ -195,50 +194,4 @@ private:
 
 	/** Build merged params from modules */
 	FKawaiiFluidSimulationParams BuildMergedModuleSimulationParams(const TArray<UKawaiiFluidSimulationModule*>& Modules);
-
-	//##########################################################################
-	// DEPRECATED - UKawaiiFluidSimulationComponent (Legacy)
-	//##########################################################################
-#pragma region DEPRECATED_LEGACY
-
-public:
-	/** [DEPRECATED] Register simulation component (legacy) */
-	void RegisterComponent(UKawaiiFluidSimulationComponent* Component);
-
-	/** [DEPRECATED] Unregister simulation component (legacy) */
-	void UnregisterComponent(UKawaiiFluidSimulationComponent* Component);
-
-	/** [DEPRECATED] Get all registered legacy components */
-	const TArray<UKawaiiFluidSimulationComponent*>& GetAllComponents() const { return AllComponents; }
-
-private:
-	/** [DEPRECATED] All registered legacy components */
-	UPROPERTY()
-	TArray<UKawaiiFluidSimulationComponent*> AllComponents;
-
-	/** [DEPRECATED] Merged particle buffer for legacy batching */
-	TArray<FFluidParticle> MergedParticleBuffer;
-
-	/** [DEPRECATED] Batch info array (legacy) */
-	TArray<FKawaiiFluidBatchInfo> BatchInfos;
-
-	/** [DEPRECATED] Simulate independent components */
-	void SimulateIndependentComponents(float DeltaTime);
-
-	/** [DEPRECATED] Simulate batched components */
-	void SimulateBatchedComponents(float DeltaTime);
-
-	/** [DEPRECATED] Group components by preset */
-	TMap<UKawaiiFluidPresetDataAsset*, TArray<UKawaiiFluidSimulationComponent*>> GroupComponentsByPreset() const;
-
-	/** [DEPRECATED] Merge particles from components */
-	void MergeParticles(const TArray<UKawaiiFluidSimulationComponent*>& Components);
-
-	/** [DEPRECATED] Split merged buffer back */
-	void SplitParticles(const TArray<UKawaiiFluidSimulationComponent*>& Components);
-
-	/** [DEPRECATED] Build merged simulation params */
-	FKawaiiFluidSimulationParams BuildMergedSimulationParams(const TArray<UKawaiiFluidSimulationComponent*>& Components);
-
-#pragma endregion DEPRECATED_LEGACY
 };

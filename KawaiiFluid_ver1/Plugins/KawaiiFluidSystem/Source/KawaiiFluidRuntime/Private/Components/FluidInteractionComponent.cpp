@@ -2,8 +2,8 @@
 
 #include "Components/FluidInteractionComponent.h"
 #include "Core/KawaiiFluidSimulatorSubsystem.h"
-#include "Components/KawaiiFluidSimulationComponent.h"
 #include "Collision/MeshFluidCollider.h"
+#include "Modules/KawaiiFluidSimulationModule.h"
 
 UFluidInteractionComponent::UFluidInteractionComponent()
 {
@@ -153,11 +153,11 @@ void UFluidInteractionComponent::UpdateAttachedParticleCount()
 
 	if (TargetSubsystem)
 	{
-		// Iterate all components from subsystem
-		for (UKawaiiFluidSimulationComponent* Comp : TargetSubsystem->GetAllComponents())
+		// Iterate all Modules from subsystem
+		for (auto* Module : TargetSubsystem->GetAllModules())
 		{
-			if (!Comp) continue;
-			for (const FFluidParticle& Particle : Comp->GetParticles())
+			if (!Module) continue;
+			for (const FFluidParticle& Particle : Module->GetParticles())
 			{
 				if (Particle.bIsAttached && Particle.AttachedActor.Get() == Owner)
 				{
@@ -190,10 +190,10 @@ void UFluidInteractionComponent::DetachAllFluid()
 
 	if (TargetSubsystem)
 	{
-		for (UKawaiiFluidSimulationComponent* Comp : TargetSubsystem->GetAllComponents())
+		for (auto Module : TargetSubsystem->GetAllModules())
 		{
-			if (!Comp) continue;
-			DetachFromParticles(Comp->GetParticlesMutable());
+			if (!Module) continue;
+			DetachFromParticles(Module->GetParticlesMutable());
 		}
 	}
 
@@ -233,10 +233,10 @@ void UFluidInteractionComponent::PushFluid(FVector Direction, float Force)
 
 	if (TargetSubsystem)
 	{
-		for (UKawaiiFluidSimulationComponent* Comp : TargetSubsystem->GetAllComponents())
+		for (auto Module : TargetSubsystem->GetAllModules())
 		{
-			if (!Comp) continue;
-			PushParticles(Comp->GetParticlesMutable());
+			if (!Module) continue;
+			PushParticles(Module->GetParticlesMutable());
 		}
 	}
 }
@@ -273,10 +273,10 @@ void UFluidInteractionComponent::DetectCollidingParticles()
 
 	if (TargetSubsystem)
 	{
-		for (UKawaiiFluidSimulationComponent* Comp : TargetSubsystem->GetAllComponents())
+		for (auto Module : TargetSubsystem->GetAllModules())
 		{
-			if (!Comp) continue;
-			CountColliding(Comp->GetParticles());
+			if (!Module) continue;
+			CountColliding(Module->GetParticles());
 		}
 	}
 

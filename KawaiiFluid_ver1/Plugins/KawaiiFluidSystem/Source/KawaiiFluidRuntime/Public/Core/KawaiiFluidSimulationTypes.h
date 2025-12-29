@@ -9,7 +9,6 @@
 
 class UFluidCollider;
 class UFluidInteractionComponent;
-class UKawaiiFluidSimulationComponent;
 class UKawaiiFluidComponent;
 class UKawaiiFluidSimulationModule;
 
@@ -128,26 +127,6 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidSimulationParams
 	int32 SurfaceNeighborThreshold = 25;
 
 	FKawaiiFluidSimulationParams() = default;
-};
-
-/**
- * Batching info for merge/split operations
- * Note: Uses raw pointer since this struct is only used within a single frame
- */
-struct FKawaiiFluidBatchInfo
-{
-	/** Component that owns these particles (raw pointer - only valid during batch operation) */
-	UKawaiiFluidSimulationComponent* Component = nullptr;
-
-	/** Start index in merged buffer */
-	int32 StartIndex = 0;
-
-	/** Number of particles from this component */
-	int32 ParticleCount = 0;
-
-	FKawaiiFluidBatchInfo() = default;
-	FKawaiiFluidBatchInfo(UKawaiiFluidSimulationComponent* InComponent, int32 InStart, int32 InCount)
-		: Component(InComponent), StartIndex(InStart), ParticleCount(InCount) {}
 };
 
 /**

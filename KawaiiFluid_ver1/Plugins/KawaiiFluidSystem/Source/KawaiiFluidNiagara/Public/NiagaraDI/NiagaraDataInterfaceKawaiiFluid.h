@@ -9,7 +9,8 @@
 #include "RHIResources.h"
 #include "NiagaraDataInterfaceKawaiiFluid.generated.h"
 
-class UKawaiiFluidSimulationComponent;
+class UKawaiiFluidComponent;
+class UKawaiiFluidSimulationModule;
 struct FKawaiiRenderParticle;
 struct FFluidParticle;
 
@@ -19,8 +20,11 @@ struct FFluidParticle;
  */
 struct FNDIKawaiiFluid_InstanceData
 {
-	/** 참조하는 FluidSimulationComponent (약한 포인터) */
-	TWeakObjectPtr<UKawaiiFluidSimulationComponent> SourceComponent;
+	/** 참조하는 FluidComponent (약한 포인터) */
+	TWeakObjectPtr<UKawaiiFluidComponent> SourceComponent;
+
+	/** SimulationModule 캐시 (Component에서 가져옴) */
+	TWeakObjectPtr<UKawaiiFluidSimulationModule> SourceModule;
 
 	/** 마지막 업데이트 시간 */
 	float LastUpdateTime = 0.0f;
@@ -46,7 +50,7 @@ struct FNDIKawaiiFluid_InstanceData
  * Kawaii Fluid Data Interface
  * CPU에서 생성한 파티클 데이터를 Niagara GPU 파티클로 전달
  *
- * @note UKawaiiFluidSimulationComponent를 사용합니다
+ * @note UKawaiiFluidComponent의 SimulationModule을 사용합니다
  */
 UCLASS(EditInlineNew, Category = "KawaiiFluid", meta = (DisplayName = "Kawaii Fluid Data"))
 class KAWAIIFLUIDNIAGARA_API UNiagaraDataInterfaceKawaiiFluid : public UNiagaraDataInterface
@@ -54,8 +58,8 @@ class KAWAIIFLUIDNIAGARA_API UNiagaraDataInterfaceKawaiiFluid : public UNiagaraD
 	GENERATED_UCLASS_BODY()
 
 	/**
-	 * 연결할 FluidSimulationComponent
-	 * @note 반드시 UKawaiiFluidSimulationComponent를 가진 Actor를 선택하세요
+	 * 연결할 FluidComponent를 가진 Actor
+	 * @note 반드시 UKawaiiFluidComponent를 가진 Actor를 선택하세요
 	 */
 	UPROPERTY(EditAnywhere, Category = "Kawaii Fluid", meta = (AllowedClasses = "/Script/Engine.Actor"))
 	TSoftObjectPtr<AActor> SourceFluidActor;

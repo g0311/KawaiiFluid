@@ -2,7 +2,8 @@
 
 #include "NiagaraDI/NiagaraDataInterfaceKawaiiFluid.h"
 #include "Core/KawaiiRenderParticle.h"
-#include "Components/KawaiiFluidSimulationComponent.h"
+#include "Components/KawaiiFluidComponent.h"
+#include "Modules/KawaiiFluidSimulationModule.h"
 #include "NiagaraShader.h"
 #include "NiagaraSystemInstance.h"
 #include "NiagaraCompileHashVisitor.h"
@@ -184,34 +185,35 @@ bool UNiagaraDataInterfaceKawaiiFluid::InitPerInstanceData(void* PerInstanceData
 {
 	FNDIKawaiiFluid_InstanceData* InstanceData = new (PerInstanceData) FNDIKawaiiFluid_InstanceData();
 
-	// ✅ Runtime 검증: User Parameter 연결 확인
+	// Runtime 검증: User Parameter 연결 확인
 	if (SourceFluidActor.IsNull())
 	{
 		UE_LOG(LogTemp, Error, TEXT("UNiagaraDataInterfaceKawaiiFluid: SourceFluidActor is not set! Please assign an Actor in User Parameters."));
 		return true; // 초기화는 성공하지만 데이터 없음
 	}
 
-	// Actor에서 UKawaiiFluidSimulationComponent 찾기
+	// Actor에서 UKawaiiFluidComponent 찾기
 	if (SourceFluidActor.IsValid())
 	{
 		AActor* Actor = SourceFluidActor.Get();
 		if (Actor)
 		{
-			UKawaiiFluidSimulationComponent* SimComp = Actor->FindComponentByClass<UKawaiiFluidSimulationComponent>();
-			if (SimComp)
+			UKawaiiFluidComponent* FluidComp = Actor->FindComponentByClass<UKawaiiFluidComponent>();
+			if (FluidComp && FluidComp->SimulationModule)
 			{
-				InstanceData->SourceComponent = SimComp;
+				InstanceData->SourceComponent = FluidComp;
+				InstanceData->SourceModule = FluidComp->SimulationModule;
 
-				// ✅ 초기 CachedParticleCount 설정 (Tick 전에!)
-				const TArray<FFluidParticle>& Particles = SimComp->GetParticles();
+				// 초기 CachedParticleCount 설정 (Tick 전에!)
+				const TArray<FFluidParticle>& Particles = FluidComp->SimulationModule->GetParticles();
 				InstanceData->CachedParticleCount = Particles.Num();
 
-				UE_LOG(LogTemp, Log, TEXT("Niagara DI: Found SimulationComponent on %s (Particles: %d)"),
+				UE_LOG(LogTemp, Log, TEXT("Niagara DI: Found KawaiiFluidComponent on %s (Particles: %d)"),
 					*Actor->GetName(), InstanceData->CachedParticleCount);
 			}
 			else
 			{
-				UE_LOG(LogTemp, Error, TEXT("Niagara DI: Actor '%s' does not have UKawaiiFluidSimulationComponent!"),
+				UE_LOG(LogTemp, Error, TEXT("Niagara DI: Actor '%s' does not have UKawaiiFluidComponent!"),
 					*Actor->GetName());
 			}
 		}
@@ -234,12 +236,12 @@ void UNiagaraDataInterfaceKawaiiFluid::DestroyPerInstanceData(void* PerInstanceD
 // 매 프레임 업데이트
 //========================================
 
-bool UNiagaraDataInterfaceKawaiiFluid::PerInstanceTick(void* PerInstanceData, 
-                                                         FNiagaraSystemInstance* SystemInstance, 
+bool UNiagaraDataInterfaceKawaiiFluid::PerInstanceTick(void* PerInstanceData,
+                                                         FNiagaraSystemInstance* SystemInstance,
                                                          float DeltaSeconds)
 {
 	FNDIKawaiiFluid_InstanceData* InstanceData = static_cast<FNDIKawaiiFluid_InstanceData*>(PerInstanceData);
-	
+
 	if (!bAutoUpdate)
 	{
 		return false;
@@ -253,15 +255,15 @@ bool UNiagaraDataInterfaceKawaiiFluid::PerInstanceTick(void* PerInstanceData,
 	}
 	InstanceData->LastUpdateTime = 0.0f;
 
-	// Component 유효성 체크
-	UKawaiiFluidSimulationComponent* SimComp = InstanceData->SourceComponent.Get();
-	if (!SimComp)
+	// Module 유효성 체크
+	UKawaiiFluidSimulationModule* SimModule = InstanceData->SourceModule.Get();
+	if (!SimModule)
 	{
 		return false;
 	}
 
 	// 파티클 데이터 가져오기
-	const TArray<FFluidParticle>& Particles = SimComp->GetParticles();
+	const TArray<FFluidParticle>& Particles = SimModule->GetParticles();
 	InstanceData->CachedParticleCount = Particles.Num();
 
 	// 🔴 BREAKPOINT: PIE 실행 중에만 로그 출력
@@ -270,13 +272,17 @@ bool UNiagaraDataInterfaceKawaiiFluid::PerInstanceTick(void* PerInstanceData,
 	if (bFirstTick && Particles.Num() > 0)
 	{
 		// ✅ World가 Game World인지 확인 (PIE, Standalone 등)
-		if (UWorld* World = SimComp->GetWorld())
+		UKawaiiFluidComponent* FluidComp = InstanceData->SourceComponent.Get();
+		if (FluidComp)
 		{
-			if (World->IsGameWorld())
+			if (UWorld* World = FluidComp->GetWorld())
 			{
-				UE_LOG(LogTemp, Error, TEXT("🔴 BREAKPOINT: PerInstanceTick - CachedParticleCount=%d (PIE)"),
-					InstanceData->CachedParticleCount);
-				bFirstTick = false;
+				if (World->IsGameWorld())
+				{
+					UE_LOG(LogTemp, Error, TEXT("🔴 BREAKPOINT: PerInstanceTick - CachedParticleCount=%d (PIE)"),
+						InstanceData->CachedParticleCount);
+					bFirstTick = false;
+				}
 			}
 		}
 	}
@@ -375,9 +381,10 @@ void UNiagaraDataInterfaceKawaiiFluid::VMGetParticleCount(FVectorVMExternalFunct
 	if (bFirstCall && Count > 0)
 	{
 		// World 상태 확인 (InstanceData의 SourceComponent 사용)
-		if (InstanceData->SourceComponent.IsValid())
+		UKawaiiFluidComponent* FluidComp = InstanceData->SourceComponent.Get();
+		if (FluidComp)
 		{
-			if (UWorld* World = InstanceData->SourceComponent->GetWorld())
+			if (UWorld* World = FluidComp->GetWorld())
 			{
 				if (World->IsGameWorld())
 				{
@@ -396,11 +403,11 @@ void UNiagaraDataInterfaceKawaiiFluid::VMGetParticlePosition(FVectorVMExternalFu
 	FNDIInputParam<int32> InIndex(Context);
 	FNDIOutputParam<FVector3f> OutPosition(Context);
 
-	// SimulationComponent에서 파티클 데이터 가져오기
-	UKawaiiFluidSimulationComponent* SimComp = InstanceData->SourceComponent.Get();
-	if (!SimComp)
+	// SimulationModule에서 파티클 데이터 가져오기
+	UKawaiiFluidSimulationModule* SimModule = InstanceData->SourceModule.Get();
+	if (!SimModule)
 	{
-		// Component 없으면 제로 반환
+		// Module 없으면 제로 반환
 		for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 		{
 			InIndex.GetAndAdvance();
@@ -409,21 +416,25 @@ void UNiagaraDataInterfaceKawaiiFluid::VMGetParticlePosition(FVectorVMExternalFu
 		return;
 	}
 
-	const TArray<FFluidParticle>& Particles = SimComp->GetParticles();
+	const TArray<FFluidParticle>& Particles = SimModule->GetParticles();
 
 	// ✅ PIE 실행 중에만 로그 출력 (첫 호출 시)
 	#if !UE_BUILD_SHIPPING
 	static bool bFirstCall = true;
 	if (bFirstCall && Particles.Num() > 0)
 	{
-		if (UWorld* World = SimComp->GetWorld())
+		UKawaiiFluidComponent* FluidComp = InstanceData->SourceComponent.Get();
+		if (FluidComp)
 		{
-			if (World->IsGameWorld())
+			if (UWorld* World = FluidComp->GetWorld())
 			{
-				UE_LOG(LogTemp, Warning, TEXT("🎯 VMGetParticlePosition called: %d instances (PIE)"), Context.GetNumInstances());
-				UE_LOG(LogTemp, Warning, TEXT("  → First Particle Position: (%f, %f, %f)"),
-					Particles[0].Position.X, Particles[0].Position.Y, Particles[0].Position.Z);
-				bFirstCall = false;
+				if (World->IsGameWorld())
+				{
+					UE_LOG(LogTemp, Warning, TEXT("🎯 VMGetParticlePosition called: %d instances (PIE)"), Context.GetNumInstances());
+					UE_LOG(LogTemp, Warning, TEXT("  → First Particle Position: (%f, %f, %f)"),
+						Particles[0].Position.X, Particles[0].Position.Y, Particles[0].Position.Z);
+					bFirstCall = false;
+				}
 			}
 		}
 	}
@@ -449,11 +460,11 @@ void UNiagaraDataInterfaceKawaiiFluid::VMGetParticleVelocity(FVectorVMExternalFu
 	FNDIInputParam<int32> InIndex(Context);
 	FNDIOutputParam<FVector3f> OutVelocity(Context);
 
-	// SimulationComponent에서 파티클 데이터 가져오기
-	UKawaiiFluidSimulationComponent* SimComp = InstanceData->SourceComponent.Get();
-	if (!SimComp)
+	// SimulationModule에서 파티클 데이터 가져오기
+	UKawaiiFluidSimulationModule* SimModule = InstanceData->SourceModule.Get();
+	if (!SimModule)
 	{
-		// Component 없으면 제로 반환
+		// Module 없으면 제로 반환
 		for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 		{
 			InIndex.GetAndAdvance();
@@ -462,7 +473,7 @@ void UNiagaraDataInterfaceKawaiiFluid::VMGetParticleVelocity(FVectorVMExternalFu
 		return;
 	}
 
-	const TArray<FFluidParticle>& Particles = SimComp->GetParticles();
+	const TArray<FFluidParticle>& Particles = SimModule->GetParticles();
 
 	for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 	{
@@ -483,8 +494,8 @@ void UNiagaraDataInterfaceKawaiiFluid::VMGetParticleRadius(FVectorVMExternalFunc
 	VectorVM::FUserPtrHandler<FNDIKawaiiFluid_InstanceData> InstanceData(Context);
 	FNDIOutputParam<float> OutRadius(Context);
 
-	UKawaiiFluidSimulationComponent* SimComp = InstanceData->SourceComponent.Get();
-	float Radius = SimComp ? SimComp->GetParticleRadius() : 5.0f;
+	UKawaiiFluidSimulationModule* SimModule = InstanceData->SourceModule.Get();
+	float Radius = SimModule ? SimModule->GetParticleRadius() : 5.0f;
 
 	for (int32 i = 0; i < Context.GetNumInstances(); ++i)
 	{

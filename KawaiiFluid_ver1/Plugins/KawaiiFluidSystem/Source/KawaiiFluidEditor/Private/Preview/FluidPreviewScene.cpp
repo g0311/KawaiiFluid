@@ -6,6 +6,7 @@
 #include "Core/SpatialHash.h"
 #include "Core/KawaiiFluidSimulationContext.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
+#include "Modules/KawaiiFluidSimulationModule.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -16,7 +17,8 @@ FFluidPreviewScene::FFluidPreviewScene(FPreviewScene::ConstructionValues CVS)
 	: FAdvancedPreviewScene(CVS)
 	, CurrentPreset(nullptr)
 	, PreviewSettingsObject(nullptr)
-	, AccumulatedTime(0.0f)
+	, SimulationModule(nullptr)
+	, SimulationContext(nullptr)
 	, SpawnAccumulator(0.0f)
 	, bSimulationActive(false)
 	, PreviewActor(nullptr)
@@ -27,10 +29,10 @@ FFluidPreviewScene::FFluidPreviewScene(FPreviewScene::ConstructionValues CVS)
 	// Create preview settings object
 	PreviewSettingsObject = NewObject<UFluidPreviewSettingsObject>(GetTransientPackage(), NAME_None, RF_Transient);
 
-	// Create spatial hash
-	SpatialHash = MakeShared<FSpatialHash>(30.0f);
+	// Create simulation module (owns particles, SpatialHash, etc.)
+	SimulationModule = NewObject<UKawaiiFluidSimulationModule>(GetTransientPackage(), NAME_None, RF_Transient);
 
-	// Create simulation context
+	// Create simulation context (physics solver)
 	SimulationContext = NewObject<UKawaiiFluidSimulationContext>(GetTransientPackage(), NAME_None, RF_Transient);
 
 	// Create visualization components
@@ -42,8 +44,11 @@ FFluidPreviewScene::FFluidPreviewScene(FPreviewScene::ConstructionValues CVS)
 
 FFluidPreviewScene::~FFluidPreviewScene()
 {
-	// Clean up
-	Particles.Empty();
+	// Clean up simulation module
+	if (SimulationModule)
+	{
+		SimulationModule->Shutdown();
+	}
 
 	if (PreviewActor && PreviewActor->IsValidLowLevel())
 	{
@@ -58,6 +63,7 @@ void FFluidPreviewScene::AddReferencedObjects(FReferenceCollector& Collector)
 
 	Collector.AddReferencedObject(CurrentPreset);
 	Collector.AddReferencedObject(PreviewSettingsObject);
+	Collector.AddReferencedObject(SimulationModule);
 	Collector.AddReferencedObject(SimulationContext);
 	Collector.AddReferencedObject(PreviewActor);
 	Collector.AddReferencedObject(ParticleMeshComponent);
@@ -148,11 +154,17 @@ void FFluidPreviewScene::SetPreset(UKawaiiFluidPresetDataAsset* InPreset)
 			}
 		}
 
-		// Initialize solvers
-		SimulationContext->InitializeSolvers(CurrentPreset);
+		// Initialize simulation module with preset
+		if (SimulationModule)
+		{
+			SimulationModule->Initialize(CurrentPreset);
+		}
 
-		// Update spatial hash cell size
-		SpatialHash->SetCellSize(CurrentPreset->SmoothingRadius);
+		// Initialize solvers in context
+		if (SimulationContext)
+		{
+			SimulationContext->InitializeSolvers(CurrentPreset);
+		}
 
 		CachedParticleRadius = CurrentPreset->ParticleRadius;
 	}
@@ -178,10 +190,10 @@ void FFluidPreviewScene::RefreshFromPreset()
 		}
 	}
 
-	// Update spatial hash cell size if changed
-	if (SpatialHash.IsValid() && FMath::Abs(SpatialHash->GetCellSize() - CurrentPreset->SmoothingRadius) > KINDA_SMALL_NUMBER)
+	// Update simulation module preset (handles SpatialHash internally)
+	if (SimulationModule)
 	{
-		SpatialHash->SetCellSize(CurrentPreset->SmoothingRadius);
+		SimulationModule->SetPreset(CurrentPreset);
 	}
 
 	CachedParticleRadius = CurrentPreset->ParticleRadius;
@@ -202,16 +214,13 @@ void FFluidPreviewScene::StopSimulation()
 
 void FFluidPreviewScene::ResetSimulation()
 {
-	// Clear existing particles
-	Particles.Empty();
-	AccumulatedTime = 0.0f;
-	SpawnAccumulator = 0.0f;
-
-	// Clear spatial hash
-	if (SpatialHash.IsValid())
+	// Clear existing particles via SimulationModule
+	if (SimulationModule)
 	{
-		SpatialHash->Clear();
+		SimulationModule->ClearAllParticles();
+		SimulationModule->SetAccumulatedTime(0.0f);
 	}
+	SpawnAccumulator = 0.0f;
 
 	// Update visuals
 	UpdateParticleVisuals();
@@ -219,10 +228,15 @@ void FFluidPreviewScene::ResetSimulation()
 
 void FFluidPreviewScene::ContinuousSpawn(float DeltaTime)
 {
+	if (!SimulationModule)
+	{
+		return;
+	}
+
 	const FFluidPreviewSettings& Settings = PreviewSettingsObject->Settings;
 
 	// Check if we've reached max particle count
-	if (Particles.Num() >= Settings.MaxParticleCount)
+	if (SimulationModule->GetParticleCount() >= Settings.MaxParticleCount)
 	{
 		return;
 	}
@@ -245,29 +259,23 @@ void FFluidPreviewScene::ContinuousSpawn(float DeltaTime)
 	const float SpawnRadius = Settings.SpawnRadius;
 
 	// Calculate how many we can actually spawn
-	const int32 RemainingCapacity = Settings.MaxParticleCount - Particles.Num();
+	const int32 RemainingCapacity = Settings.MaxParticleCount - SimulationModule->GetParticleCount();
 	const int32 ActualSpawnCount = FMath::Min(ParticlesToSpawn, RemainingCapacity);
 
-	// Get the next particle ID
-	int32 NextParticleID = Particles.Num();
-
+	// Spawn particles via SimulationModule
 	for (int32 i = 0; i < ActualSpawnCount; ++i)
 	{
 		// Random position within sphere
 		FVector RandomOffset = FMath::VRand() * FMath::FRand() * SpawnRadius;
 		FVector Position = SpawnLocation + RandomOffset;
 
-		FFluidParticle Particle(Position, NextParticleID + i);
-		Particle.Velocity = SpawnVelocity;
-		Particle.Mass = CurrentPreset ? CurrentPreset->ParticleMass : 1.0f;
-
-		Particles.Add(Particle);
+		SimulationModule->SpawnParticle(Position, SpawnVelocity);
 	}
 }
 
 void FFluidPreviewScene::TickSimulation(float DeltaTime)
 {
-	if (!bSimulationActive || !CurrentPreset)
+	if (!bSimulationActive || !CurrentPreset || !SimulationModule)
 	{
 		return;
 	}
@@ -276,7 +284,8 @@ void FFluidPreviewScene::TickSimulation(float DeltaTime)
 	ContinuousSpawn(DeltaTime);
 
 	// Skip simulation if no particles yet
-	if (Particles.Num() == 0 || !SimulationContext || !SpatialHash.IsValid())
+	FSpatialHash* SpatialHash = SimulationModule->GetSpatialHash();
+	if (SimulationModule->GetParticleCount() == 0 || !SimulationContext || !SpatialHash)
 	{
 		return;
 	}
@@ -288,15 +297,21 @@ void FFluidPreviewScene::TickSimulation(float DeltaTime)
 	Params.bUseWorldCollision = false; // We handle collision manually in preview
 	Params.ParticleRadius = CurrentPreset->ParticleRadius;
 
-	// Run simulation
+	// Get accumulated time from module
+	float AccumulatedTime = SimulationModule->GetAccumulatedTime();
+
+	// Run simulation using module's particle array
 	SimulationContext->Simulate(
-		Particles,
+		SimulationModule->GetParticlesMutable(),
 		CurrentPreset,
 		Params,
 		*SpatialHash,
 		DeltaTime,
 		AccumulatedTime
 	);
+
+	// Update accumulated time back to module
+	SimulationModule->SetAccumulatedTime(AccumulatedTime);
 
 	// Handle floor collision manually
 	HandleFloorCollision();
@@ -313,7 +328,7 @@ void FFluidPreviewScene::TickSimulation(float DeltaTime)
 
 void FFluidPreviewScene::HandleFloorCollision()
 {
-	if (!PreviewSettingsObject->Settings.bShowFloor)
+	if (!PreviewSettingsObject->Settings.bShowFloor || !SimulationModule)
 	{
 		return;
 	}
@@ -323,7 +338,7 @@ void FFluidPreviewScene::HandleFloorCollision()
 	const float Restitution = CurrentPreset ? CurrentPreset->Restitution : 0.0f;
 	const float Friction = CurrentPreset ? CurrentPreset->Friction : 0.5f;
 
-	for (FFluidParticle& Particle : Particles)
+	for (FFluidParticle& Particle : SimulationModule->GetParticlesMutable())
 	{
 		const float MinZ = FloorY + ParticleRadius;
 
@@ -349,12 +364,17 @@ void FFluidPreviewScene::HandleFloorCollision()
 
 void FFluidPreviewScene::HandleWallCollision()
 {
+	if (!SimulationModule)
+	{
+		return;
+	}
+
 	const FFluidPreviewSettings& Settings = PreviewSettingsObject->Settings;
 	const float HalfSize = Settings.FloorSize.X * 0.5f;
 	const float ParticleRadius = CurrentPreset ? CurrentPreset->ParticleRadius : 5.0f;
 	const float Restitution = CurrentPreset ? CurrentPreset->Restitution : 0.0f;
 
-	for (FFluidParticle& Particle : Particles)
+	for (FFluidParticle& Particle : SimulationModule->GetParticlesMutable())
 	{
 		// X boundaries
 		if (Particle.Position.X < -HalfSize + ParticleRadius)
@@ -431,11 +451,12 @@ void FFluidPreviewScene::UpdateEnvironment()
 
 void FFluidPreviewScene::UpdateParticleVisuals()
 {
-	if (!ParticleMeshComponent)
+	if (!ParticleMeshComponent || !SimulationModule)
 	{
 		return;
 	}
 
+	const TArray<FFluidParticle>& Particles = SimulationModule->GetParticles();
 	const int32 NumParticles = Particles.Num();
 
 	// Adjust instance count
@@ -472,13 +493,48 @@ void FFluidPreviewScene::UpdateParticleVisuals()
 	ParticleMeshComponent->MarkRenderStateDirty();
 }
 
+//========================================
+// Particle Access (via SimulationModule)
+//========================================
+
+TArray<FFluidParticle>& FFluidPreviewScene::GetParticles()
+{
+	static TArray<FFluidParticle> EmptyArray;
+	if (SimulationModule)
+	{
+		return SimulationModule->GetParticlesMutable();
+	}
+	return EmptyArray;
+}
+
+const TArray<FFluidParticle>& FFluidPreviewScene::GetParticles() const
+{
+	static TArray<FFluidParticle> EmptyArray;
+	if (SimulationModule)
+	{
+		return SimulationModule->GetParticles();
+	}
+	return EmptyArray;
+}
+
+int32 FFluidPreviewScene::GetParticleCount() const
+{
+	return SimulationModule ? SimulationModule->GetParticleCount() : 0;
+}
+
+float FFluidPreviewScene::GetSimulationTime() const
+{
+	return SimulationModule ? SimulationModule->GetAccumulatedTime() : 0.0f;
+}
+
 float FFluidPreviewScene::GetAverageDensity() const
 {
-	if (Particles.Num() == 0)
+	if (!SimulationModule || SimulationModule->GetParticleCount() == 0)
 	{
 		return 0.0f;
 	}
 
+	const TArray<FFluidParticle>& Particles = SimulationModule->GetParticles();
 	float TotalDensity = 0.0f;
 	for (const FFluidParticle& Particle : Particles)
 	{
