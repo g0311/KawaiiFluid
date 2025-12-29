@@ -23,6 +23,11 @@ struct FFluidIntermediateTextures
 
 	/** Accumulated thickness texture */
 	FRDGTextureRef ThicknessTexture = nullptr;
+	
+	FRDGTextureRef GBufferATexture = nullptr;
+	FRDGTextureRef GBufferBTexture = nullptr;
+	FRDGTextureRef GBufferCTexture = nullptr;
+	FRDGTextureRef GBufferDTexture = nullptr;
 };
 
 /**
