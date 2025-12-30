@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Components/ActorComponent.h"
+#include "Components/SceneComponent.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
 #include "Modules/KawaiiFluidSimulationModule.h"
 #include "Rendering/KawaiiFluidRendererSettings.h"
@@ -78,7 +78,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_FiveParams(
  * @endcode
  */
 UCLASS(ClassGroup=(KawaiiFluid), meta=(BlueprintSpawnableComponent, DisplayName="Kawaii Fluid"))
-class KAWAIIFLUIDRUNTIME_API UKawaiiFluidComponent : public UActorComponent
+class KAWAIIFLUIDRUNTIME_API UKawaiiFluidComponent : public USceneComponent
 {
 	GENERATED_BODY()
 

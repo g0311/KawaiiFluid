@@ -46,8 +46,8 @@ void UKawaiiFluidComponent::BeginPlay()
 	// 렌더링 모듈 초기화
 	if (bEnableRendering && RenderingModule && SimulationModule)
 	{
-		// 1. RenderingModule 초기화 (SimulationModule을 IKawaiiFluidDataProvider로 전달)
-		RenderingModule->Initialize(GetWorld(), GetOwner(), SimulationModule);
+		// 1. RenderingModule 초기화 (this를 부모 컴포넌트로 전달)
+		RenderingModule->Initialize(GetWorld(), this, SimulationModule);
 
 		// 2. ISM 렌더러 설정 적용
 		if (UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer())
@@ -82,7 +82,7 @@ void UKawaiiFluidComponent::BeginPlay()
 	// 자동 스폰
 	if (bSpawnOnBeginPlay && AutoSpawnCount > 0 && SimulationModule)
 	{
-		SimulationModule->SpawnParticles(GetOwner()->GetActorLocation(), AutoSpawnCount, AutoSpawnRadius);
+		SimulationModule->SpawnParticles(GetComponentLocation(), AutoSpawnCount, AutoSpawnRadius);
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("UKawaiiFluidComponent BeginPlay: %s"), *GetName());
@@ -163,8 +163,8 @@ void UKawaiiFluidComponent::ProcessContinuousSpawn(float DeltaTime)
 
 	while (SpawnAccumulatedTime >= SpawnInterval)
 	{
-		// 스폰 위치 계산
-		FVector SpawnLocation = GetOwner()->GetActorLocation() + SpawnOffset;
+		// 스폰 위치 계산 (컴포넌트 위치 기준)
+		FVector SpawnLocation = GetComponentLocation() + SpawnOffset;
 
 		// 반경 내 랜덤 위치
 		if (ContinuousSpawnRadius > 0.0f)

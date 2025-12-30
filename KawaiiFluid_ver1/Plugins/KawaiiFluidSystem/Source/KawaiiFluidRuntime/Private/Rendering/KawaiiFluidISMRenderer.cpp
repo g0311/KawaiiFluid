@@ -10,19 +10,19 @@ UKawaiiFluidISMRenderer::UKawaiiFluidISMRenderer()
 	// No component tick needed - UObject doesn't tick
 }
 
-void UKawaiiFluidISMRenderer::Initialize(UWorld* InWorld, AActor* InOwner)
+void UKawaiiFluidISMRenderer::Initialize(UWorld* InWorld, USceneComponent* InOwnerComponent)
 {
 	CachedWorld = InWorld;
-	CachedOwner = InOwner;
+	CachedOwnerComponent = InOwnerComponent;
 
 	if (!CachedWorld)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidISMRenderer::Initialize - No world context provided"));
 	}
 
-	if (!CachedOwner)
+	if (!CachedOwnerComponent)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidISMRenderer::Initialize - No owner actor provided"));
+		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidISMRenderer::Initialize - No owner component provided"));
 	}
 
 	InitializeISM();
@@ -43,7 +43,7 @@ void UKawaiiFluidISMRenderer::Cleanup()
 
 	// Clear cached references
 	CachedWorld = nullptr;
-	CachedOwner = nullptr;
+	CachedOwnerComponent = nullptr;
 	bEnabled = false;
 }
 
@@ -162,15 +162,15 @@ void UKawaiiFluidISMRenderer::UpdateRendering(const IKawaiiFluidDataProvider* Da
 
 void UKawaiiFluidISMRenderer::InitializeISM()
 {
-	if (!CachedOwner)
+	if (!CachedOwnerComponent)
 	{
-		UE_LOG(LogTemp, Error, TEXT("KawaiiFluidISMRenderer: No owner actor"));
+		UE_LOG(LogTemp, Error, TEXT("KawaiiFluidISMRenderer: No owner component"));
 		return;
 	}
 
-	// Create ISM component on owner actor
+	// Create ISM component on owner component
 	ISMComponent = NewObject<UInstancedStaticMeshComponent>(
-		CachedOwner,
+		CachedOwnerComponent,
 		UInstancedStaticMeshComponent::StaticClass(),
 		TEXT("FluidISM_Internal")
 	);
@@ -181,8 +181,8 @@ void UKawaiiFluidISMRenderer::InitializeISM()
 		return;
 	}
 
-	// Component setup
-	ISMComponent->SetupAttachment(CachedOwner->GetRootComponent());
+	// Component setup - FluidComponent에 직접 부착 (안정적인 계층 구조)
+	ISMComponent->SetupAttachment(CachedOwnerComponent);
 
 	// Use absolute coordinates (same as DummyComponent)
 	ISMComponent->SetAbsolute(true, true, true);

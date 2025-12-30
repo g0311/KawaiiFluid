@@ -46,8 +46,8 @@ FFluidPreviewScene::FFluidPreviewScene(FPreviewScene::ConstructionValues CVS)
 
 	if (RenderingModule && PreviewActor)
 	{
-		// Initialize with this as DataProvider (IKawaiiFluidDataProvider)
-		RenderingModule->Initialize(GetWorld(), PreviewActor, this);
+		// Initialize with this as DataProvider (PreviewActor의 RootComponent에 ISM 부착)
+		RenderingModule->Initialize(GetWorld(), PreviewActor->GetRootComponent(), this);
 
 		// Apply default settings to renderers (same as runtime!)
 		if (UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer())

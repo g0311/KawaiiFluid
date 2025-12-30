@@ -50,10 +50,10 @@ public:
 	 * Creates both renderer instances and sets their enabled state.
 	 *
 	 * @param InWorld World context
-	 * @param InOwner Actor owner
+	 * @param InOwnerComponent Parent scene component for attachment
 	 * @param InDataProvider Data provider to use
 	 */
-	void Initialize(UWorld* InWorld, AActor* InOwner, IKawaiiFluidDataProvider* InDataProvider);
+	void Initialize(UWorld* InWorld, USceneComponent* InOwnerComponent, IKawaiiFluidDataProvider* InDataProvider);
 
 	/**
 	 * Cleanup resources
@@ -99,9 +99,9 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UWorld> CachedWorld;
 
-	/** Cached owner actor reference (replaces GetOwner()) */
+	/** Cached owner component reference (for renderer attachment) */
 	UPROPERTY()
-	TObjectPtr<AActor> CachedOwner;
+	TObjectPtr<USceneComponent> CachedOwnerComponent;
 
 	/** Data provider pointer (interface, not UPROPERTY) */
 	IKawaiiFluidDataProvider* DataProviderPtr;

@@ -55,7 +55,8 @@ void UKawaiiSlimeComponent::BeginPlay()
 	// 렌더링 모듈 초기화
 	if (bEnableRendering && RenderingModule && SlimeModule)
 	{
-		RenderingModule->Initialize(GetWorld(), GetOwner(), SlimeModule);
+		// SceneComponent이므로 this에 ISM 부착
+		RenderingModule->Initialize(GetWorld(), this, SlimeModule);
 
 		// ISM 렌더러 설정 적용
 		if (UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer())

@@ -256,17 +256,17 @@ void FFluidBrushEditorMode::ApplyBrush()
 	switch (Settings.Mode)
 	{
 		case EFluidBrushMode::Add:
-			// TargetComponent->AddParticlesInRadius(
-			// 	BrushLocation,
-			// 	Settings.Radius,
-			// 	Settings.ParticlesPerStroke,
-			// 	Settings.InitialVelocity,
-			// 	Settings.Randomness
-			// );
+			TargetComponent->AddParticlesInRadius(
+				BrushLocation,
+				Settings.Radius,
+				Settings.ParticlesPerStroke,
+				Settings.InitialVelocity,
+				Settings.Randomness
+			);
 			break;
 
 		case EFluidBrushMode::Remove:
-			// TargetComponent->RemoveParticlesInRadius(BrushLocation, Settings.Radius);
+			TargetComponent->RemoveParticlesInRadius(BrushLocation, Settings.Radius);
 			break;
 	}
 }

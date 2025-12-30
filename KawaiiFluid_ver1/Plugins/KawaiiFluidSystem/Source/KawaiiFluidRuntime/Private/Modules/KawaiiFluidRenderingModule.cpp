@@ -12,10 +12,10 @@ UKawaiiFluidRenderingModule::UKawaiiFluidRenderingModule()
 	SSFRRenderer = CreateDefaultSubobject<UKawaiiFluidSSFRRenderer>(TEXT("SSFRRenderer"));
 }
 
-void UKawaiiFluidRenderingModule::Initialize(UWorld* InWorld, AActor* InOwner, IKawaiiFluidDataProvider* InDataProvider)
+void UKawaiiFluidRenderingModule::Initialize(UWorld* InWorld, USceneComponent* InOwnerComponent, IKawaiiFluidDataProvider* InDataProvider)
 {
 	CachedWorld = InWorld;
-	CachedOwner = InOwner;
+	CachedOwnerComponent = InOwnerComponent;
 	DataProviderPtr = InDataProvider;
 
 	// CreateDefaultSubobject only works in CDO context.
@@ -33,15 +33,15 @@ void UKawaiiFluidRenderingModule::Initialize(UWorld* InWorld, AActor* InOwner, I
 		UE_LOG(LogTemp, Log, TEXT("RenderingModule: Created SSFRRenderer via NewObject (non-CDO context)"));
 	}
 
-	// Initialize renderers
+	// Initialize renderers (컴포넌트에 부착)
 	if (ISMRenderer)
 	{
-		ISMRenderer->Initialize(InWorld, InOwner);
+		ISMRenderer->Initialize(InWorld, InOwnerComponent);
 	}
 
 	if (SSFRRenderer)
 	{
-		SSFRRenderer->Initialize(InWorld, InOwner);
+		SSFRRenderer->Initialize(InWorld, InOwnerComponent);
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("RenderingModule: Initialized (ISM: %s, SSFR: %s)"),
@@ -63,7 +63,7 @@ void UKawaiiFluidRenderingModule::Cleanup()
 
 	DataProviderPtr = nullptr;
 	CachedWorld = nullptr;
-	CachedOwner = nullptr;
+	CachedOwnerComponent = nullptr;
 }
 
 void UKawaiiFluidRenderingModule::UpdateRenderers()

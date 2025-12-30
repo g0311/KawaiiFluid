@@ -27,7 +27,8 @@ void UKawaiiFluidTestDataComponent::BeginPlay()
 	// Initialize rendering module if rendering is enabled
 	if (bEnableRendering && RenderingModule)
 	{
-		RenderingModule->Initialize(GetWorld(), GetOwner(), this);
+		// ActorComponent이므로 Owner의 RootComponent에 ISM 부착
+		RenderingModule->Initialize(GetWorld(), GetOwner()->GetRootComponent(), this);
 
 		// Apply settings from structs to renderers
 		if (UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer())

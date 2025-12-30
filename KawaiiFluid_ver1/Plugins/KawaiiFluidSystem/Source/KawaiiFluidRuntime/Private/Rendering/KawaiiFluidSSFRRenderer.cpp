@@ -12,19 +12,19 @@ UKawaiiFluidSSFRRenderer::UKawaiiFluidSSFRRenderer()
 	// No component tick needed - UObject doesn't tick
 }
 
-void UKawaiiFluidSSFRRenderer::Initialize(UWorld* InWorld, AActor* InOwner)
+void UKawaiiFluidSSFRRenderer::Initialize(UWorld* InWorld, USceneComponent* InOwnerComponent)
 {
 	CachedWorld = InWorld;
-	CachedOwner = InOwner;
+	CachedOwnerComponent = InOwnerComponent;
 
 	if (!CachedWorld)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidSSFRRenderer::Initialize - No world context provided"));
 	}
 
-	if (!CachedOwner)
+	if (!CachedOwnerComponent)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidSSFRRenderer::Initialize - No owner actor provided"));
+		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidSSFRRenderer::Initialize - No owner component provided"));
 	}
 
 	// Cache renderer subsystem for ViewExtension access
@@ -81,7 +81,7 @@ void UKawaiiFluidSSFRRenderer::Cleanup()
 
 	// Clear cached references
 	CachedWorld = nullptr;
-	CachedOwner = nullptr;
+	CachedOwnerComponent = nullptr;
 	bEnabled = false;
 
 	UE_LOG(LogTemp, Log, TEXT("SSFRRenderer: Cleanup completed"));

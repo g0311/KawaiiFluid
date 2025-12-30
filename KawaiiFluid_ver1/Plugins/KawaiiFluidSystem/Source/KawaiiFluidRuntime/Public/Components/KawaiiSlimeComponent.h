@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Components/ActorComponent.h"
+#include "Components/SceneComponent.h"
 #include "Modules/KawaiiSlimeSimulationModule.h"
 #include "Rendering/KawaiiFluidRendererSettings.h"
 #include "KawaiiSlimeComponent.generated.h"
@@ -24,7 +24,7 @@ class UKawaiiFluidPresetDataAsset;
  * @endcode
  */
 UCLASS(ClassGroup=(KawaiiFluid), meta=(BlueprintSpawnableComponent, DisplayName="Kawaii Slime"))
-class KAWAIIFLUIDRUNTIME_API UKawaiiSlimeComponent : public UActorComponent
+class KAWAIIFLUIDRUNTIME_API UKawaiiSlimeComponent : public USceneComponent
 {
 	GENERATED_BODY()
 
@@ -32,7 +32,7 @@ public:
 	UKawaiiSlimeComponent();
 
 	//========================================
-	// UActorComponent Interface
+	// USceneComponent Interface
 	//========================================
 
 	virtual void BeginPlay() override;

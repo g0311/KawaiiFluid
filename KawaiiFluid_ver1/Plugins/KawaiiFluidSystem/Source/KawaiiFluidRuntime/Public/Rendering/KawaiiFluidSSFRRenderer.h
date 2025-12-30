@@ -40,9 +40,9 @@ public:
 	/**
 	 * Initialize renderer with world and owner context
 	 * @param InWorld World context for subsystem access
-	 * @param InOwner Actor owner
+	 * @param InOwnerComponent Parent scene component (for consistency with ISM)
 	 */
-	void Initialize(UWorld* InWorld, AActor* InOwner);
+	void Initialize(UWorld* InWorld, USceneComponent* InOwnerComponent);
 
 	/**
 	 * Cleanup renderer resources
@@ -129,9 +129,9 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UWorld> CachedWorld;
 
-	/** Cached owner actor reference (replaces GetOwner()) */
+	/** Cached owner component reference */
 	UPROPERTY()
-	TObjectPtr<AActor> CachedOwner;
+	TObjectPtr<USceneComponent> CachedOwnerComponent;
 
 	//========================================
 	// SSFR-specific Internals
