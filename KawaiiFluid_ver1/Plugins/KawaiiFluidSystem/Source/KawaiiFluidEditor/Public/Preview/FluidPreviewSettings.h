@@ -4,20 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
+#include "Rendering/KawaiiFluidRendererSettings.h"
 #include "FluidPreviewSettings.generated.h"
-
-/**
- * Render mode for fluid preview
- */
-UENUM(BlueprintType)
-enum class EFluidPreviewRenderMode : uint8
-{
-	/** Fast preview using instanced meshes (spheres) */
-	ISM   UMETA(DisplayName = "Instanced Mesh (Fast)"),
-
-	/** Realistic preview using Screen Space Fluid Rendering - same as runtime */
-	SSFR  UMETA(DisplayName = "Screen Space Fluid (Realistic)")
-};
 
 /**
  * Preview environment settings exposed to Details Panel
@@ -26,22 +14,6 @@ USTRUCT(BlueprintType)
 struct FFluidPreviewSettings
 {
 	GENERATED_BODY()
-
-	//========================================
-	// Rendering Settings
-	//========================================
-
-	/** Render mode - ISM for fast preview, SSFR for realistic (same as runtime) */
-	UPROPERTY(EditAnywhere, Category = "Rendering")
-	EFluidPreviewRenderMode RenderMode = EFluidPreviewRenderMode::SSFR;
-
-	/** [SSFR] Smoothing filter iterations for surface smoothness */
-	UPROPERTY(EditAnywhere, Category = "Rendering|SSFR", meta = (EditCondition = "RenderMode == EFluidPreviewRenderMode::SSFR", ClampMin = "0", ClampMax = "5"))
-	int32 SmoothingIterations = 2;
-
-	/** [SSFR] Fluid thickness scale for refraction effect */
-	UPROPERTY(EditAnywhere, Category = "Rendering|SSFR", meta = (EditCondition = "RenderMode == EFluidPreviewRenderMode::SSFR", ClampMin = "0.1", ClampMax = "5.0"))
-	float ThicknessScale = 1.0f;
 
 	//========================================
 	// Continuous Spawn Settings
@@ -80,4 +52,16 @@ class KAWAIIFLUIDEDITOR_API UFluidPreviewSettingsObject : public UObject
 public:
 	UPROPERTY(EditAnywhere, Category = "Preview Settings", meta = (ShowOnlyInnerProperties))
 	FFluidPreviewSettings Settings;
+
+	//========================================
+	// Rendering Settings
+	//========================================
+
+	/** ISM Renderer Settings */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering", meta = (DisplayName = "ISM Settings"))
+	FKawaiiFluidISMRendererSettings ISMSettings;
+
+	/** SSFR Renderer Settings */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering", meta = (DisplayName = "SSFR Settings"))
+	FKawaiiFluidSSFRRendererSettings SSFRSettings;
 };

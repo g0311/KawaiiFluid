@@ -93,6 +93,17 @@ void UKawaiiFluidSSFRRenderer::ApplySettings(const FKawaiiFluidSSFRRendererSetti
 	bUseSimulationRadius = Settings.bUseSimulationRadius;
 	bRenderSurfaceOnly = Settings.bRenderSurfaceOnly;
 
+	// Disable rendering immediately when disabled
+	if (!bEnabled)
+	{
+		bIsRenderingActive = false;
+		// Clear GPU resources to stop rendering
+		if (RenderResource.IsValid())
+		{
+			RenderResource->UpdateParticleData(TArray<FKawaiiRenderParticle>());
+		}
+	}
+
 	// Map settings to LocalParameters
 	LocalParameters.bEnableRendering = Settings.bEnabled;
 	LocalParameters.SSFRMode = Settings.SSFRMode;

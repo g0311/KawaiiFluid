@@ -68,6 +68,13 @@ void UKawaiiFluidISMRenderer::ApplySettings(const FKawaiiFluidISMRendererSetting
 	// If ISMComponent already exists, update it with new settings
 	if (ISMComponent)
 	{
+		// Clear instances when disabled
+		if (!bEnabled)
+		{
+			ISMComponent->ClearInstances();
+			return;
+		}
+
 		// Update mesh
 		if (ParticleMesh)
 		{

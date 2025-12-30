@@ -41,16 +41,6 @@ public:
 	virtual bool IsDataValid() const override;
 	virtual FString GetDebugName() const override { return TEXT("FluidPreviewScene"); }
 
-	//========================================
-	// Render Mode Control
-	//========================================
-
-	/** Set render mode (ISM or SSFR) */
-	void SetRenderMode(EFluidPreviewRenderMode NewMode);
-
-	/** Get current render mode */
-	EFluidPreviewRenderMode GetRenderMode() const { return CurrentRenderMode; }
-
 	/** Get rendering module */
 	UKawaiiFluidRenderingModule* GetRenderingModule() const { return RenderingModule; }
 
@@ -171,9 +161,6 @@ private:
 
 	/** Rendering module - same as runtime! (ISM + SSFR) */
 	TObjectPtr<UKawaiiFluidRenderingModule> RenderingModule;
-
-	/** Current render mode */
-	EFluidPreviewRenderMode CurrentRenderMode;
 
 	//========================================
 	// Visualization Components

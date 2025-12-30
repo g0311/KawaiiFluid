@@ -342,18 +342,7 @@ void FKawaiiFluidPresetAssetEditor::OnPreviewSettingsPropertyChanged(const FProp
 		return;
 	}
 
-	const FFluidPreviewSettings& Settings = PreviewScene->GetPreviewSettings();
-
-	// Check if render mode changed
-	FName PropertyName = (PropertyChangedEvent.Property != nullptr) ? PropertyChangedEvent.Property->GetFName() : NAME_None;
-
-	if (PropertyName == GET_MEMBER_NAME_CHECKED(FFluidPreviewSettings, RenderMode))
-	{
-		// Apply render mode change
-		PreviewScene->SetRenderMode(Settings.RenderMode);
-	}
-
-	// Apply other preview settings (environment, etc.)
+	// Apply preview settings (environment, rendering, etc.)
 	PreviewScene->ApplyPreviewSettings();
 
 	if (ViewportWidget.IsValid())

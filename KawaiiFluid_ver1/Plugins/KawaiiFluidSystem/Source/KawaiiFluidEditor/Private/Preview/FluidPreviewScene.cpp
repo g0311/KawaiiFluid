@@ -25,7 +25,6 @@ FFluidPreviewScene::FFluidPreviewScene(FPreviewScene::ConstructionValues CVS)
 	, SpawnAccumulator(0.0f)
 	, bSimulationActive(false)
 	, RenderingModule(nullptr)
-	, CurrentRenderMode(EFluidPreviewRenderMode::SSFR)
 	, PreviewActor(nullptr)
 	, FloorMeshComponent(nullptr)
 	, CachedParticleRadius(5.0f)
@@ -42,8 +41,9 @@ FFluidPreviewScene::FFluidPreviewScene(FPreviewScene::ConstructionValues CVS)
 	// Create visualization components (including PreviewActor)
 	CreateVisualizationComponents();
 
-	// Create rendering module (same as runtime!)
+	// Create rendering module
 	RenderingModule = NewObject<UKawaiiFluidRenderingModule>(GetTransientPackage(), NAME_None, RF_Transient);
+
 	if (RenderingModule && PreviewActor)
 	{
 		// Initialize with this as DataProvider (IKawaiiFluidDataProvider)
@@ -74,8 +74,8 @@ FFluidPreviewScene::FFluidPreviewScene(FPreviewScene::ConstructionValues CVS)
 		}
 	}
 
-	// Set default render mode
-	SetRenderMode(EFluidPreviewRenderMode::SSFR);
+	// Apply default rendering settings
+	ApplyPreviewSettings();
 
 	// Setup environment
 	SetupFloor();
@@ -403,6 +403,19 @@ FFluidPreviewSettings& FFluidPreviewScene::GetPreviewSettings()
 void FFluidPreviewScene::ApplyPreviewSettings()
 {
 	UpdateEnvironment();
+
+	// Apply rendering settings to renderers
+	if (RenderingModule && PreviewSettingsObject)
+	{
+		if (UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer())
+		{
+			ISMRenderer->ApplySettings(PreviewSettingsObject->ISMSettings);
+		}
+		if (UKawaiiFluidSSFRRenderer* SSFRRenderer = RenderingModule->GetSSFRRenderer())
+		{
+			SSFRRenderer->ApplySettings(PreviewSettingsObject->SSFRSettings);
+		}
+	}
 }
 
 void FFluidPreviewScene::SetupFloor()
@@ -454,29 +467,6 @@ float FFluidPreviewScene::GetParticleRadius() const
 bool FFluidPreviewScene::IsDataValid() const
 {
 	return SimulationModule != nullptr && SimulationModule->GetParticleCount() > 0;
-}
-
-//========================================
-// Render Mode Control
-//========================================
-
-void FFluidPreviewScene::SetRenderMode(EFluidPreviewRenderMode NewMode)
-{
-	CurrentRenderMode = NewMode;
-
-	// Update rendering module mode
-	if (RenderingModule)
-	{
-		const bool bUseSSFR = (NewMode == EFluidPreviewRenderMode::SSFR);
-		if (UKawaiiFluidISMRenderer* ISM = RenderingModule->GetISMRenderer())
-		{
-			ISM->SetEnabled(!bUseSSFR);
-		}
-		if (UKawaiiFluidSSFRRenderer* SSFR = RenderingModule->GetSSFRRenderer())
-		{
-			SSFR->SetEnabled(bUseSSFR);
-		}
-	}
 }
 
 //========================================
