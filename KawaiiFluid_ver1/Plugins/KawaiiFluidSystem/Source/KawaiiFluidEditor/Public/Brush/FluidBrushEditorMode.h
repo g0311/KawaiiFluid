@@ -40,6 +40,7 @@ public:
 	virtual bool IsSelectionAllowed(AActor* InActor, bool bInSelected) const override { return false; }
 	virtual bool ShouldDrawWidget() const override { return false; }
 	virtual bool DisallowMouseDeltaTracking() const override;
+	virtual void Tick(FEditorViewportClient* ViewportClient, float DeltaTime) override;
 	//~ End FEdMode Interface
 
 	/** 타겟 컴포넌트 설정 */
@@ -63,6 +64,15 @@ private:
 
 	/** 마지막 스트로크 시간 */
 	double LastStrokeTime = 0.0;
+
+	/** 선택 변경 델리게이트 핸들 */
+	FDelegateHandle SelectionChangedHandle;
+
+	/** 선택 변경 시 호출 */
+	void OnSelectionChanged(UObject* Object);
+
+	/** 타겟 컴포넌트 소유 액터 (선택 변경 감지용) */
+	TWeakObjectPtr<AActor> TargetOwnerActor;
 
 	/** 브러시 위치 업데이트 */
 	bool UpdateBrushLocation(FEditorViewportClient* ViewportClient, int32 MouseX, int32 MouseY);

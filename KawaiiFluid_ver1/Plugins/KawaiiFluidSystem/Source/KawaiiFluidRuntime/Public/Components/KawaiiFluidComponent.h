@@ -10,6 +10,26 @@
 #include "KawaiiFluidComponent.generated.h"
 
 class UKawaiiFluidRenderingModule;
+class UKawaiiFluidComponent;
+
+/**
+ * Re-instancing 시 파티클 데이터 보존을 위한 InstanceData
+ */
+USTRUCT()
+struct FKawaiiFluidComponentInstanceData : public FActorComponentInstanceData
+{
+	GENERATED_BODY()
+
+public:
+	FKawaiiFluidComponentInstanceData() = default;
+	FKawaiiFluidComponentInstanceData(const UKawaiiFluidComponent* SourceComponent);
+
+	virtual void ApplyToComponent(UActorComponent* Component, const ECacheApplyPhase CacheApplyPhase) override;
+
+	// 보존할 파티클 데이터
+	TArray<FFluidParticle> SavedParticles;
+	int32 SavedNextParticleID = 0;
+};
 
 /**
  * 브러시 모드 타입
@@ -92,6 +112,9 @@ public:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+	virtual void OnRegister() override;
+	virtual void OnUnregister() override;
+	virtual TStructOnScope<FActorComponentInstanceData> GetComponentInstanceData() const override;
 
 	//========================================
 	// Modules (Blueprint 직접 접근 가능)
@@ -194,6 +217,10 @@ public:
 	/** 반경 내 파티클 제거 */
 	UFUNCTION(BlueprintCallable, Category = "Fluid|Brush")
 	int32 RemoveParticlesInRadius(const FVector& WorldCenter, float Radius);
+
+	/** 모든 파티클 제거 + 렌더링 클리어 */
+	UFUNCTION(BlueprintCallable, Category = "Fluid|Brush")
+	void ClearAllParticles();
 
 private:
 	//========================================

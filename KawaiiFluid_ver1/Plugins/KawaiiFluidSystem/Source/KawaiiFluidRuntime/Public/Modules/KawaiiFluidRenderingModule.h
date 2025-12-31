@@ -78,6 +78,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Rendering")
 	int32 GetParticleCount() const;
 
+	/**
+	 * Check if module is initialized
+	 *
+	 * @return true if Initialize() has been called and CachedWorld is valid
+	 */
+	UFUNCTION(BlueprintPure, Category = "Rendering")
+	bool IsInitialized() const { return CachedWorld != nullptr && DataProviderPtr != nullptr; }
+
 	//========================================
 	// Renderer Access (read-only)
 	//========================================

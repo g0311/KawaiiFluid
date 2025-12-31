@@ -12,6 +12,8 @@
 #include "LevelEditorViewport.h"
 #include "Editor.h"
 #include "Framework/Application/SlateApplication.h"
+#include "ScopedTransaction.h"
+#include "Selection.h"
 
 #define LOCTEXT_NAMESPACE "FluidBrushEditorMode"
 
@@ -35,16 +37,32 @@ FFluidBrushEditorMode::~FFluidBrushEditorMode()
 void FFluidBrushEditorMode::Enter()
 {
 	FEdMode::Enter();
+
+	// 선택 변경 델리게이트 바인딩
+	if (GEditor)
+	{
+		SelectionChangedHandle = USelection::SelectionChangedEvent.AddRaw(
+			this, &FFluidBrushEditorMode::OnSelectionChanged);
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("Fluid Brush Mode Entered"));
 }
 
 void FFluidBrushEditorMode::Exit()
 {
+	// 선택 변경 델리게이트 언바인딩
+	if (SelectionChangedHandle.IsValid())
+	{
+		USelection::SelectionChangedEvent.Remove(SelectionChangedHandle);
+		SelectionChangedHandle.Reset();
+	}
+
 	if (TargetComponent.IsValid())
 	{
 		TargetComponent->bBrushModeActive = false;
 	}
 	TargetComponent.Reset();
+	TargetOwnerActor.Reset();
 	bPainting = false;
 
 	FEdMode::Exit();
@@ -57,6 +75,11 @@ void FFluidBrushEditorMode::SetTargetComponent(UKawaiiFluidComponent* Component)
 	if (Component)
 	{
 		Component->bBrushModeActive = true;
+		TargetOwnerActor = Component->GetOwner();
+	}
+	else
+	{
+		TargetOwnerActor.Reset();
 	}
 }
 
@@ -253,6 +276,9 @@ void FFluidBrushEditorMode::ApplyBrush()
 
 	const FFluidBrushSettings& Settings = TargetComponent->BrushSettings;
 
+	// 트랜잭션 생성 - Modify()가 작동하도록 (파티클 데이터 보존)
+	FScopedTransaction Transaction(LOCTEXT("FluidBrushStroke", "Fluid Brush Stroke"));
+
 	switch (Settings.Mode)
 	{
 		case EFluidBrushMode::Add:
@@ -370,6 +396,62 @@ bool FFluidBrushEditorMode::DisallowMouseDeltaTracking() const
 
 	// 그 외 (LMB 단독) = 브러시 모드이므로 카메라 트래킹 비활성화
 	return true;
+}
+
+void FFluidBrushEditorMode::Tick(FEditorViewportClient* ViewportClient, float DeltaTime)
+{
+	FEdMode::Tick(ViewportClient, DeltaTime);
+
+	// 조건 2: 타겟 컴포넌트 삭제됨
+	if (!TargetComponent.IsValid())
+	{
+		UE_LOG(LogTemp, Log, TEXT("Fluid Brush Mode: Target component destroyed, exiting"));
+		GLevelEditorModeTools().DeactivateMode(EM_FluidBrush);
+		return;
+	}
+
+	// 조건 5: 뷰포트 포커스 잃음 체크
+	if (ViewportClient && !ViewportClient->Viewport->HasFocus())
+	{
+		// 다른 창으로 포커스 이동 시에만 종료 (짧은 포커스 손실은 무시)
+		// 실제로는 뷰포트 전환 시에만 중요하므로 일단 생략
+		// 필요하면 타이머로 일정 시간 포커스 없으면 종료하도록 구현
+	}
+}
+
+void FFluidBrushEditorMode::OnSelectionChanged(UObject* Object)
+{
+	// 조건 1: 다른 액터 선택 시 종료
+	if (!GEditor)
+	{
+		return;
+	}
+
+	USelection* Selection = GEditor->GetSelectedActors();
+	if (!Selection)
+	{
+		return;
+	}
+
+	// 아무것도 선택 안 됨 -> 종료
+	if (Selection->Num() == 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("Fluid Brush Mode: Selection cleared, exiting"));
+		GLevelEditorModeTools().DeactivateMode(EM_FluidBrush);
+		return;
+	}
+
+	// 타겟 액터가 여전히 선택되어 있는지 확인
+	if (TargetOwnerActor.IsValid())
+	{
+		bool bTargetStillSelected = Selection->IsSelected(TargetOwnerActor.Get());
+		if (!bTargetStillSelected)
+		{
+			UE_LOG(LogTemp, Log, TEXT("Fluid Brush Mode: Different actor selected, exiting"));
+			GLevelEditorModeTools().DeactivateMode(EM_FluidBrush);
+			return;
+		}
+	}
 }
 
 #undef LOCTEXT_NAMESPACE

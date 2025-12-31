@@ -68,12 +68,12 @@ void UKawaiiFluidRenderingModule::Cleanup()
 
 void UKawaiiFluidRenderingModule::UpdateRenderers()
 {
-	if (!DataProviderPtr || !DataProviderPtr->IsDataValid())
+	if (!DataProviderPtr)
 	{
 		return;
 	}
 
-	// Update all enabled renderers
+	// Update all enabled renderers (파티클 0개여도 업데이트해서 ISM 클리어)
 	if (ISMRenderer && ISMRenderer->IsEnabled())
 	{
 		ISMRenderer->UpdateRendering(DataProviderPtr, 0.0f);

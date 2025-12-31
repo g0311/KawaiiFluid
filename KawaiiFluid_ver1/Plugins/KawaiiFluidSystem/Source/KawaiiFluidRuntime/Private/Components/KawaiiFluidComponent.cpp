@@ -14,12 +14,71 @@ UKawaiiFluidComponent::UKawaiiFluidComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.TickGroup = TG_PostPhysics;  // Subsystem 시뮬레이션 이후 렌더링
+	bTickInEditor = true;  // 에디터에서도 Tick 실행 (브러시 렌더링용)
 
 	// 시뮬레이션 모듈 생성
 	SimulationModule = CreateDefaultSubobject<UKawaiiFluidSimulationModule>(TEXT("SimulationModule"));
 
 	// 렌더링 모듈 생성`
 	RenderingModule = CreateDefaultSubobject<UKawaiiFluidRenderingModule>(TEXT("RenderingModule"));
+}
+
+void UKawaiiFluidComponent::OnRegister()
+{
+	Super::OnRegister();
+
+#if WITH_EDITOR
+	// 에디터 모드에서 렌더링 모듈 초기화 (PIE가 아닐 때만)
+	UWorld* World = GetWorld();
+	if (World && !World->IsGameWorld() && bEnableRendering && RenderingModule && SimulationModule)
+	{
+		// SimulationModule 초기화 (Preset 없으면 기본 생성)
+		if (!SimulationModule->Preset)
+		{
+			SimulationModule->Preset = NewObject<UKawaiiFluidPresetDataAsset>(this, NAME_None, RF_Transient);
+		}
+		SimulationModule->Initialize(SimulationModule->Preset);
+
+		// RenderingModule 초기화
+		RenderingModule->Initialize(World, this, SimulationModule);
+
+		// ISM/SSFR 설정 적용
+		if (UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer())
+		{
+			ISMRenderer->ApplySettings(ISMSettings);
+		}
+		if (UKawaiiFluidSSFRRenderer* SSFRRenderer = RenderingModule->GetSSFRRenderer())
+		{
+			SSFRRenderer->ApplySettings(SSFRSettings);
+		}
+
+		// FluidRendererSubsystem에 등록
+		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+		{
+			RendererSubsystem->RegisterRenderingModule(RenderingModule);
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("KawaiiFluidComponent [%s]: Editor rendering initialized"), *GetName());
+	}
+#endif
+}
+
+void UKawaiiFluidComponent::OnUnregister()
+{
+#if WITH_EDITOR
+	// 에디터 모드에서 정리
+	UWorld* World = GetWorld();
+	if (World && !World->IsGameWorld() && RenderingModule)
+	{
+		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+		{
+			RendererSubsystem->UnregisterRenderingModule(RenderingModule);
+		}
+		RenderingModule->Cleanup();
+	}
+#endif
+
+	Super::OnUnregister();
 }
 
 void UKawaiiFluidComponent::BeginPlay()
@@ -43,37 +102,45 @@ void UKawaiiFluidComponent::BeginPlay()
 		);
 	}
 
-	// 렌더링 모듈 초기화
+	// 렌더링 모듈 초기화 (중복 초기화 방지)
 	if (bEnableRendering && RenderingModule && SimulationModule)
 	{
-		// 1. RenderingModule 초기화 (this를 부모 컴포넌트로 전달)
-		RenderingModule->Initialize(GetWorld(), this, SimulationModule);
-
-		// 2. ISM 렌더러 설정 적용
-		if (UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer())
+		if (RenderingModule->IsInitialized())
 		{
-			ISMRenderer->ApplySettings(ISMSettings);
+			// 이미 초기화됨 (에디터에서 복제된 경우 등)
+			UE_LOG(LogTemp, Log, TEXT("KawaiiFluidComponent [%s]: RenderingModule already initialized, skipping"), *GetName());
 		}
-
-		// 3. SSFR 렌더러 설정 적용
-		if (UKawaiiFluidSSFRRenderer* SSFRRenderer = RenderingModule->GetSSFRRenderer())
+		else
 		{
-			SSFRRenderer->ApplySettings(SSFRSettings);
-		}
+			// 1. RenderingModule 초기화 (this를 부모 컴포넌트로 전달)
+			RenderingModule->Initialize(GetWorld(), this, SimulationModule);
 
-		// 4. FluidRendererSubsystem에 등록
-		if (UWorld* World = GetWorld())
-		{
-			if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+			// 2. ISM 렌더러 설정 적용
+			if (UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer())
 			{
-				RendererSubsystem->RegisterRenderingModule(RenderingModule);
+				ISMRenderer->ApplySettings(ISMSettings);
 			}
-		}
 
-		UE_LOG(LogTemp, Log, TEXT("KawaiiFluidComponent [%s]: Rendering initialized (ISM: %s, SSFR: %s)"),
-			*GetName(),
-			ISMSettings.bEnabled ? TEXT("Enabled") : TEXT("Disabled"),
-			SSFRSettings.bEnabled ? TEXT("Enabled") : TEXT("Disabled"));
+			// 3. SSFR 렌더러 설정 적용
+			if (UKawaiiFluidSSFRRenderer* SSFRRenderer = RenderingModule->GetSSFRRenderer())
+			{
+				SSFRRenderer->ApplySettings(SSFRSettings);
+			}
+
+			// 4. FluidRendererSubsystem에 등록
+			if (UWorld* World = GetWorld())
+			{
+				if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+				{
+					RendererSubsystem->RegisterRenderingModule(RenderingModule);
+				}
+			}
+
+			UE_LOG(LogTemp, Log, TEXT("KawaiiFluidComponent [%s]: Rendering initialized (ISM: %s, SSFR: %s)"),
+				*GetName(),
+				ISMSettings.bEnabled ? TEXT("Enabled") : TEXT("Disabled"),
+				SSFRSettings.bEnabled ? TEXT("Enabled") : TEXT("Disabled"));
+		}
 	}
 
 	// Module을 Subsystem에 등록 (Component가 아닌 Module!)
@@ -128,13 +195,16 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	// 연속 스폰 처리
-	if (bContinuousSpawn)
+	UWorld* World = GetWorld();
+	const bool bIsGameWorld = World && World->IsGameWorld();
+
+	// 연속 스폰 처리 (게임 월드에서만)
+	if (bIsGameWorld && bContinuousSpawn)
 	{
 		ProcessContinuousSpawn(DeltaTime);
 	}
 
-	// 렌더링 업데이트
+	// 렌더링 업데이트 (에디터 + 게임 모두)
 	if (RenderingModule)
 	{
 		RenderingModule->UpdateRenderers();
@@ -260,6 +330,13 @@ void UKawaiiFluidComponent::AddParticlesInRadius(const FVector& WorldCenter, flo
 		return;
 	}
 
+#if WITH_EDITOR
+	// 에디터에서 데이터 수정 시 Modify() 호출 - 인스턴스 직렬화에 반영
+	// 컴포넌트와 서브오브젝트 모두 마킹해야 Re-instancing 시 데이터 보존됨
+	Modify();
+	SimulationModule->Modify();
+#endif
+
 	for (int32 i = 0; i < Count; ++i)
 	{
 		// 구 내부 균일 분포
@@ -278,6 +355,13 @@ int32 UKawaiiFluidComponent::RemoveParticlesInRadius(const FVector& WorldCenter,
 		return 0;
 	}
 
+#if WITH_EDITOR
+	// 에디터에서 데이터 수정 시 Modify() 호출 - 인스턴스 직렬화에 반영
+	// 컴포넌트와 서브오브젝트 모두 마킹해야 Re-instancing 시 데이터 보존됨
+	Modify();
+	SimulationModule->Modify();
+#endif
+
 	float RadiusSq = Radius * Radius;
 
 	TArray<FFluidParticle>& Particles = SimulationModule->GetParticlesMutable();
@@ -293,4 +377,66 @@ int32 UKawaiiFluidComponent::RemoveParticlesInRadius(const FVector& WorldCenter,
 	}
 
 	return RemovedCount;
+}
+
+void UKawaiiFluidComponent::ClearAllParticles()
+{
+	if (SimulationModule)
+	{
+		SimulationModule->ClearAllParticles();
+	}
+
+	// 렌더링도 즉시 클리어
+	if (RenderingModule)
+	{
+		RenderingModule->UpdateRenderers();
+	}
+}
+
+//========================================
+// InstanceData (Re-instancing 시 파티클 데이터 보존)
+//========================================
+
+FKawaiiFluidComponentInstanceData::FKawaiiFluidComponentInstanceData(const UKawaiiFluidComponent* SourceComponent)
+	: FActorComponentInstanceData(SourceComponent)
+{
+	if (SourceComponent && SourceComponent->SimulationModule)
+	{
+		SavedParticles = SourceComponent->SimulationModule->GetParticles();
+		SavedNextParticleID = SourceComponent->SimulationModule->GetNextParticleID();
+
+		UE_LOG(LogTemp, Log, TEXT("InstanceData: Saved %d particles from %s"),
+			SavedParticles.Num(), *SourceComponent->GetName());
+	}
+}
+
+void FKawaiiFluidComponentInstanceData::ApplyToComponent(UActorComponent* Component, const ECacheApplyPhase CacheApplyPhase)
+{
+	Super::ApplyToComponent(Component, CacheApplyPhase);
+
+	if (CacheApplyPhase == ECacheApplyPhase::PostUserConstructionScript)
+	{
+		if (UKawaiiFluidComponent* FluidComponent = Cast<UKawaiiFluidComponent>(Component))
+		{
+			if (FluidComponent->SimulationModule && SavedParticles.Num() > 0)
+			{
+				FluidComponent->SimulationModule->GetParticlesMutable() = SavedParticles;
+				FluidComponent->SimulationModule->SetNextParticleID(SavedNextParticleID);
+
+				UE_LOG(LogTemp, Log, TEXT("InstanceData: Restored %d particles to %s"),
+					SavedParticles.Num(), *FluidComponent->GetName());
+			}
+		}
+	}
+}
+
+TStructOnScope<FActorComponentInstanceData> UKawaiiFluidComponent::GetComponentInstanceData() const
+{
+	// 에디터에서만 + 파티클이 있을 때만 저장
+	if (SimulationModule && SimulationModule->GetParticleCount() > 0)
+	{
+		return MakeStructOnScope<FActorComponentInstanceData, FKawaiiFluidComponentInstanceData>(this);
+	}
+
+	return Super::GetComponentInstanceData();
 }

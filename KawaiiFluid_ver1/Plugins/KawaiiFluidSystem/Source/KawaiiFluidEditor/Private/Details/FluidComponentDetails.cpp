@@ -161,12 +161,13 @@ FReply FFluidComponentDetails::OnStopBrushClicked()
 
 FReply FFluidComponentDetails::OnClearParticlesClicked()
 {
-	if (TargetComponent.IsValid() && TargetComponent->SimulationModule)
+	if (TargetComponent.IsValid())
 	{
-		TargetComponent->SimulationModule->ClearAllParticles();
+		// 컴포넌트의 ClearAllParticles() 사용 - 렌더링도 같이 클리어됨
+		TargetComponent->ClearAllParticles();
 	}
 
-	return FReply::Handled();
+	return FReply::Handled(); 
 }
 
 bool FFluidComponentDetails::IsBrushActive() const
