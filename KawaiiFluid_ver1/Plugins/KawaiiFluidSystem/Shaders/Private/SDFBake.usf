@@ -1,0 +1,77 @@
+// Copyright KawaiiFluid Team. All Rights Reserved.
+// SDF Volume Bake Compute Shader
+// Bakes metaball SDF into a 3D texture for optimized ray marching
+
+#include "/Engine/Public/Platform.ush"
+#include "/Engine/Private/Common.ush"
+
+//=============================================================================
+// Shader Parameters
+//=============================================================================
+
+// Particle Data (Input)
+StructuredBuffer<float3> ParticlePositions;
+int ParticleCount;
+float ParticleRadius;
+float SDFSmoothness;
+
+// Volume Parameters
+float3 VolumeMin;           // World-space minimum corner of the volume
+float3 VolumeMax;           // World-space maximum corner of the volume
+int3 VolumeResolution;      // Resolution of the 3D texture (e.g., 64, 64, 64)
+
+// Output SDF Volume (3D Texture UAV)
+RWTexture3D<float> SDFVolume;
+
+//=============================================================================
+// SDF Functions (Copied from FluidSDFCommon.ush for compute shader)
+//=============================================================================
+
+// Sphere SDF
+float sdSphere(float3 p, float3 center, float radius)
+{
+    return length(p - center) - radius;
+}
+
+// Smooth minimum (polynomial smooth min)
+float smin(float a, float b, float k)
+{
+    float h = max(k - abs(a - b), 0.0) / k;
+    return min(a, b) - h * h * k * 0.25;
+}
+
+//=============================================================================
+// Main Compute Shader
+//=============================================================================
+
+[numthreads(8, 8, 8)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+    // Check bounds
+    if (any(DispatchThreadId >= uint3(VolumeResolution)))
+        return;
+
+    // Convert voxel coordinates to world position
+    // Add 0.5 to sample at voxel center
+    float3 uvw = (float3(DispatchThreadId) + 0.5) / float3(VolumeResolution);
+    float3 worldPos = lerp(VolumeMin, VolumeMax, uvw);
+
+    // Early out if no particles
+    if (ParticleCount <= 0)
+    {
+        SDFVolume[DispatchThreadId] = 1e10;
+        return;
+    }
+
+    // Evaluate metaball SDF at this position
+    float sdf = sdSphere(worldPos, ParticlePositions[0], ParticleRadius);
+
+    for (int i = 1; i < ParticleCount; ++i)
+    {
+        float d = sdSphere(worldPos, ParticlePositions[i], ParticleRadius);
+        sdf = smin(sdf, d, SDFSmoothness);
+    }
+
+    // Store SDF value in volume texture
+    SDFVolume[DispatchThreadId] = sdf;
+}
