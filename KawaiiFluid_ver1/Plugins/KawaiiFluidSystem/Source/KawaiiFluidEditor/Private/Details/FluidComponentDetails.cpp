@@ -96,9 +96,9 @@ void FFluidComponentDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilde
 		SNew(STextBlock)
 		.Text_Lambda([this]()
 		{
-			if (TargetComponent.IsValid() && TargetComponent->SimulationModule)
+			if (TargetComponent.IsValid() && TargetComponent->GetSimulationModule())
 			{
-				int32 Count = TargetComponent->SimulationModule->GetParticleCount();
+				int32 Count = TargetComponent->GetSimulationModule()->GetParticleCount();
 				return FText::AsNumber(Count);
 			}
 			return FText::FromString(TEXT("0"));

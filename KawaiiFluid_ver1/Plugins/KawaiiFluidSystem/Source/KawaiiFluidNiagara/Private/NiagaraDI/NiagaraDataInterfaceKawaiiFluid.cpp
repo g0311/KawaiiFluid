@@ -199,13 +199,13 @@ bool UNiagaraDataInterfaceKawaiiFluid::InitPerInstanceData(void* PerInstanceData
 		if (Actor)
 		{
 			UKawaiiFluidComponent* FluidComp = Actor->FindComponentByClass<UKawaiiFluidComponent>();
-			if (FluidComp && FluidComp->SimulationModule)
+			if (FluidComp && FluidComp->GetSimulationModule())
 			{
 				InstanceData->SourceComponent = FluidComp;
-				InstanceData->SourceModule = FluidComp->SimulationModule;
+				InstanceData->SourceModule = FluidComp->GetSimulationModule();
 
 				// 초기 CachedParticleCount 설정 (Tick 전에!)
-				const TArray<FFluidParticle>& Particles = FluidComp->SimulationModule->GetParticles();
+				const TArray<FFluidParticle>& Particles = FluidComp->GetSimulationModule()->GetParticles();
 				InstanceData->CachedParticleCount = Particles.Num();
 
 				UE_LOG(LogTemp, Log, TEXT("Niagara DI: Found KawaiiFluidComponent on %s (Particles: %d)"),

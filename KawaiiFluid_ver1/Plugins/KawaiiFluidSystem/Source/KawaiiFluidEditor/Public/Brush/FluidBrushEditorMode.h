@@ -56,6 +56,9 @@ private:
 	/** 현재 브러시 위치 */
 	FVector BrushLocation {};
 
+	/** 브러시 히트 노말 (표면 방향) */
+	FVector BrushNormal { FVector::UpVector };
+
 	/** 유효한 브러시 위치인지 */
 	bool bValidLocation = false;
 

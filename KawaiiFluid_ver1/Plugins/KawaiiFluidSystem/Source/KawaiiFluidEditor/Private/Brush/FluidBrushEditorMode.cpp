@@ -239,6 +239,7 @@ bool FFluidBrushEditorMode::UpdateBrushLocation(FEditorViewportClient* ViewportC
 	if (World->LineTraceSingleByChannel(Hit, Origin, Origin + Direction * 50000.0f, ECC_Visibility, QueryParams))
 	{
 		BrushLocation = Hit.Location;
+		BrushNormal = Hit.ImpactNormal;
 		bValidLocation = true;
 		return true;
 	}
@@ -287,7 +288,8 @@ void FFluidBrushEditorMode::ApplyBrush()
 				Settings.Radius,
 				Settings.ParticlesPerStroke,
 				Settings.InitialVelocity,
-				Settings.Randomness
+				Settings.Randomness,
+				BrushNormal
 			);
 			break;
 
@@ -361,9 +363,9 @@ void FFluidBrushEditorMode::DrawHUD(FEditorViewportClient* ViewportClient, FView
 
 	// 파티클 개수
 	int32 ParticleCount = 0;
-	if (TargetComponent->SimulationModule)
+	if (TargetComponent->GetSimulationModule())
 	{
-		ParticleCount = TargetComponent->SimulationModule->GetParticleCount();
+		ParticleCount = TargetComponent->GetSimulationModule()->GetParticleCount();
 	}
 
 	FString InfoText = FString::Printf(TEXT("Brush: %s | Radius: %.0f | Particles: %d | [ ] Size | 1/2 Mode | ESC Exit"),

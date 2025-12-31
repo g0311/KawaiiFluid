@@ -323,7 +323,8 @@ void UKawaiiFluidComponent::UnregisterFromSubsystem()
 //========================================
 
 void UKawaiiFluidComponent::AddParticlesInRadius(const FVector& WorldCenter, float Radius,
-                                                  int32 Count, const FVector& Velocity, float Randomness)
+                                                  int32 Count, const FVector& Velocity,
+                                                  float Randomness, const FVector& SurfaceNormal)
 {
 	if (!SimulationModule)
 	{
@@ -337,10 +338,21 @@ void UKawaiiFluidComponent::AddParticlesInRadius(const FVector& WorldCenter, flo
 	SimulationModule->Modify();
 #endif
 
+	// 노말 정규화 (안전)
+	const FVector Normal = SurfaceNormal.GetSafeNormal();
+
 	for (int32 i = 0; i < Count; ++i)
 	{
-		// 구 내부 균일 분포
-		FVector RandomOffset = FMath::VRand() * FMath::FRand() * Radius * Randomness;
+		// 랜덤 방향 생성
+		FVector RandomDir = FMath::VRand();
+
+		// 반구 분포: 노말과 반대 방향이면 반전 (표면 위로만 생성)
+		if (FVector::DotProduct(RandomDir, Normal) < 0.0f)
+		{
+			RandomDir = -RandomDir;
+		}
+
+		FVector RandomOffset = RandomDir * FMath::FRand() * Radius * Randomness;
 		FVector SpawnPos = WorldCenter + RandomOffset;
 		FVector SpawnVel = Velocity + FMath::VRand() * 20.0f * Randomness;
 
@@ -400,10 +412,10 @@ void UKawaiiFluidComponent::ClearAllParticles()
 FKawaiiFluidComponentInstanceData::FKawaiiFluidComponentInstanceData(const UKawaiiFluidComponent* SourceComponent)
 	: FActorComponentInstanceData(SourceComponent)
 {
-	if (SourceComponent && SourceComponent->SimulationModule)
+	if (SourceComponent && SourceComponent->GetSimulationModule())
 	{
-		SavedParticles = SourceComponent->SimulationModule->GetParticles();
-		SavedNextParticleID = SourceComponent->SimulationModule->GetNextParticleID();
+		SavedParticles = SourceComponent->GetSimulationModule()->GetParticles();
+		SavedNextParticleID = SourceComponent->GetSimulationModule()->GetNextParticleID();
 
 		UE_LOG(LogTemp, Log, TEXT("InstanceData: Saved %d particles from %s"),
 			SavedParticles.Num(), *SourceComponent->GetName());
@@ -418,10 +430,10 @@ void FKawaiiFluidComponentInstanceData::ApplyToComponent(UActorComponent* Compon
 	{
 		if (UKawaiiFluidComponent* FluidComponent = Cast<UKawaiiFluidComponent>(Component))
 		{
-			if (FluidComponent->SimulationModule && SavedParticles.Num() > 0)
+			if (FluidComponent->GetSimulationModule() && SavedParticles.Num() > 0)
 			{
-				FluidComponent->SimulationModule->GetParticlesMutable() = SavedParticles;
-				FluidComponent->SimulationModule->SetNextParticleID(SavedNextParticleID);
+				FluidComponent->GetSimulationModule()->GetParticlesMutable() = SavedParticles;
+				FluidComponent->GetSimulationModule()->SetNextParticleID(SavedNextParticleID);
 
 				UE_LOG(LogTemp, Log, TEXT("InstanceData: Restored %d particles to %s"),
 					SavedParticles.Num(), *FluidComponent->GetName());
@@ -433,7 +445,7 @@ void FKawaiiFluidComponentInstanceData::ApplyToComponent(UActorComponent* Compon
 TStructOnScope<FActorComponentInstanceData> UKawaiiFluidComponent::GetComponentInstanceData() const
 {
 	// 에디터에서만 + 파티클이 있을 때만 저장
-	if (SimulationModule && SimulationModule->GetParticleCount() > 0)
+	if (GetSimulationModule() && GetSimulationModule()->GetParticleCount() > 0)
 	{
 		return MakeStructOnScope<FActorComponentInstanceData, FKawaiiFluidComponentInstanceData>(this);
 	}

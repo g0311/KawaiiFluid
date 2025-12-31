@@ -160,12 +160,12 @@ TArray<FFluidParticle> UKawaiiFluidSimulatorSubsystem::GetAllParticlesInRadius(F
 	// New modular components
 	for (const UKawaiiFluidComponent* Component : AllFluidComponents)
 	{
-		if (!Component || !Component->SimulationModule)
+		if (!Component || !Component->GetSimulationModule())
 		{
 			continue;
 		}
 
-		for (const FFluidParticle& Particle : Component->SimulationModule->GetParticles())
+		for (const FFluidParticle& Particle : Component->GetSimulationModule()->GetParticles())
 		{
 			if (FVector::DistSquared(Particle.Position, Location) <= RadiusSq)
 			{
@@ -184,9 +184,9 @@ int32 UKawaiiFluidSimulatorSubsystem::GetTotalParticleCount() const
 	// New modular components
 	for (const UKawaiiFluidComponent* Component : AllFluidComponents)
 	{
-		if (Component)
+		if (Component && Component->GetSimulationModule())
 		{
-			Total += Component->SimulationModule->GetParticleCount();
+			Total += Component->GetSimulationModule()->GetParticleCount();
 		}
 	}
 

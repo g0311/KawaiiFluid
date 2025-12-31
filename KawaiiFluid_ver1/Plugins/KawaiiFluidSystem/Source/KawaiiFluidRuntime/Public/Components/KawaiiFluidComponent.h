@@ -13,7 +13,7 @@ class UKawaiiFluidRenderingModule;
 class UKawaiiFluidComponent;
 
 /**
- * Re-instancing 시 파티클 데이터 보존을 위한 InstanceData
+ * Re-Construction 시 파티클 데이터 보존을 위한 InstanceData
  */
 USTRUCT()
 struct FKawaiiFluidComponentInstanceData : public FActorComponentInstanceData
@@ -117,12 +117,12 @@ public:
 	virtual TStructOnScope<FActorComponentInstanceData> GetComponentInstanceData() const override;
 
 	//========================================
-	// Modules (Blueprint 직접 접근 가능)
+	// Module Accessors
 	//========================================
 
-	/** 시뮬레이션 모듈 - 파티클/콜라이더/외력 등 모든 API 제공 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Instanced, Category = "Fluid")
-	TObjectPtr<UKawaiiFluidSimulationModule> SimulationModule;
+	/** 시뮬레이션 모듈 반환 - 파티클/콜라이더/외력 등 모든 API 제공 */
+	UFUNCTION(BlueprintPure, Category = "Fluid")
+	UKawaiiFluidSimulationModule* GetSimulationModule() const { return SimulationModule; }
 
 	//========================================
 	// Rendering Settings
@@ -209,10 +209,11 @@ public:
 	// Brush API (에디터/런타임 공용)
 	//========================================
 
-	/** 반경 내에 파티클 추가 */
+	/** 반경 내에 파티클 추가 (반구 분포 - 표면 위로만 생성) */
 	UFUNCTION(BlueprintCallable, Category = "Fluid|Brush")
 	void AddParticlesInRadius(const FVector& WorldCenter, float Radius, int32 Count,
-	                          const FVector& Velocity, float Randomness = 0.8f);
+	                          const FVector& Velocity, float Randomness = 0.8f,
+	                          const FVector& SurfaceNormal = FVector::UpVector);
 
 	/** 반경 내 파티클 제거 */
 	UFUNCTION(BlueprintCallable, Category = "Fluid|Brush")
@@ -222,15 +223,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Fluid|Brush")
 	void ClearAllParticles();
 
-private:
+protected:
 	//========================================
-	// Rendering Module (Internal)
+	// Modules
 	//========================================
 
+	/** 시뮬레이션 모듈 - GetSimulationModule()로 접근 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Instanced, Category = "Fluid")
+	TObjectPtr<UKawaiiFluidSimulationModule> SimulationModule;
+
+	
 	/** Rendering module - renderer management */
 	UPROPERTY()
 	TObjectPtr<UKawaiiFluidRenderingModule> RenderingModule;
-
+private:
 	//========================================
 	// Continuous Spawn
 	//========================================
