@@ -21,6 +21,7 @@
 
 // New Pipeline + Shading architecture
 #include "Rendering/Pipeline/IKawaiiMetaballRenderingPipeline.h"
+#include "Rendering/Shading/IKawaiiMetaballShadingPass.h"
 
 static TRefCountPtr<IPooledRenderTarget> GFluidCompositeDebug_KeepAlive;
 
@@ -229,7 +230,7 @@ void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 				TMap<FFluidRenderingParameters, TArray<UKawaiiFluidMetaballRenderer*>> ScreenSpaceBatches;
 				TMap<FFluidRenderingParameters, TArray<UKawaiiFluidMetaballRenderer*>> RayMarchingBatches;
 				TMap<FFluidRenderingParameters, TArray<UKawaiiFluidMetaballRenderer*>> GBufferBatches;      // For log only
-				TMap<FFluidRenderingParameters, TArray<UKawaiiFluidMetaballRenderer*>> TranslucentBatches;  // For TransparencyComposite
+				TMap<FFluidRenderingParameters, TArray<UKawaiiFluidMetaballRenderer*>> TranslucentBatches;  // For PostLightingPass
 
 				const TArray<UKawaiiFluidRenderingModule*>& Modules = SubsystemPtr->GetAllRenderingModules();
 				for (UKawaiiFluidRenderingModule* Module : Modules)
@@ -381,13 +382,13 @@ void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 				// ============================================
 				// Translucent Mode: Apply Transparency Pass (Stage 2)
 				// GBuffer write was done in PostRenderBasePassDeferred (Stage 1)
-				// Now apply refraction/absorption using TransparencyComposite
+				// Now apply refraction/absorption using ShadingPass->RenderPostLightingPass()
 				// ============================================
 				if (TranslucentBatches.Num() > 0)
 				{
 					RDG_EVENT_SCOPE(GraphBuilder, "FluidTranslucentTransparency");
 
-					// Get GBuffer textures from ViewInfo (same approach as FluidTransparencyComposite)
+					// Get GBuffer textures from ViewInfo
 					const FViewInfo& ViewInfo = static_cast<const FViewInfo&>(View);
 					const FSceneTextures& SceneTexturesRef = ViewInfo.GetSceneTextures();
 
@@ -407,21 +408,28 @@ void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 						for (auto& Batch : TranslucentBatches)
 						{
 							const FFluidRenderingParameters& BatchParams = Batch.Key;
+							const TArray<UKawaiiFluidMetaballRenderer*>& Renderers = Batch.Value;
 
-							// Apply transparency pass using TransparencyComposite
-							// This member is owned by FFluidSceneViewExtension
-							const_cast<FFluidSceneViewExtension*>(this)->TransparencyComposite.RenderTransparency(
-								GraphBuilder,
-								View,
-								BatchParams,
-								SceneDepthTexture,     // Has Stencil=0x01 marking from GBuffer write
-								LitSceneColorCopy,     // Lit scene color (after Lumen/VSM)
-								GBufferATexture,       // Normals for refraction direction
-								GBufferDTexture,       // Thickness for Beer's Law absorption
-								Output);
+							// Get ShadingPass from first renderer (all in batch share same params)
+							if (Renderers.Num() > 0 && Renderers[0]->GetShadingPass())
+							{
+								TSharedPtr<IKawaiiMetaballShadingPass> ShadingPass = Renderers[0]->GetShadingPass();
+								if (ShadingPass->RequiresPostLightingPass())
+								{
+									ShadingPass->RenderPostLightingPass(
+										GraphBuilder,
+										View,
+										BatchParams,
+										SceneDepthTexture,     // Has Stencil=0x01 marking from GBuffer write
+										LitSceneColorCopy,     // Lit scene color (after Lumen/VSM)
+										GBufferATexture,       // Normals for refraction direction
+										GBufferDTexture,       // Thickness for Beer's Law absorption
+										Output);
+								}
+							}
 						}
 
-						UE_LOG(LogTemp, Log, TEXT("KawaiiFluid: Translucent TransparencyComposite rendered %d batches"), TranslucentBatches.Num());
+						UE_LOG(LogTemp, Log, TEXT("KawaiiFluid: Translucent PostLightingPass rendered %d batches"), TranslucentBatches.Num());
 					}
 					else
 					{

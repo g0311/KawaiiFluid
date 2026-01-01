@@ -52,4 +52,21 @@ public:
 
 	virtual bool SupportsScreenSpacePipeline() const override { return false; }
 	virtual bool SupportsRayMarchingPipeline() const override { return true; }  // Translucent mode only supports RayMarching
+
+	//========================================
+	// Post-Lighting Pass (Stage 2: Transparency)
+	//========================================
+
+	/** Render post-lighting transparency effects (refraction, absorption) */
+	virtual void RenderPostLightingPass(
+		FRDGBuilder& GraphBuilder,
+		const FSceneView& View,
+		const FFluidRenderingParameters& RenderParams,
+		FRDGTextureRef SceneDepthTexture,
+		FRDGTextureRef LitSceneColorTexture,
+		FRDGTextureRef GBufferATexture,
+		FRDGTextureRef GBufferDTexture,
+		FScreenPassRenderTarget Output) override;
+
+	virtual bool RequiresPostLightingPass() const override { return true; }
 };

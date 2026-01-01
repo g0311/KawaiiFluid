@@ -158,6 +158,43 @@ public:
 	/** Check if using SDF Volume optimization */
 	bool IsUsingSDFVolume() const { return SDFVolumeData.IsValid(); }
 
+	//========================================
+	// Post-Lighting Pass (for 2-stage shading modes)
+	//========================================
+
+	/**
+	 * Render post-lighting effects (called in Tonemap for modes that need it)
+	 *
+	 * This is called AFTER engine lighting has been applied.
+	 * Used by Translucent mode to apply refraction/absorption effects.
+	 *
+	 * Default implementation does nothing (most shading modes don't need this).
+	 *
+	 * @param GraphBuilder RDG builder for pass execution
+	 * @param View Scene view for rendering
+	 * @param RenderParams Rendering parameters
+	 * @param SceneDepthTexture Scene depth (with stencil marking)
+	 * @param LitSceneColorTexture Lit scene color (after Lumen/VSM)
+	 * @param GBufferATexture GBuffer A (normals) for refraction
+	 * @param GBufferDTexture GBuffer D (thickness) for absorption
+	 * @param Output Final render target
+	 */
+	virtual void RenderPostLightingPass(
+		FRDGBuilder& GraphBuilder,
+		const FSceneView& View,
+		const FFluidRenderingParameters& RenderParams,
+		FRDGTextureRef SceneDepthTexture,
+		FRDGTextureRef LitSceneColorTexture,
+		FRDGTextureRef GBufferATexture,
+		FRDGTextureRef GBufferDTexture,
+		FScreenPassRenderTarget Output)
+	{
+		// Default: do nothing (PostProcess, GBuffer, Opaque don't need this)
+	}
+
+	/** Check if this shading mode requires post-lighting pass */
+	virtual bool RequiresPostLightingPass() const { return false; }
+
 protected:
 	/** Cached SDF Volume data */
 	FSDFVolumeData SDFVolumeData;

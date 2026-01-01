@@ -2,6 +2,7 @@
 
 #include "Rendering/Shading/KawaiiTranslucentShading.h"
 #include "Rendering/Shaders/FluidRayMarchGBufferShaders.h"
+#include "Rendering/Shaders/FluidTransparencyShaders.h"
 #include "Rendering/FluidRenderingParameters.h"
 #include "RenderGraphBuilder.h"
 #include "ScreenPass.h"
@@ -10,7 +11,7 @@
 #include "RHIStaticStates.h"
 #include "ScenePrivate.h"
 
-// Stencil reference value for Translucent mode (same as FluidTransparencyComposite::SlimeStencilRef)
+// Stencil reference value for Translucent mode
 static constexpr uint8 TranslucentStencilRef = 0x01;
 
 void FKawaiiTranslucentShading::RenderForScreenSpacePipeline(
@@ -177,4 +178,153 @@ void FKawaiiTranslucentShading::RenderForRayMarchingPipeline(
 
 	UE_LOG(LogTemp, Log, TEXT("FKawaiiTranslucentShading: RayMarching GBuffer write executed (Stencil=0x%02X), ParticleCount=%d"),
 		TranslucentStencilRef, ParticleCount);
+}
+
+void FKawaiiTranslucentShading::RenderPostLightingPass(
+	FRDGBuilder& GraphBuilder,
+	const FSceneView& View,
+	const FFluidRenderingParameters& RenderParams,
+	FRDGTextureRef SceneDepthTexture,
+	FRDGTextureRef LitSceneColorTexture,
+	FRDGTextureRef GBufferATexture,
+	FRDGTextureRef GBufferDTexture,
+	FScreenPassRenderTarget Output)
+{
+	// Validate inputs
+	if (!LitSceneColorTexture || !SceneDepthTexture || !GBufferATexture || !GBufferDTexture)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("FKawaiiTranslucentShading::RenderPostLightingPass: Missing required textures"));
+		return;
+	}
+
+	if (!Output.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("FKawaiiTranslucentShading::RenderPostLightingPass: Invalid output target"));
+		return;
+	}
+
+	RDG_EVENT_SCOPE(GraphBuilder, "TranslucentShading_PostLighting");
+
+	auto* PassParameters = GraphBuilder.AllocParameters<FFluidTransparencyParameters>();
+
+	// Lit scene color (input)
+	PassParameters->LitSceneColorTexture = LitSceneColorTexture;
+	PassParameters->SceneColorSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+
+	// Scene depth (for stencil test)
+	PassParameters->FluidSceneDepthTex = SceneDepthTexture;
+	PassParameters->DepthSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+
+	// GBuffer A (normals for refraction)
+	PassParameters->FluidGBufferATex = GBufferATexture;
+	PassParameters->GBufferSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+
+	// GBuffer D (thickness in R channel from Ray Marching pass)
+	PassParameters->FluidGBufferDTex = GBufferDTexture;
+
+	// Transparency parameters
+	PassParameters->RefractiveIndex = RenderParams.RefractiveIndex;
+	PassParameters->RefractionStrength = 0.05f;  // Screen-space refraction strength
+	PassParameters->Opacity = 0.7f;  // Base opacity
+	PassParameters->FresnelStrength = RenderParams.FresnelStrength;
+	PassParameters->TintColor = FVector3f(RenderParams.FluidColor.R, RenderParams.FluidColor.G, RenderParams.FluidColor.B);
+	PassParameters->AbsorptionCoefficient = RenderParams.AbsorptionCoefficient;
+
+	// Viewport info - Use Output.ViewRect for rendering, ViewInfo.ViewRect for GBuffer sampling
+	const FViewInfo& ViewInfo = static_cast<const FViewInfo&>(View);
+	FIntRect OutputRect = Output.ViewRect;      // PostProcessing output region
+	FIntRect GBufferRect = ViewInfo.ViewRect;   // GBuffer rendering region (may differ due to Screen Percentage)
+
+	// Output coordinates (for rendering)
+	PassParameters->OutputViewRect = FVector2f(OutputRect.Width(), OutputRect.Height());
+	PassParameters->OutputViewRectMin = FVector2f(OutputRect.Min.X, OutputRect.Min.Y);
+	PassParameters->OutputTextureSize = FVector2f(
+		Output.Texture->Desc.Extent.X,
+		Output.Texture->Desc.Extent.Y);
+
+	// GBuffer coordinates (for sampling - may be different resolution)
+	PassParameters->GBufferViewRect = FVector2f(GBufferRect.Width(), GBufferRect.Height());
+	PassParameters->GBufferViewRectMin = FVector2f(GBufferRect.Min.X, GBufferRect.Min.Y);
+	PassParameters->GBufferTextureSize = FVector2f(
+		GBufferATexture->Desc.Extent.X,
+		GBufferATexture->Desc.Extent.Y);
+
+	// SceneColor texture size
+	PassParameters->SceneTextureSize = FVector2f(
+		LitSceneColorTexture->Desc.Extent.X,
+		LitSceneColorTexture->Desc.Extent.Y);
+
+	// Viewport size (Output resolution)
+	PassParameters->ViewportSize = FVector2f(OutputRect.Width(), OutputRect.Height());
+	PassParameters->InverseViewportSize = FVector2f(1.0f / OutputRect.Width(), 1.0f / OutputRect.Height());
+
+	// View uniforms
+	PassParameters->View = View.ViewUniformBuffer;
+
+	// Output render target (alpha blend over lit scene)
+	PassParameters->RenderTargets[0] = FRenderTargetBinding(
+		Output.Texture, ERenderTargetLoadAction::ELoad);
+
+	// Depth/Stencil for stencil test (read stencil, no depth write)
+	PassParameters->RenderTargets.DepthStencil = FDepthStencilBinding(
+		SceneDepthTexture,
+		ERenderTargetLoadAction::ELoad,
+		ERenderTargetLoadAction::ELoad,
+		FExclusiveDepthStencil::DepthRead_StencilRead);
+
+	// Get shaders
+	FGlobalShaderMap* GlobalShaderMap = GetGlobalShaderMap(View.GetFeatureLevel());
+	TShaderMapRef<FFluidTransparencyVS> VertexShader(GlobalShaderMap);
+	TShaderMapRef<FFluidTransparencyPS> PixelShader(GlobalShaderMap);
+
+	GraphBuilder.AddPass(
+		RDG_EVENT_NAME("TranslucentShading_Transparency"),
+		PassParameters,
+		ERDGPassFlags::Raster,
+		[VertexShader, PixelShader, PassParameters, OutputRect](FRHICommandList& RHICmdList)
+		{
+			// Use Output.ViewRect for rendering (PostProcessing output resolution)
+			RHICmdList.SetViewport(
+				OutputRect.Min.X, OutputRect.Min.Y, 0.0f,
+				OutputRect.Max.X, OutputRect.Max.Y, 1.0f);
+			RHICmdList.SetScissorRect(
+				true,
+				OutputRect.Min.X, OutputRect.Min.Y,
+				OutputRect.Max.X, OutputRect.Max.Y);
+
+			FGraphicsPipelineStateInitializer GraphicsPSOInit;
+			GraphicsPSOInit.BoundShaderState.VertexDeclarationRHI = GEmptyVertexDeclaration.VertexDeclarationRHI;
+			GraphicsPSOInit.BoundShaderState.VertexShaderRHI = VertexShader.GetVertexShader();
+			GraphicsPSOInit.BoundShaderState.PixelShaderRHI = PixelShader.GetPixelShader();
+			GraphicsPSOInit.PrimitiveType = PT_TriangleList;
+
+			// Opaque write (replace) - shader already blends lit slime with refracted background
+			// Alpha blending would cause double rendering since SceneColor already has lit slime
+			GraphicsPSOInit.BlendState = TStaticBlendState<>::GetRHI();
+
+			GraphicsPSOInit.RasterizerState = TStaticRasterizerState<FM_Solid, CM_None>::GetRHI();
+
+			// Stencil test: only render where stencil == TranslucentStencilRef (0x01)
+			// Depth: read only (no write)
+			GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<
+				false, CF_Always,                              // Depth: no write, always pass
+				true, CF_Equal,                                // Front stencil: enable, pass if equal
+				SO_Keep, SO_Keep, SO_Keep,                     // Stencil ops: keep all
+				false, CF_Always,                              // Back stencil: disabled
+				SO_Keep, SO_Keep, SO_Keep,
+				0xFF, 0x00                                     // Read mask, write mask (read only)
+			>::GetRHI();
+
+			// Set stencil ref to match slime regions
+			RHICmdList.SetStencilRef(TranslucentStencilRef);
+
+			RHICmdList.ApplyCachedRenderTargets(GraphicsPSOInit);
+			SetGraphicsPipelineState(RHICmdList, GraphicsPSOInit, 0);
+			SetShaderParameters(RHICmdList, PixelShader, PixelShader.GetPixelShader(), *PassParameters);
+
+			// Draw fullscreen triangle
+			RHICmdList.DrawPrimitive(0, 1, 1);
+		});
+
+	UE_LOG(LogTemp, Log, TEXT("FKawaiiTranslucentShading: PostLighting transparency pass executed"));
 }
