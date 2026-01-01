@@ -19,9 +19,14 @@
 #include "Rendering/KawaiiFluidRenderResource.h"
 #include "Rendering/Composite/IFluidCompositePass.h"
 #include "Rendering/Composite/FluidRayMarchComposite.h"
+#include "Rendering/Composite/FluidGBufferComposite.h"
+#include "Rendering/Composite/FluidTransparencyComposite.h"
 #include "Rendering/SDFVolumeManager.h"
 
 static TRefCountPtr<IPooledRenderTarget> GFluidCompositeDebug_KeepAlive;
+
+// Transparency composite for G-Buffer + Transparency hybrid mode
+static FFluidTransparencyComposite GFluidTransparencyComposite;
 
 // ==============================================================================
 // Class Implementation
@@ -109,20 +114,36 @@ void FFluidSceneViewExtension::PostRenderBasePassDeferred_RenderThread(
 
 	// Get SceneDepth from RenderTargets
 	FRDGTextureRef SceneDepthTexture = RenderTargets.DepthStencil.GetTexture();
+	UE_LOG(LogTemp, Log, TEXT("KawaiiFluid: PostBasePass SceneDepthTexture = %p"), SceneDepthTexture);
 
-	// Process GBuffer batches
+	// SDF Volume Manager for baking
+	static FSDFVolumeManager GBufferSDFVolumeManager;
+
+	// Process GBuffer batches using Ray Marching SDF
 	for (auto& Batch : GBufferBatches)
 	{
 		const FFluidRenderingParameters& BatchParams = Batch.Key;
 		const TArray<UKawaiiFluidSSFRRenderer*>& Renderers = Batch.Value;
 
-		// Calculate average particle radius
+		RDG_EVENT_SCOPE(GraphBuilder, "FluidGBufferRayMarchBatch");
+
+		// Collect all particle positions from batch
+		TArray<FVector3f> AllParticlePositions;
 		float AverageParticleRadius = 10.0f;
 		float TotalRadius = 0.0f;
-		int ValidCount = 0;
+		int32 ValidCount = 0;
 
 		for (UKawaiiFluidSSFRRenderer* Renderer : Renderers)
 		{
+			FKawaiiFluidRenderResource* RenderResource = Renderer->GetFluidRenderResource();
+			if (RenderResource && RenderResource->IsValid())
+			{
+				const TArray<FKawaiiRenderParticle>& CachedParticles = RenderResource->GetCachedParticles();
+				for (const FKawaiiRenderParticle& Particle : CachedParticles)
+				{
+					AllParticlePositions.Add(Particle.Position);
+				}
+			}
 			TotalRadius += Renderer->GetCachedParticleRadius();
 			ValidCount++;
 		}
@@ -132,70 +153,114 @@ void FFluidSceneViewExtension::PostRenderBasePassDeferred_RenderThread(
 			AverageParticleRadius = TotalRadius / ValidCount;
 		}
 
-		float BlurRadius = static_cast<float>(BatchParams.BilateralFilterRadius);
-		float DepthFalloff = AverageParticleRadius * 0.7f;
-		int32 NumIterations = 3;
-
-		// Depth Pass
-		FRDGTextureRef BatchDepthTexture = nullptr;
-		RenderFluidDepthPass(GraphBuilder, InView, Renderers, SceneDepthTexture, BatchDepthTexture);
-
-		if (BatchDepthTexture)
+		if (AllParticlePositions.Num() == 0)
 		{
-			// Smoothing Pass
-			FRDGTextureRef BatchSmoothedDepthTexture = nullptr;
-			RenderFluidSmoothingPass(GraphBuilder, InView, BatchDepthTexture, BatchSmoothedDepthTexture,
-									 BlurRadius, DepthFalloff, NumIterations);
+			UE_LOG(LogTemp, Warning, TEXT("KawaiiFluid: No particles for GBuffer Ray Marching - skipping"));
+			continue;
+		}
 
-			if (BatchSmoothedDepthTexture)
-			{
-				// Normal Pass
-				FRDGTextureRef BatchNormalTexture = nullptr;
-				RenderFluidNormalPass(GraphBuilder, InView, BatchSmoothedDepthTexture, BatchNormalTexture);
+		// Create RDG buffer for particle positions
+		const uint32 BufferSize = AllParticlePositions.Num() * sizeof(FVector3f);
+		FRDGBufferRef ParticleBuffer = GraphBuilder.CreateBuffer(
+			FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector3f), AllParticlePositions.Num()),
+			TEXT("GBufferRayMarchParticlePositions"));
 
-				// Thickness Pass
-				FRDGTextureRef BatchThicknessTexture = nullptr;
-				RenderFluidThicknessPass(GraphBuilder, InView, Renderers, SceneDepthTexture, BatchThicknessTexture);
+		GraphBuilder.QueueBufferUpload(
+			ParticleBuffer,
+			AllParticlePositions.GetData(),
+			BufferSize,
+			ERDGInitialDataFlags::None);
 
-				if (BatchNormalTexture && BatchThicknessTexture)
-				{
-					if (Renderers.Num() > 0 && Renderers[0]->GetCompositePass())
-					{
-						FFluidIntermediateTextures IntermediateTextures;
-						IntermediateTextures.SmoothedDepthTexture = BatchSmoothedDepthTexture;
-						IntermediateTextures.NormalTexture = BatchNormalTexture;
-						IntermediateTextures.ThicknessTexture = BatchThicknessTexture;
+		FRDGBufferSRVRef ParticleBufferSRV = GraphBuilder.CreateSRV(ParticleBuffer);
 
-						// Get GBuffer textures directly from FSceneTextures (UE 5.7)
-						const FViewInfo& ViewInfo = static_cast<const FViewInfo&>(InView);
-						const FSceneTextures& SceneTexturesRef = ViewInfo.GetSceneTextures();
-						IntermediateTextures.GBufferATexture = SceneTexturesRef.GBufferA;
-						IntermediateTextures.GBufferBTexture = SceneTexturesRef.GBufferB;
-						IntermediateTextures.GBufferCTexture = SceneTexturesRef.GBufferC;
-						IntermediateTextures.GBufferDTexture = SceneTexturesRef.GBufferD;
+		// SDF Volume Baking (if optimization enabled)
+		FRDGTextureSRVRef SDFVolumeSRV = nullptr;
+		FVector3f VolumeMin = FVector3f::ZeroVector;
+		FVector3f VolumeMax = FVector3f::ZeroVector;
+		FIntVector VolumeResolution = FIntVector(64, 64, 64);
 
-						UE_LOG(LogTemp, Log, TEXT("KawaiiFluid: GBuffer textures - A:%s B:%s C:%s D:%s"),
-							IntermediateTextures.GBufferATexture ? TEXT("OK") : TEXT("NULL"),
-							IntermediateTextures.GBufferBTexture ? TEXT("OK") : TEXT("NULL"),
-							IntermediateTextures.GBufferCTexture ? TEXT("OK") : TEXT("NULL"),
-							IntermediateTextures.GBufferDTexture ? TEXT("OK") : TEXT("NULL"));
+		const bool bUseSDFVolume = BatchParams.bUseSDFVolumeOptimization;
 
-						FScreenPassRenderTarget DummyOutput;
+		if (bUseSDFVolume)
+		{
+			RDG_EVENT_SCOPE(GraphBuilder, "SDFVolumeBake_GBuffer");
 
-						Renderers[0]->GetCompositePass()->RenderComposite(
-							GraphBuilder,
-							InView,
-							BatchParams,
-							IntermediateTextures,
-							SceneDepthTexture,
-							nullptr,  // SceneColorTexture not available here
-							DummyOutput
-						);
+			int32 Resolution = FMath::Clamp(BatchParams.SDFVolumeResolution, 32, 256);
+			GBufferSDFVolumeManager.SetVolumeResolution(FIntVector(Resolution, Resolution, Resolution));
 
-						UE_LOG(LogTemp, Log, TEXT("KawaiiFluid: GBuffer write complete at correct timing (PostBasePass)"));
-					}
-				}
-			}
+			float Margin = AverageParticleRadius * 2.0f;
+			CalculateParticleBoundingBox(AllParticlePositions, AverageParticleRadius, Margin, VolumeMin, VolumeMax);
+
+			SDFVolumeSRV = GBufferSDFVolumeManager.BakeSDFVolume(
+				GraphBuilder,
+				ParticleBufferSRV,
+				AllParticlePositions.Num(),
+				AverageParticleRadius,
+				BatchParams.SDFSmoothness,
+				VolumeMin,
+				VolumeMax);
+
+			VolumeResolution = GBufferSDFVolumeManager.GetVolumeResolution();
+
+			UE_LOG(LogTemp, Log, TEXT("KawaiiFluid: GBuffer SDF Volume baked - Min:(%.1f,%.1f,%.1f) Max:(%.1f,%.1f,%.1f) Res:%d"),
+				VolumeMin.X, VolumeMin.Y, VolumeMin.Z,
+				VolumeMax.X, VolumeMax.Y, VolumeMax.Z,
+				Resolution);
+		}
+
+		// Get GBuffer textures
+		const FViewInfo& ViewInfo = static_cast<const FViewInfo&>(InView);
+		const FSceneTextures& SceneTexturesRef = ViewInfo.GetSceneTextures();
+
+		FFluidIntermediateTextures GBufferTextures;
+		GBufferTextures.GBufferATexture = SceneTexturesRef.GBufferA;
+		GBufferTextures.GBufferBTexture = SceneTexturesRef.GBufferB;
+		GBufferTextures.GBufferCTexture = SceneTexturesRef.GBufferC;
+		GBufferTextures.GBufferDTexture = SceneTexturesRef.GBufferD;
+
+		// DEBUG: Compare GBuffer texture size vs ViewRect
+		FIntVector2 GBufferASize = GBufferTextures.GBufferATexture ?
+			FIntVector2(GBufferTextures.GBufferATexture->Desc.Extent.X, GBufferTextures.GBufferATexture->Desc.Extent.Y) :
+			FIntVector2(0, 0);
+		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluid: PostBasePass - ViewInfo.ViewRect=(%d,%d)-(%d,%d) [%dx%d], GBufferA TexSize=(%d,%d)"),
+			ViewInfo.ViewRect.Min.X, ViewInfo.ViewRect.Min.Y, ViewInfo.ViewRect.Max.X, ViewInfo.ViewRect.Max.Y,
+			ViewInfo.ViewRect.Width(), ViewInfo.ViewRect.Height(),
+			GBufferASize.X, GBufferASize.Y);
+
+		// Check if ViewRect exceeds GBuffer texture size
+		if (ViewInfo.ViewRect.Width() > GBufferASize.X || ViewInfo.ViewRect.Height() > GBufferASize.Y)
+		{
+			UE_LOG(LogTemp, Error, TEXT("KawaiiFluid: WARNING! ViewRect exceeds GBuffer texture size! This will cause rendering issues."));
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("KawaiiFluid: GBuffer textures - A:%s B:%s C:%s D:%s"),
+			GBufferTextures.GBufferATexture ? TEXT("OK") : TEXT("NULL"),
+			GBufferTextures.GBufferBTexture ? TEXT("OK") : TEXT("NULL"),
+			GBufferTextures.GBufferCTexture ? TEXT("OK") : TEXT("NULL"),
+			GBufferTextures.GBufferDTexture ? TEXT("OK") : TEXT("NULL"));
+
+		// Get composite pass and call RenderRayMarchToGBuffer
+		if (Renderers.Num() > 0 && Renderers[0]->GetCompositePass())
+		{
+			FFluidGBufferComposite* GBufferComposite =
+				static_cast<FFluidGBufferComposite*>(Renderers[0]->GetCompositePass().Get());
+
+			GBufferComposite->RenderRayMarchToGBuffer(
+				GraphBuilder,
+				InView,
+				BatchParams,
+				ParticleBufferSRV,
+				AllParticlePositions.Num(),
+				AverageParticleRadius,
+				SDFVolumeSRV,
+				VolumeMin,
+				VolumeMax,
+				VolumeResolution,
+				SceneDepthTexture,
+				GBufferTextures);
+
+			UE_LOG(LogTemp, Log, TEXT("KawaiiFluid: GBuffer Ray Marching complete (Particles: %d, UseSDFVolume: %s)"),
+				AllParticlePositions.Num(), bUseSDFVolume ? TEXT("true") : TEXT("false"));
 		}
 	}
 }
@@ -539,24 +604,48 @@ void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 				}
 
 				// ============================================
-				// G-Buffer Mode Warning (Not Yet Implemented)
+				// G-Buffer Mode: Transparency Pass (After Lighting)
 				// ============================================
 				if (GBufferBatches.Num() > 0)
 				{
-					UE_LOG(LogTemp, Warning, TEXT("G-Buffer mode renderers detected but not yet supported in Tonemap pass. Count: %d"), GBufferBatches.Num());
-					UE_LOG(LogTemp, Warning, TEXT("G-Buffer mode requires implementation in MotionBlur pass (pre-lighting). See IMPLEMENTATION_GUIDE.md"));
-				}
+					RDG_EVENT_SCOPE(GraphBuilder, "FluidGBufferTransparency");
 
-				// TODO (TEAM MEMBER): Implement G-Buffer mode rendering in MotionBlur pass
-				// G-Buffer mode should write to GBuffer BEFORE lighting (pre-lighting stage)
-				// This allows Lumen/VSM to process the fluid surface
-				//
-				// Implementation steps:
-				// 1. Add MotionBlur pass subscription (similar to Tonemap above)
-				// 2. Process GBufferBatches in MotionBlur callback
-				// 3. Run Depth/Smoothing/Normal/Thickness passes (same as Custom mode)
-				// 4. Call CompositePass->RenderComposite() which writes to GBuffer
-				// 5. Test with Lumen reflections and VSM shadows
+					UE_LOG(LogTemp, Log, TEXT("KawaiiFluid: Processing %d G-Buffer batches for transparency"), GBufferBatches.Num());
+					UE_LOG(LogTemp, Log, TEXT("KawaiiFluid: Tonemap SceneDepthTexture = %p"), SceneDepthTexture);
+
+					// Get GBuffer textures from SceneTextures (contains slime surface data)
+					const FViewInfo& ViewInfo = static_cast<const FViewInfo&>(View);
+					const FSceneTextures& SceneTexturesRef = ViewInfo.GetSceneTextures();
+					FRDGTextureRef GBufferATexture = SceneTexturesRef.GBufferA;
+					FRDGTextureRef GBufferDTexture = SceneTexturesRef.GBufferD;
+
+					// Create a copy of SceneColor for reading (avoid read-write hazard)
+					FRDGTextureRef LitSceneColorCopy = GraphBuilder.CreateTexture(
+						SceneColorInput.Texture->Desc,
+						TEXT("LitSceneColorCopy"));
+					AddCopyTexturePass(GraphBuilder, SceneColorInput.Texture, LitSceneColorCopy);
+
+					for (auto& Batch : GBufferBatches)
+					{
+						const FFluidRenderingParameters& BatchParams = Batch.Key;
+
+						RDG_EVENT_SCOPE(GraphBuilder, "GBufferTransparencyBatch");
+
+						// Apply transparency pass using stencil-masked regions
+						// Use the copy for reading to avoid read-write hazard
+						GFluidTransparencyComposite.RenderTransparency(
+							GraphBuilder,
+							View,
+							BatchParams,
+							SceneDepthTexture,
+							LitSceneColorCopy,        // Copy of lit scene color (for reading)
+							GBufferATexture,          // Normals for refraction
+							GBufferDTexture,          // Thickness in R channel
+							Output);
+
+						UE_LOG(LogTemp, Log, TEXT("KawaiiFluid: G-Buffer transparency pass complete for batch"));
+					}
+				}
 
 				// Debug Keep Alive
 				GraphBuilder.QueueTextureExtraction(Output.Texture, &GFluidCompositeDebug_KeepAlive);

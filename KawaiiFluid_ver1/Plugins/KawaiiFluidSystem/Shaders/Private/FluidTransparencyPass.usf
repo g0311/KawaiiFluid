@@ -1,0 +1,193 @@
+// Copyright KawaiiFluid Team. All Rights Reserved.
+// Transparency Pass - Applied after lighting to add refraction/transparency to slime
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/DeferredShadingCommon.ush"
+
+//-----------------------------------------------------------------------------
+// Parameters
+//-----------------------------------------------------------------------------
+
+// Lit scene color (after Lumen/lighting pass)
+Texture2D<float4> LitSceneColorTexture;
+SamplerState SceneColorSampler;
+
+// Scene depth for refraction offset calculation
+Texture2D<float> FluidSceneDepthTex;
+SamplerState DepthSampler;
+
+// GBuffer normal (for refraction direction)
+Texture2D<float4> FluidGBufferATex;
+SamplerState GBufferSampler;
+
+// GBuffer D (Thickness stored in R channel from Ray Marching pass)
+Texture2D<float4> FluidGBufferDTex;
+
+// Transparency parameters
+float RefractiveIndex;
+float RefractionStrength;
+float Opacity;
+float FresnelStrength;
+float3 TintColor;
+float AbsorptionCoefficient;
+
+// Viewport info
+float2 ViewportSize;
+float2 InverseViewportSize;
+
+// UV mapping - Output coordinates (PostProcessing output resolution)
+float2 OutputViewRect;      // Output 렌더링 영역 크기
+float2 OutputViewRectMin;   // Output ViewRect 시작점
+float2 OutputTextureSize;   // Output 텍스처 크기
+
+// UV mapping - GBuffer coordinates (may be different resolution due to Screen Percentage)
+float2 GBufferViewRect;     // GBuffer 렌더링 영역 크기
+float2 GBufferViewRectMin;  // GBuffer ViewRect 시작점
+float2 GBufferTextureSize;  // GBuffer 텍스처 크기
+
+// UV mapping - SceneColor (same as Output in most cases)
+float2 SceneTextureSize;
+
+//-----------------------------------------------------------------------------
+// Vertex Shader
+//-----------------------------------------------------------------------------
+
+struct FTransparencyVSToPS
+{
+	float4 Position : SV_POSITION;
+};
+
+void MainVS(
+	in uint VertexID : SV_VertexID,
+	out FTransparencyVSToPS Output)
+{
+	float2 UV = float2((VertexID << 1) & 2, VertexID & 2);
+	Output.Position = float4(UV * float2(2, -2) + float2(-1, 1), 0.5f, 1.0f);
+}
+
+//-----------------------------------------------------------------------------
+// Helper Functions
+//-----------------------------------------------------------------------------
+
+// Schlick Fresnel approximation
+float SchlickFresnel(float3 Normal, float3 ViewDir, float F0)
+{
+	float NoV = saturate(dot(Normal, ViewDir));
+	return F0 + (1.0 - F0) * pow(1.0 - NoV, 5.0);
+}
+
+// Calculate refraction offset based on normal and IOR
+float2 CalculateRefractionOffset(float3 Normal, float IOR, float Strength)
+{
+	// Simple screen-space refraction approximation
+	// Use XY components of normal for UV offset
+	float2 Offset = Normal.xy * Strength * (IOR - 1.0);
+	return Offset;
+}
+
+// Beer's Law absorption
+float3 ApplyAbsorption(float3 Color, float Thickness, float Coefficient, float3 Tint)
+{
+	float Absorption = exp(-Coefficient * Thickness);
+	return lerp(Tint, Color, Absorption);
+}
+
+//-----------------------------------------------------------------------------
+// Pixel Shader
+//-----------------------------------------------------------------------------
+
+void MainPS(
+	FTransparencyVSToPS Input,
+	out float4 OutColor : SV_Target0)
+{
+	// SV_POSITION is in Output coordinate space (PostProcessing output resolution)
+	float2 OutputScreenPos = Input.Position.xy;
+
+	// Calculate position relative to Output ViewRect (0 to OutputViewRect size)
+	float2 OutputPos = OutputScreenPos - OutputViewRectMin;
+
+	// Normalize to 0-1 within Output ViewRect
+	float2 OutputUV = OutputPos / OutputViewRect;
+
+	// Convert Output UV to GBuffer coordinate space
+	// GBuffer was rendered at potentially different resolution (Screen Percentage)
+	float2 GBufferPos = OutputUV * GBufferViewRect + GBufferViewRectMin;
+	float2 GBufferTextureUV = GBufferPos / GBufferTextureSize;
+
+	// SceneColor texture UV (same coordinate space as Output)
+	float2 SceneTextureUV = OutputScreenPos / SceneTextureSize;
+
+	// Viewport UV for refraction offset calculation (0-1 normalized)
+	float2 ViewportUV = OutputUV;
+
+	// Sample original lit scene color (use SceneTextureUV)
+	float4 LitColor = LitSceneColorTexture.SampleLevel(SceneColorSampler, SceneTextureUV, 0);
+
+	// Sample GBuffer normal (use GBufferTextureUV)
+	float4 GBufferA = FluidGBufferATex.SampleLevel(GBufferSampler, GBufferTextureUV, 0);
+	float3 WorldNormal = GBufferA.rgb * 2.0 - 1.0;
+	WorldNormal = normalize(WorldNormal);
+
+	// Sample thickness from GBufferD.r (use GBufferTextureUV)
+	float4 GBufferD = FluidGBufferDTex.SampleLevel(GBufferSampler, GBufferTextureUV, 0);
+	float Thickness = GBufferD.r * 100.0;  // Restore original scale
+
+	// Use GBufferD as mask - if thickness is 0, this is not a slime pixel
+	// This is more reliable than stencil which may be cleared by other passes
+	if (Thickness <= 0.0)
+	{
+		discard;
+	}
+
+	// DEBUG: Output bright magenta to see exactly where transparency pass renders
+	OutColor = float4(1.0, 0.0, 1.0, 1.0);
+	return;
+
+	// Approximate view direction (assume looking at screen center)
+	float3 ViewDir = float3(0, 0, 1);
+
+	// Calculate Fresnel
+	float Fresnel = SchlickFresnel(WorldNormal, ViewDir, FresnelStrength);
+
+	// Calculate refraction UV offset (in Output UV space, 0-1 normalized)
+	float2 RefractionOffset = CalculateRefractionOffset(WorldNormal, RefractiveIndex, RefractionStrength);
+	// Apply offset in Output UV space
+	float2 RefractedOutputUV = saturate(ViewportUV + RefractionOffset);
+	// Convert refracted Output UV back to screen position, then to texture UV
+	float2 RefractedScreenPos = OutputViewRectMin + RefractedOutputUV * OutputViewRect;
+	float2 RefractedTextureUV = RefractedScreenPos / SceneTextureSize;
+
+	// Sample background through refraction
+	float3 RefractedBackground = LitSceneColorTexture.SampleLevel(SceneColorSampler, RefractedTextureUV, 0).rgb;
+
+	// Apply Beer's Law absorption based on thickness
+	float3 AbsorbedColor = ApplyAbsorption(RefractedBackground, Thickness, AbsorptionCoefficient, TintColor);
+
+	// Blend lit slime color with refracted background
+	// LitColor.rgb = slime surface lit by Lumen/shadows
+	// AbsorbedColor = background seen through slime with absorption
+	float3 SlimeColor = LitColor.rgb;
+
+	// Final blend: more Fresnel = more reflection (slime surface), less = more refraction (see through)
+	float TransparencyFactor = (1.0 - Opacity) * (1.0 - Fresnel);
+	float3 FinalColor = lerp(SlimeColor, AbsorbedColor, TransparencyFactor);
+
+	// Add slight rim highlight from Fresnel
+	FinalColor += Fresnel * 0.1;
+
+	// Output with opaque alpha (blending is done in shader, not blend state)
+	OutColor = float4(FinalColor, 1.0);
+}
+
+//-----------------------------------------------------------------------------
+// Stencil-masked version (for selective application)
+//-----------------------------------------------------------------------------
+
+void MainPS_Stencil(
+	FTransparencyVSToPS Input,
+	out float4 OutColor : SV_Target0)
+{
+	// This version is identical but will be rendered with stencil test
+	// Stencil == 0x01 means slime region
+	MainPS(Input, OutColor);
+}

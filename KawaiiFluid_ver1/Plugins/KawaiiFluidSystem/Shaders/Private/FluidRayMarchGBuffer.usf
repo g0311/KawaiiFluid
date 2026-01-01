@@ -1,0 +1,307 @@
+// Copyright KawaiiFluid Team. All Rights Reserved.
+// Ray Marching SDF → G-Buffer Output for Lumen/Deferred Lighting Integration
+
+#include "/Engine/Public/Platform.ush"
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/DeferredShadingCommon.ush"
+#include "FluidSDFCommon.ush"
+
+//=============================================================================
+// Shader Parameters
+//=============================================================================
+
+// Particle Data (used when USE_SDF_VOLUME is 0)
+StructuredBuffer<float3> ParticlePositions;
+int ParticleCount;
+float ParticleRadius;
+
+//=============================================================================
+// SDF Volume Parameters (used when USE_SDF_VOLUME is 1)
+//=============================================================================
+#if USE_SDF_VOLUME
+Texture3D<float> SDFVolumeTexture;
+SamplerState SDFVolumeSampler;
+float3 SDFVolumeMin;
+float3 SDFVolumeMax;
+int3 SDFVolumeResolution;
+#endif
+
+// Ray Marching Parameters
+float SDFSmoothness;
+int MaxRayMarchSteps;
+float RayMarchHitThreshold;
+float RayMarchMaxDistance;
+
+// Material Parameters (for G-Buffer)
+float3 FluidBaseColor;
+float Metallic;
+float Roughness;
+float AbsorptionCoefficient;
+
+// Scene Textures
+Texture2D FluidSceneDepthTex;
+SamplerState FluidSceneTextureSampler;
+
+// View Matrices
+float4x4 InverseViewMatrix;
+float4x4 InverseProjectionMatrix;
+float4x4 ViewMatrix;
+float4x4 ProjectionMatrix;
+float2 ViewportSize;
+
+// SceneDepth UV transform
+float2 SceneViewRect;
+float2 SceneTextureSize;
+
+//=============================================================================
+// Ray Marching Result Structure
+//=============================================================================
+
+struct FRayMarchResult
+{
+	bool bHit;
+	float Distance;
+	float3 WorldPosition;
+	float3 WorldNormal;
+	float Thickness;
+	float DeviceZ;
+};
+
+//=============================================================================
+// Helper Functions
+//=============================================================================
+
+void GetCameraRay(float2 UV, out float3 RayOrigin, out float3 RayDirection)
+{
+	RayOrigin = float3(InverseViewMatrix._41, InverseViewMatrix._42, InverseViewMatrix._43);
+
+	float2 NDC = UV * 2.0 - 1.0;
+	NDC.y = -NDC.y;
+
+	float4 ClipFar = float4(NDC, 1.0, 1.0);
+	float4 ViewFar = mul(ClipFar, InverseProjectionMatrix);
+	ViewFar /= ViewFar.w;
+	float4 WorldFar = mul(ViewFar, InverseViewMatrix);
+
+	RayDirection = normalize(WorldFar.xyz - RayOrigin);
+}
+
+float ConvertDeviceZToLinearDepth(float DeviceZ)
+{
+	float4 ClipPos = float4(0, 0, DeviceZ, 1.0);
+	float4 ViewPos = mul(ClipPos, InverseProjectionMatrix);
+	return ViewPos.z / ViewPos.w;
+}
+
+//=============================================================================
+// SDF Volume Sampling
+//=============================================================================
+
+#if USE_SDF_VOLUME
+float SampleSDFVolume(float3 worldPos)
+{
+	float3 uvw = (worldPos - SDFVolumeMin) / (SDFVolumeMax - SDFVolumeMin);
+
+	if (any(uvw < 0.0) || any(uvw > 1.0))
+	{
+		return 1e10;
+	}
+
+	return SDFVolumeTexture.SampleLevel(SDFVolumeSampler, uvw, 0);
+}
+
+float3 CalculateSDFNormalFromVolume(float3 p)
+{
+	const float eps = 0.5;
+
+	float3 n;
+	n.x = SampleSDFVolume(p + float3(eps, 0, 0)) - SampleSDFVolume(p - float3(eps, 0, 0));
+	n.y = SampleSDFVolume(p + float3(0, eps, 0)) - SampleSDFVolume(p - float3(0, eps, 0));
+	n.z = SampleSDFVolume(p + float3(0, 0, eps)) - SampleSDFVolume(p - float3(0, 0, eps));
+
+	return normalize(n);
+}
+
+bool RayBoxIntersect(float3 ro, float3 rd, float3 boxMin, float3 boxMax, out float tMin, out float tMax)
+{
+	float3 invRd = 1.0 / rd;
+	float3 t0 = (boxMin - ro) * invRd;
+	float3 t1 = (boxMax - ro) * invRd;
+
+	float3 tNear = min(t0, t1);
+	float3 tFar = max(t0, t1);
+
+	tMin = max(max(tNear.x, tNear.y), tNear.z);
+	tMax = min(min(tFar.x, tFar.y), tFar.z);
+
+	tMin = max(tMin, 0.0);
+
+	return tMax >= tMin && tMax > 0.0;
+}
+#endif
+
+//=============================================================================
+// Ray Marching
+//=============================================================================
+
+FRayMarchResult RayMarchSDF(float3 ro, float3 rd, float maxDist)
+{
+	FRayMarchResult result;
+	result.bHit = false;
+	result.Distance = 0.0;
+	result.WorldPosition = float3(0, 0, 0);
+	result.WorldNormal = float3(0, 1, 0);
+	result.Thickness = 0.0;
+	result.DeviceZ = 0.0;
+
+#if USE_SDF_VOLUME
+	float tBoxMin, tBoxMax;
+	if (!RayBoxIntersect(ro, rd, SDFVolumeMin, SDFVolumeMax, tBoxMin, tBoxMax))
+	{
+		return result;
+	}
+
+	float t = tBoxMin + 0.01;
+	float marchMaxDist = min(maxDist, tBoxMax);
+#else
+	float t = 0.0;
+	float marchMaxDist = maxDist;
+#endif
+
+	for (int i = 0; i < MaxRayMarchSteps && t < marchMaxDist; ++i)
+	{
+		float3 p = ro + rd * t;
+
+#if USE_SDF_VOLUME
+		float sdf = SampleSDFVolume(p);
+#else
+		float sdf = EvaluateMetaballSDF(p, ParticlePositions, ParticleCount, ParticleRadius, SDFSmoothness);
+#endif
+
+		if (sdf < RayMarchHitThreshold)
+		{
+			result.bHit = true;
+			result.Distance = t;
+			result.WorldPosition = p;
+
+#if USE_SDF_VOLUME
+			result.WorldNormal = CalculateSDFNormalFromVolume(p);
+#else
+			result.WorldNormal = CalculateSDFNormal3Tap(p, sdf, ParticlePositions, ParticleCount, ParticleRadius, SDFSmoothness);
+#endif
+
+			// Estimate thickness
+			float estimatedThickness = ParticleRadius * 4.0 * (1.0 - saturate(abs(sdf) / ParticleRadius));
+			result.Thickness = max(estimatedThickness, ParticleRadius);
+
+			// Calculate device Z for depth buffer
+			float4 HitViewPos = mul(float4(p, 1.0), ViewMatrix);
+			float4 HitClipPos = mul(HitViewPos, ProjectionMatrix);
+			result.DeviceZ = HitClipPos.z / HitClipPos.w;
+
+			break;
+		}
+
+		t += max(sdf * 0.95, 0.01);
+	}
+
+	return result;
+}
+
+//=============================================================================
+// Vertex Shader
+//=============================================================================
+
+struct FGBufferVSToPS
+{
+	float4 Position : SV_POSITION;
+	noperspective float2 UV : TEXCOORD0;
+};
+
+void MainVS(
+	in uint VertexID : SV_VertexID,
+	out FGBufferVSToPS Output)
+{
+	float2 UV = float2((VertexID << 1) & 2, VertexID & 2);
+	Output.UV = UV;
+	Output.Position = float4(UV * float2(2, -2) + float2(-1, 1), 0.5f, 1.0f);
+}
+
+//=============================================================================
+// G-Buffer Output Structure
+//=============================================================================
+
+struct FGBufferOutput
+{
+	float4 GBufferA : SV_Target0;  // World Normal (RGB), PerObjectGBufferData (A)
+	float4 GBufferB : SV_Target1;  // Metallic, Specular, Roughness, ShadingModelID
+	float4 GBufferC : SV_Target2;  // BaseColor (RGB), AO (A)
+	float4 GBufferD : SV_Target3;  // Custom data (Subsurface, Thickness for transparency pass)
+	float  OutDepth : SV_Depth;
+};
+
+//=============================================================================
+// Pixel Shader - Ray March to G-Buffer
+//=============================================================================
+
+FGBufferOutput MainPS(FGBufferVSToPS Input)
+{
+	FGBufferOutput Output = (FGBufferOutput)0;
+
+	float2 UV = Input.UV;
+
+#if USE_SDF_VOLUME
+	// SDF Volume mode
+#else
+	if (ParticleCount <= 0)
+	{
+		discard;
+	}
+#endif
+
+	// Get camera ray
+	float3 RayOrigin, RayDirection;
+	GetCameraRay(UV, RayOrigin, RayDirection);
+
+	// Get scene depth for occlusion
+	float2 SceneUV = UV * (SceneViewRect / SceneTextureSize);
+	float SceneDeviceZ = FluidSceneDepthTex.SampleLevel(FluidSceneTextureSampler, SceneUV, 0).r;
+	float SceneLinearDepth = ConvertDeviceZToLinearDepth(SceneDeviceZ);
+
+	// Ray march
+	FRayMarchResult result = RayMarchSDF(RayOrigin, RayDirection, RayMarchMaxDistance);
+
+	if (!result.bHit)
+	{
+		discard;
+	}
+
+	// Depth occlusion test (reversed-Z)
+	float DepthBias = 0.0001;
+	if (result.DeviceZ < SceneDeviceZ - DepthBias)
+	{
+		discard;
+	}
+
+	// Apply Beer's Law absorption to base color
+	float Absorption = exp(-AbsorptionCoefficient * result.Thickness * 0.1);
+	float3 AbsorbedColor = FluidBaseColor * Absorption;
+
+	// Encode World Normal to GBuffer A (0-1 range)
+	Output.GBufferA = float4(result.WorldNormal * 0.5 + 0.5, 0.0);
+
+	// GBuffer B: Metallic, Specular, Roughness, ShadingModelID
+	uint ShadingModelID = SHADINGMODELID_DEFAULT_LIT;
+	Output.GBufferB = float4(Metallic, 0.5, Roughness, float(ShadingModelID) / 255.0);
+
+	// GBuffer C: BaseColor, AO
+	Output.GBufferC = float4(AbsorbedColor, 1.0);
+
+	// GBuffer D: Store thickness for transparency pass
+	Output.GBufferD = float4(result.Thickness / 100.0, 0.0, 0.0, 0.0);
+
+	// Output depth
+	Output.OutDepth = result.DeviceZ;
+
+	return Output;
+}
