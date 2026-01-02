@@ -103,6 +103,15 @@ bool FKawaiiMetaballRayMarchPipeline::PrepareParticleBuffer(
 		CachedPipelineData.SDFVolumeData.VolumeResolution = SDFVolumeManager.GetVolumeResolution();
 		CachedPipelineData.SDFVolumeData.bUseSDFVolume = true;
 
+		// Notify renderers of SDF volume bounds for debug visualization
+		for (UKawaiiFluidMetaballRenderer* Renderer : Renderers)
+		{
+			if (Renderer && Renderer->GetLocalParameters().bDebugDrawSDFVolume)
+			{
+				Renderer->SetSDFVolumeBounds(FVector(VolumeMin), FVector(VolumeMax));
+			}
+		}
+
 		UE_LOG(LogTemp, Verbose, TEXT("KawaiiFluid: Using SDF Volume optimization (%dx%dx%d)"),
 			Resolution, Resolution, Resolution);
 	}

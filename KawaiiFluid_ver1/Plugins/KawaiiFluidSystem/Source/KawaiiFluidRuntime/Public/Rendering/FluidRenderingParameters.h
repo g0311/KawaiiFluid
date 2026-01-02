@@ -175,9 +175,9 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	// Ray Marching SDF Mode Parameters
 	//========================================
 
-	/** SDF smoothness for metaball blending (lower = smoother) */
+	/** SDF smoothness for metaball blending (higher = more stretchy/blobby) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching",
-		meta = (EditCondition = "SSFRMode == ESSFRRenderingMode::RayMarching", ClampMin = "1.0", ClampMax = "32.0"))
+		meta = (EditCondition = "SSFRMode == ESSFRRenderingMode::RayMarching", ClampMin = "1.0", ClampMax = "64.0"))
 	float SDFSmoothness = 12.0f;
 
 	/** Maximum ray marching steps */
@@ -219,6 +219,18 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 		meta = (EditCondition = "SSFRMode == ESSFRRenderingMode::RayMarching && bUseSDFVolumeOptimization",
 			ClampMin = "32", ClampMax = "256"))
 	int32 SDFVolumeResolution = 64;
+
+	//========================================
+	// Debug Visualization
+	//========================================
+
+	/** Draw SDF Volume bounding box as debug lines */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
+	bool bDebugDrawSDFVolume = false;
+
+	/** SDF Volume debug box color */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
+	FColor SDFVolumeDebugColor = FColor::Green;
 
 	//========================================
 	// G-Buffer Mode Parameters

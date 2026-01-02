@@ -129,6 +129,12 @@ protected:
 		const TArray<UFluidCollider*>& Colliders
 	);
 
+	/** 9. Apply cohesion (surface tension between particles) */
+	virtual void ApplyCohesion(
+		TArray<FFluidParticle>& Particles,
+		const UKawaiiFluidPresetDataAsset* Preset
+	);
+
 	/** 3.5. Apply shape matching constraint (for slime) */
 	virtual void ApplyShapeMatchingConstraint(
 		TArray<FFluidParticle>& Particles,

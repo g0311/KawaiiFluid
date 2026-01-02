@@ -5,6 +5,7 @@
 #include "Rendering/FluidRendererSubsystem.h"
 #include "Rendering/KawaiiFluidRenderResource.h"
 #include "Core/KawaiiRenderParticle.h"
+#include "DrawDebugHelpers.h"
 
 // Pipeline architecture (Pipeline handles ShadingMode internally)
 #include "Rendering/Pipeline/IKawaiiMetaballRenderingPipeline.h"
@@ -136,6 +137,10 @@ void UKawaiiFluidMetaballRenderer::ApplySettings(const FKawaiiFluidMetaballRende
 	LocalParameters.bUseSDFVolumeOptimization = Settings.bUseSDFVolumeOptimization;
 	LocalParameters.SDFVolumeResolution = Settings.SDFVolumeResolution;
 
+	// Debug visualization settings
+	LocalParameters.bDebugDrawSDFVolume = Settings.bDebugDrawSDFVolume;
+	LocalParameters.SDFVolumeDebugColor = Settings.SDFVolumeDebugColor;
+
 	// MaxRenderParticles stays as member variable (not in LocalParameters)
 	MaxRenderParticles = Settings.MaxRenderParticles;
 
@@ -210,6 +215,9 @@ void UKawaiiFluidMetaballRenderer::UpdateRendering(const IKawaiiFluidDataProvide
 	// Update stats
 	LastRenderedParticleCount = NumParticles;
 	bIsRenderingActive = true;
+
+	// Draw debug visualization if enabled
+	DrawDebugVisualization();
 }
 
 void UKawaiiFluidMetaballRenderer::UpdateGPUResources(const TArray<FFluidParticle>& Particles, float ParticleRadius)
@@ -286,4 +294,68 @@ void UKawaiiFluidMetaballRenderer::UpdatePipeline()
 		LocalParameters.ShadingMode == EMetaballShadingMode::PostProcess ? TEXT("PostProcess") :
 		LocalParameters.ShadingMode == EMetaballShadingMode::GBuffer ? TEXT("GBuffer") :
 		LocalParameters.ShadingMode == EMetaballShadingMode::Opaque ? TEXT("Opaque") : TEXT("Translucent"));
+}
+
+void UKawaiiFluidMetaballRenderer::SetSDFVolumeBounds(const FVector& VolumeMin, const FVector& VolumeMax)
+{
+	// Called from render thread - use atomic or game thread task for thread safety
+	AsyncTask(ENamedThreads::GameThread, [this, VolumeMin, VolumeMax]()
+	{
+		if (IsValid(this))
+		{
+			CachedSDFVolumeMin = VolumeMin;
+			CachedSDFVolumeMax = VolumeMax;
+			bHasValidSDFVolumeBounds = true;
+		}
+	});
+}
+
+void UKawaiiFluidMetaballRenderer::DrawDebugVisualization()
+{
+	if (!LocalParameters.bDebugDrawSDFVolume || !bHasValidSDFVolumeBounds)
+	{
+		return;
+	}
+
+	if (!CachedWorld)
+	{
+		return;
+	}
+
+	// Calculate box center and extent from min/max
+	FVector BoxCenter = (CachedSDFVolumeMin + CachedSDFVolumeMax) * 0.5f;
+	FVector BoxExtent = (CachedSDFVolumeMax - CachedSDFVolumeMin) * 0.5f;
+
+	// Draw debug box
+	DrawDebugBox(
+		CachedWorld,
+		BoxCenter,
+		BoxExtent,
+		LocalParameters.SDFVolumeDebugColor,
+		false,  // bPersistentLines
+		-1.0f,  // LifeTime (negative = one frame)
+		0,      // DepthPriority
+		2.0f    // Thickness
+	);
+
+	// Optional: Draw corner markers for better visibility
+	const FColor CornerColor = FColor::Yellow;
+	const float MarkerSize = 5.0f;
+
+	// Draw small crosses at corners
+	TArray<FVector> Corners = {
+		FVector(CachedSDFVolumeMin.X, CachedSDFVolumeMin.Y, CachedSDFVolumeMin.Z),
+		FVector(CachedSDFVolumeMax.X, CachedSDFVolumeMin.Y, CachedSDFVolumeMin.Z),
+		FVector(CachedSDFVolumeMin.X, CachedSDFVolumeMax.Y, CachedSDFVolumeMin.Z),
+		FVector(CachedSDFVolumeMax.X, CachedSDFVolumeMax.Y, CachedSDFVolumeMin.Z),
+		FVector(CachedSDFVolumeMin.X, CachedSDFVolumeMin.Y, CachedSDFVolumeMax.Z),
+		FVector(CachedSDFVolumeMax.X, CachedSDFVolumeMin.Y, CachedSDFVolumeMax.Z),
+		FVector(CachedSDFVolumeMin.X, CachedSDFVolumeMax.Y, CachedSDFVolumeMax.Z),
+		FVector(CachedSDFVolumeMax.X, CachedSDFVolumeMax.Y, CachedSDFVolumeMax.Z)
+	};
+
+	for (const FVector& Corner : Corners)
+	{
+		DrawDebugPoint(CachedWorld, Corner, MarkerSize, CornerColor, false, -1.0f, 0);
+	}
 }

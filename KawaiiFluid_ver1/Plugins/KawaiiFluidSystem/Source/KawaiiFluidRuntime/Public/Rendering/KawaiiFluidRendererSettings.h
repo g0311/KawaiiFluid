@@ -148,9 +148,9 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidMetaballRendererSettings
 	// Ray Marching SDF Mode Parameters
 	//========================================
 
-	/** SDF smoothness for metaball blending (lower = smoother) */
+	/** SDF smoothness for metaball blending (higher = more stretchy/blobby) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching",
-		meta = (EditCondition = "bEnabled && PipelineType == EMetaballPipelineType::RayMarching", ClampMin = "1.0", ClampMax = "32.0"))
+		meta = (EditCondition = "bEnabled && PipelineType == EMetaballPipelineType::RayMarching", ClampMin = "1.0", ClampMax = "64.0"))
 	float SDFSmoothness = 12.0f;
 
 	/** Maximum ray marching steps */
@@ -211,6 +211,20 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidMetaballRendererSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|GBuffer",
 		meta = (EditCondition = "bEnabled && ShadingMode == EMetaballShadingMode::GBuffer", ClampMin = "0.0", ClampMax = "1.0"))
 	float SubsurfaceOpacity = 0.5f;
+
+	//========================================
+	// Debug Visualization
+	//========================================
+
+	/** Draw SDF Volume bounding box as debug lines */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug",
+		meta = (EditCondition = "bEnabled && PipelineType == EMetaballPipelineType::RayMarching && bUseSDFVolumeOptimization"))
+	bool bDebugDrawSDFVolume = false;
+
+	/** SDF Volume debug box color */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug",
+		meta = (EditCondition = "bEnabled && bDebugDrawSDFVolume"))
+	FColor SDFVolumeDebugColor = FColor::Green;
 };
 
 // Backwards compatibility alias

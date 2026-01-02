@@ -22,6 +22,7 @@ DECLARE_CYCLE_STAT(TEXT("Context WorldCollision"), STAT_ContextWorldCollision, S
 DECLARE_CYCLE_STAT(TEXT("Context FinalizePositions"), STAT_ContextFinalizePositions, STATGROUP_KawaiiFluidContext);
 DECLARE_CYCLE_STAT(TEXT("Context ApplyViscosity"), STAT_ContextApplyViscosity, STATGROUP_KawaiiFluidContext);
 DECLARE_CYCLE_STAT(TEXT("Context ApplyAdhesion"), STAT_ContextApplyAdhesion, STATGROUP_KawaiiFluidContext);
+DECLARE_CYCLE_STAT(TEXT("Context ApplyCohesion"), STAT_ContextApplyCohesion, STATGROUP_KawaiiFluidContext);
 
 UKawaiiFluidSimulationContext::UKawaiiFluidSimulationContext()
 {
@@ -197,6 +198,12 @@ void UKawaiiFluidSimulationContext::SimulateSubstep(
 	{
 		SCOPE_CYCLE_COUNTER(STAT_ContextApplyAdhesion);
 		ApplyAdhesion(Particles, Preset, Params.Colliders);
+	}
+
+	// 9. Apply cohesion (surface tension between particles)
+	{
+		SCOPE_CYCLE_COUNTER(STAT_ContextApplyCohesion);
+		ApplyCohesion(Particles, Preset);
 	}
 }
 
@@ -599,6 +606,20 @@ void UKawaiiFluidSimulationContext::ApplyAdhesion(
 			Preset->AdhesionStrength,
 			Preset->AdhesionRadius,
 			Preset->DetachThreshold
+		);
+	}
+}
+
+void UKawaiiFluidSimulationContext::ApplyCohesion(
+	TArray<FFluidParticle>& Particles,
+	const UKawaiiFluidPresetDataAsset* Preset)
+{
+	if (AdhesionSolver.IsValid() && Preset->CohesionStrength > 0.0f)
+	{
+		AdhesionSolver->ApplyCohesion(
+			Particles,
+			Preset->CohesionStrength,
+			Preset->SmoothingRadius
 		);
 	}
 }

@@ -74,10 +74,18 @@ public:
 	float ViscosityCoefficient = 0.5f;
 
 	//========================================
+	// Surface Tension Parameters
+	//========================================
+
+	/** Cohesion strength - surface tension between particles (0=dispersed, 1=tight blob like water droplet) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Surface Tension", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float CohesionStrength = 0.3f;
+
+	//========================================
 	// Adhesion Parameters
 	//========================================
 
-	/** Adhesion strength */
+	/** Adhesion strength - stickiness to surfaces (characters, walls) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Adhesion", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float AdhesionStrength = 0.5f;
 
