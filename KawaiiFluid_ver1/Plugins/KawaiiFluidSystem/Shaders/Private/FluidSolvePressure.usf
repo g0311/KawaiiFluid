@@ -13,6 +13,7 @@
 
 RWStructuredBuffer<FGPUFluidParticle> Particles;
 StructuredBuffer<uint> CellCounts;
+StructuredBuffer<uint> CellStartIndices;  // Prefix sum result (Multi-pass format)
 StructuredBuffer<uint> ParticleIndices;
 
 int ParticleCount;
@@ -66,8 +67,8 @@ void SolvePressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			{
 				int3 neighborCell = centerCell + int3(dx, dy, dz);
 				uint hash = HashCell(neighborCell);
-				uint count = min(CellCounts[hash], (uint)MAX_PARTICLES_PER_CELL);
-				uint startIdx = hash * MAX_PARTICLES_PER_CELL;
+				uint count = CellCounts[hash];
+				uint startIdx = CellStartIndices[hash];
 
 				for (uint i = 0; i < count; ++i)
 				{

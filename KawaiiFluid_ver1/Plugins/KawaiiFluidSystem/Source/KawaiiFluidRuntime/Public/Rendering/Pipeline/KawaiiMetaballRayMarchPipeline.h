@@ -97,6 +97,53 @@ private:
 	/** Process pending bounds readback from previous frame */
 	void ProcessPendingBoundsReadback();
 
+	//========================================
+	// PrepareParticleBuffer Sub-functions
+	//========================================
+
+	/**
+	 * Collect particle buffer from GPU simulator or CPU cache
+	 * @return true if particles collected successfully
+	 */
+	bool CollectParticleBuffers(
+		FRDGBuilder& GraphBuilder,
+		const TArray<UKawaiiFluidMetaballRenderer*>& Renderers,
+		FRDGBufferSRVRef& OutParticleBufferSRV,
+		int32& OutParticleCount,
+		float& OutAverageRadius,
+		TArray<FVector3f>& OutCPUPositions,
+		bool& bOutUsingGPUBuffer);
+
+	/** Build acceleration structure (bounds + SDF Volume or Spatial Hash) */
+	void BuildAccelerationStructure(
+		FRDGBuilder& GraphBuilder,
+		const FFluidRenderingParameters& RenderParams,
+		const TArray<UKawaiiFluidMetaballRenderer*>& Renderers,
+		FRDGBufferSRVRef ParticleBufferSRV,
+		int32 ParticleCount,
+		float AverageRadius,
+		const TArray<FVector3f>& CPUPositions,
+		bool bUsingGPUBuffer);
+
+	/** Build SDF 3D Volume texture */
+	void BuildSDFVolume(
+		FRDGBuilder& GraphBuilder,
+		const FFluidRenderingParameters& RenderParams,
+		const TArray<UKawaiiFluidMetaballRenderer*>& Renderers,
+		FRDGBufferSRVRef ParticleBufferSRV,
+		int32 ParticleCount,
+		float AverageRadius,
+		const FVector3f& BoundsMin,
+		const FVector3f& BoundsMax);
+
+	/** Build Spatial Hash acceleration structure */
+	void BuildSpatialHash(
+		FRDGBuilder& GraphBuilder,
+		FRDGBufferSRVRef ParticleBufferSRV,
+		int32 ParticleCount,
+		float AverageRadius,
+		float SDFSmoothness);
+
 	// Note: Shading methods are in KawaiiRayMarchShadingImpl.h/cpp
 	// This pipeline delegates to KawaiiRayMarchShading::* namespace functions
 };

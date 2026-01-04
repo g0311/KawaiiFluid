@@ -13,25 +13,30 @@
 #define SPATIAL_HASH_SIZE 65536  // 2^16 = 64K cells
 #endif
 
-// Maximum particles per cell (trade-off: memory vs accuracy)
-#ifndef MAX_PARTICLES_PER_CELL
-#define MAX_PARTICLES_PER_CELL 16
-#endif
-
 // Search radius multiplier (how many cells to search)
-// Increased to 4 for proper smooth blending with large SDFSmoothness values
+// CellSize >= InfluenceRadius 이면 1로 충분 (내 셀 + 인접 셀만 검색)
+// (2*1+1)³ = 27 셀 vs (2*8+1)³ = 4913 셀 → 180배 성능 향상
 #ifndef SPATIAL_HASH_SEARCH_RADIUS
-#define SPATIAL_HASH_SEARCH_RADIUS 4
+#define SPATIAL_HASH_SEARCH_RADIUS 1
 #endif
 
 //=============================================================================
-// Spatial Hash Data Structures
+// Spatial Hash Data Structures (Multi-pass version)
 //=============================================================================
-
-// Simplified structure for reliable atomic operations:
-// CellCounts[hash] = count (number of particles in this cell)
-// StartIndex is implicitly: hash * MAX_PARTICLES_PER_CELL
-// Particles stored in ParticleIndices[hash * MAX_PARTICLES_PER_CELL + slot]
+//
+// 버퍼 구조:
+//   CellCounts[HASH_SIZE]       : 셀별 파티클 개수
+//   CellStartIndices[HASH_SIZE] : 셀별 시작 인덱스 (Prefix Sum 결과)
+//   ParticleIndices[N]          : 셀 순서로 정렬된 파티클 ID
+//
+// 사용 예:
+//   셀 H의 파티클 순회:
+//     uint Start = CellStartIndices[H];
+//     uint Count = CellCounts[H];
+//     for (uint i = 0; i < Count; i++) {
+//         uint ParticleIdx = ParticleIndices[Start + i];
+//         ...
+//     }
 
 //=============================================================================
 // Hash Functions
@@ -89,11 +94,21 @@ uint MortonHash(int3 CellCoord)
 
 // Evaluate metaball SDF using spatial hash for acceleration
 // Instead of O(N) all particles, only checks O(k) nearby particles
+//
+// 버퍼 구조 (멀티패스):
+//   CellCounts[Hash]       : 해당 셀의 파티클 개수
+//   CellStartIndices[Hash] : 해당 셀의 시작 인덱스 (Prefix Sum 결과)
+//   ParticleIndices[N]     : 정렬된 파티클 ID 배열
+//   RenderParticles[N]     : FKawaiiRenderParticle (32 bytes) 버퍼
+//
+// 주의: FKawaiiRenderParticle은 KawaiiRenderParticle.ush에서 정의됨
+//       FluidSDFCommon.ush → KawaiiRenderParticle.ush include 체인 사용
 float EvaluateMetaballSDFWithHash(
     float3 p,
-    StructuredBuffer<float3> ParticlePositions,
-    StructuredBuffer<uint> CellCounts,          // count per cell (simplified from uint2)
-    StructuredBuffer<uint> ParticleIndices,     // Particle indices per cell
+    StructuredBuffer<FKawaiiRenderParticle> RenderParticles,  // FKawaiiRenderParticle (32 bytes)
+    StructuredBuffer<uint> CellCounts,          // 셀별 파티클 개수
+    StructuredBuffer<uint> CellStartIndices,    // 셀별 시작 인덱스 (Prefix Sum)
+    StructuredBuffer<uint> ParticleIndices,     // 정렬된 파티클 ID
     int ParticleCount,
     float ParticleRadius,
     float Smoothness,
@@ -102,10 +117,13 @@ float EvaluateMetaballSDFWithHash(
     if (ParticleCount <= 0)
         return 1e10;
 
-    // Determine search range in cells
-    float SearchRadius = ParticleRadius * 2.0 + Smoothness;
-    int CellRadius = int(ceil(SearchRadius / CellSize));
-    CellRadius = min(CellRadius, SPATIAL_HASH_SEARCH_RADIUS);
+    // CellSize 유효성 검사
+    if (CellSize <= 0.0)
+        return 1e10;
+
+    // CellSize >= InfluenceRadius 조건에서 CellRadius = 1로 충분
+    // 내 셀(0) + 인접 셀(±1) = 27셀만 검색
+    int CellRadius = SPATIAL_HASH_SEARCH_RADIUS;  // = 1
 
     // Get center cell
     int3 CenterCell = WorldToCell(p, CellSize);
@@ -124,19 +142,30 @@ float EvaluateMetaballSDFWithHash(
                 int3 NeighborCell = CenterCell + int3(dx, dy, dz);
                 uint Hash = HashCell(NeighborCell);
 
-                // Get cell count (startIndex is implicitly Hash * MAX_PARTICLES_PER_CELL)
-                uint Count = min(CellCounts[Hash], MAX_PARTICLES_PER_CELL);
-                uint StartIndex = Hash * MAX_PARTICLES_PER_CELL;
+                // 셀별 시작 인덱스와 개수 조회
+                uint StartIndex = CellStartIndices[Hash];
+                uint Count = CellCounts[Hash];
+
+                // Hash collision 시 모든 파티클을 검사할 수 없으므로
+                // 검사 파티클 수 제한 (성능 보호)
+                uint MaxCheck = min(Count, 256u);
 
                 // Process particles in this cell
-                for (uint i = 0; i < Count; ++i)
+                for (uint i = 0; i < MaxCheck; ++i)
                 {
                     uint ParticleIdx = ParticleIndices[StartIndex + i];
+
+                    // 인덱스 유효성 검사
                     if (ParticleIdx >= (uint)ParticleCount)
                         continue;
 
-                    float3 ParticlePos = ParticlePositions[ParticleIdx];
-                    float d = length(p - ParticlePos) - ParticleRadius;
+                    // FKawaiiRenderParticle에서 Position 추출
+                    float3 ParticlePos = RenderParticles[ParticleIdx].Position;
+
+                    // 파티클까지의 거리 계산
+                    float3 diff = p - ParticlePos;
+                    float distSq = dot(diff, diff);
+                    float d = sqrt(distSq) - ParticleRadius;
 
                     if (!bFoundAny)
                     {
@@ -164,8 +193,9 @@ float EvaluateMetaballSDFWithHash(
 float3 CalculateSDFNormal3TapWithHash(
     float3 p,
     float centerSDF,
-    StructuredBuffer<float3> ParticlePositions,
+    StructuredBuffer<FKawaiiRenderParticle> RenderParticles,  // FKawaiiRenderParticle (32 bytes)
     StructuredBuffer<uint> CellCounts,
+    StructuredBuffer<uint> CellStartIndices,
     StructuredBuffer<uint> ParticleIndices,
     int ParticleCount,
     float ParticleRadius,
@@ -175,9 +205,9 @@ float3 CalculateSDFNormal3TapWithHash(
     const float eps = 0.001;
 
     float3 n;
-    n.x = EvaluateMetaballSDFWithHash(p + float3(eps, 0, 0), ParticlePositions, CellCounts, ParticleIndices, ParticleCount, ParticleRadius, Smoothness, CellSize) - centerSDF;
-    n.y = EvaluateMetaballSDFWithHash(p + float3(0, eps, 0), ParticlePositions, CellCounts, ParticleIndices, ParticleCount, ParticleRadius, Smoothness, CellSize) - centerSDF;
-    n.z = EvaluateMetaballSDFWithHash(p + float3(0, 0, eps), ParticlePositions, CellCounts, ParticleIndices, ParticleCount, ParticleRadius, Smoothness, CellSize) - centerSDF;
+    n.x = EvaluateMetaballSDFWithHash(p + float3(eps, 0, 0), RenderParticles, CellCounts, CellStartIndices, ParticleIndices, ParticleCount, ParticleRadius, Smoothness, CellSize) - centerSDF;
+    n.y = EvaluateMetaballSDFWithHash(p + float3(0, eps, 0), RenderParticles, CellCounts, CellStartIndices, ParticleIndices, ParticleCount, ParticleRadius, Smoothness, CellSize) - centerSDF;
+    n.z = EvaluateMetaballSDFWithHash(p + float3(0, 0, eps), RenderParticles, CellCounts, CellStartIndices, ParticleIndices, ParticleCount, ParticleRadius, Smoothness, CellSize) - centerSDF;
 
     return normalize(n);
 }

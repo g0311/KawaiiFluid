@@ -6,6 +6,11 @@
 #include "/Engine/Private/DeferredShadingCommon.ush"
 #include "FluidSDFCommon.ush"
 
+// Spatial Hash 가속 (USE_SPATIAL_HASH=1 일 때 사용)
+#if USE_SPATIAL_HASH
+#include "FluidSpatialHash.ush"
+#endif
+
 //=============================================================================
 // Shader Parameters
 //=============================================================================
@@ -16,6 +21,11 @@ StructuredBuffer<FKawaiiRenderParticle> RenderParticles;
 int ParticleCount;
 float ParticleRadius;
 
+// Particle Bounding Box (GPU에서 계산된 바운딩 박스)
+// 카메라가 멀리 있을 때 빈 셀 건너뛰기 방지
+float3 ParticleBoundsMin;
+float3 ParticleBoundsMax;
+
 //=============================================================================
 // SDF Volume Parameters (used when USE_SDF_VOLUME is 1)
 //=============================================================================
@@ -25,6 +35,20 @@ SamplerState SDFVolumeSampler;
 float3 SDFVolumeMin;
 float3 SDFVolumeMax;
 int3 SDFVolumeResolution;
+#endif
+
+//=============================================================================
+// Spatial Hash Parameters (used when USE_SPATIAL_HASH is 1)
+// O(k) SDF 평가를 위한 공간 해시 가속 구조
+// RenderParticles 버퍼를 재사용 (FKawaiiRenderParticle, 32 bytes)
+//=============================================================================
+#if USE_SPATIAL_HASH
+// 주의: RenderParticles는 위에서 이미 선언됨 (파티클 모드에서 사용)
+// Spatial Hash 모드에서도 동일한 RenderParticles 버퍼 사용
+StructuredBuffer<uint> CellCounts;           // 셀별 파티클 개수
+StructuredBuffer<uint> CellStartIndices;     // 셀별 시작 인덱스 (Prefix Sum)
+StructuredBuffer<uint> ParticleIndices;      // 정렬된 파티클 인덱스
+float SpatialHashCellSize;                   // 셀 크기 (월드 유닛)
 #endif
 
 // Ray Marching Parameters
@@ -95,6 +119,29 @@ float ConvertDeviceZToLinearDepth(float DeviceZ)
 }
 
 //=============================================================================
+// Ray-Box Intersection (공통 함수)
+// 파티클 모드와 SDF Volume 모드 모두에서 사용
+//=============================================================================
+
+bool RayBoxIntersect(float3 ro, float3 rd, float3 boxMin, float3 boxMax, out float tMin, out float tMax)
+{
+	float3 invRd = 1.0 / rd;
+	float3 t0 = (boxMin - ro) * invRd;
+	float3 t1 = (boxMax - ro) * invRd;
+
+	float3 tNear = min(t0, t1);
+	float3 tFar = max(t0, t1);
+
+	tMin = max(max(tNear.x, tNear.y), tNear.z);
+	tMax = min(min(tFar.x, tFar.y), tFar.z);
+
+	// 카메라가 박스 내부에 있으면 tMin을 0으로 클램프
+	tMin = max(tMin, 0.0);
+
+	return tMax >= tMin && tMax > 0.0;
+}
+
+//=============================================================================
 // SDF Volume Sampling
 //=============================================================================
 
@@ -122,23 +169,6 @@ float3 CalculateSDFNormalFromVolume(float3 p)
 
 	return normalize(n);
 }
-
-bool RayBoxIntersect(float3 ro, float3 rd, float3 boxMin, float3 boxMax, out float tMin, out float tMax)
-{
-	float3 invRd = 1.0 / rd;
-	float3 t0 = (boxMin - ro) * invRd;
-	float3 t1 = (boxMax - ro) * invRd;
-
-	float3 tNear = min(t0, t1);
-	float3 tFar = max(t0, t1);
-
-	tMin = max(max(tNear.x, tNear.y), tNear.z);
-	tMax = min(min(tFar.x, tFar.y), tFar.z);
-
-	tMin = max(tMin, 0.0);
-
-	return tMax >= tMin && tMax > 0.0;
-}
 #endif
 
 //=============================================================================
@@ -155,18 +185,29 @@ FRayMarchResult RayMarchSDF(float3 ro, float3 rd, float maxDist)
 	result.Thickness = 0.0;
 	result.DeviceZ = 0.0;
 
+	float t = 0.0;
+	float marchMaxDist = maxDist;
+
 #if USE_SDF_VOLUME
+	// SDF Volume 모드: 볼륨 바운딩 박스 사용
 	float tBoxMin, tBoxMax;
 	if (!RayBoxIntersect(ro, rd, SDFVolumeMin, SDFVolumeMax, tBoxMin, tBoxMax))
 	{
 		return result;
 	}
-
-	float t = tBoxMin + 0.01;
-	float marchMaxDist = min(maxDist, tBoxMax);
+	t = tBoxMin + 0.01;
+	marchMaxDist = min(maxDist, tBoxMax);
 #else
-	float t = 0.0;
-	float marchMaxDist = maxDist;
+	// 파티클 모드: GPU에서 계산된 바운딩 박스 사용
+	// 카메라가 멀리 있을 때 빈 셀에서 1e10 반환하여 파티클 건너뛰는 것 방지
+	float tBoxMin, tBoxMax;
+	if (!RayBoxIntersect(ro, rd, ParticleBoundsMin, ParticleBoundsMax, tBoxMin, tBoxMax))
+	{
+		// 레이가 파티클 바운딩 박스와 교차하지 않음
+		return result;
+	}
+	t = tBoxMin + 0.001;  // 박스 진입점에서 시작
+	marchMaxDist = min(maxDist, tBoxMax);
 #endif
 
 	for (int i = 0; i < MaxRayMarchSteps && t < marchMaxDist; ++i)
@@ -175,6 +216,19 @@ FRayMarchResult RayMarchSDF(float3 ro, float3 rd, float maxDist)
 
 #if USE_SDF_VOLUME
 		float sdf = SampleSDFVolume(p);
+#elif USE_SPATIAL_HASH
+		// Accelerated path: Spatial Hash neighbor search (O(k))
+		// RenderParticles 버퍼 재사용 (FKawaiiRenderParticle, 32 bytes)
+		float sdf = EvaluateMetaballSDFWithHash(
+			p,
+			RenderParticles,  // FKawaiiRenderParticle 버퍼
+			CellCounts,
+			CellStartIndices,
+			ParticleIndices,
+			ParticleCount,
+			ParticleRadius,
+			SDFSmoothness,
+			SpatialHashCellSize);
 #else
 		float sdf = EvaluateMetaballSDFFromRenderParticles(p, RenderParticles, ParticleCount, ParticleRadius, SDFSmoothness);
 #endif
@@ -187,6 +241,19 @@ FRayMarchResult RayMarchSDF(float3 ro, float3 rd, float maxDist)
 
 #if USE_SDF_VOLUME
 			result.WorldNormal = CalculateSDFNormalFromVolume(p);
+#elif USE_SPATIAL_HASH
+			// Calculate normal using 3-tap with Spatial Hash acceleration
+			// RenderParticles 버퍼 재사용 (FKawaiiRenderParticle, 32 bytes)
+			result.WorldNormal = CalculateSDFNormal3TapWithHash(
+				p, sdf,
+				RenderParticles,  // FKawaiiRenderParticle 버퍼
+				CellCounts,
+				CellStartIndices,
+				ParticleIndices,
+				ParticleCount,
+				ParticleRadius,
+				SDFSmoothness,
+				SpatialHashCellSize);
 #else
 			result.WorldNormal = CalculateSDFNormal3TapFromRenderParticles(p, sdf, RenderParticles, ParticleCount, ParticleRadius, SDFSmoothness);
 #endif
@@ -203,7 +270,9 @@ FRayMarchResult RayMarchSDF(float3 ro, float3 rd, float maxDist)
 			break;
 		}
 
-		t += max(sdf * 0.95, 0.01);
+		// Clamp step size to avoid huge jumps when SDF returns 1e10 (no particle found)
+		float maxStep = ParticleRadius * 2.0;
+		t += clamp(sdf * 0.95, 0.01, maxStep);
 	}
 
 	return result;
@@ -252,8 +321,15 @@ FGBufferOutput MainPS(FGBufferVSToPS Input)
 	float2 UV = Input.UV;
 
 #if USE_SDF_VOLUME
-	// SDF Volume mode
+	// SDF Volume mode - no early exit check needed
+#elif USE_SPATIAL_HASH
+	// Spatial Hash mode - check particle count
+	if (ParticleCount <= 0)
+	{
+		discard;
+	}
 #else
+	// Direct mode - check particle count
 	if (ParticleCount <= 0)
 	{
 		discard;
@@ -263,6 +339,19 @@ FGBufferOutput MainPS(FGBufferVSToPS Input)
 	// Get camera ray
 	float3 RayOrigin, RayDirection;
 	GetCameraRay(UV, RayOrigin, RayDirection);
+
+	// ============ Early bounding box rejection ============
+	// 바운딩 박스와 교차하지 않는 픽셀은 scene depth 샘플링 전에 discard
+	// 성능 최적화: 불필요한 텍스처 샘플링 방지
+#if !USE_SDF_VOLUME
+	{
+		float tBoxMinEarly, tBoxMaxEarly;
+		if (!RayBoxIntersect(RayOrigin, RayDirection, ParticleBoundsMin, ParticleBoundsMax, tBoxMinEarly, tBoxMaxEarly))
+		{
+			discard;
+		}
+	}
+#endif
 
 	// Get scene depth for occlusion
 	float2 SceneUV = UV * (SceneViewRect / SceneTextureSize);

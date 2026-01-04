@@ -1,5 +1,7 @@
 ﻿// Copyright KawaiiFluid Team. All Rights Reserved.
 
+#pragma once
+
 // 쉐이더에서 사용할 파티클 구조체
 struct FKawaiiRenderParticle
 {

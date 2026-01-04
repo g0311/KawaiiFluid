@@ -510,6 +510,15 @@ FKawaiiFluidSimulationParams UKawaiiFluidSimulatorSubsystem::BuildMergedModuleSi
 				MergedChannel = Module->GetPreset()->CollisionChannel;
 			}
 		}
+
+		// GPU Simulation - check owner component
+		if (UKawaiiFluidComponent* OwnerComp = Cast<UKawaiiFluidComponent>(Module->GetOuter()))
+		{
+			if (OwnerComp->bUseGPUSimulation)
+			{
+				Params.bUseGPUSimulation = true;
+			}
+		}
 	}
 
 	Params.ExternalForce = TotalForce;

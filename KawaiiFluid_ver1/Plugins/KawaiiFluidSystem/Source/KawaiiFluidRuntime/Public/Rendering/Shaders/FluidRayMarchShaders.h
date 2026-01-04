@@ -23,6 +23,12 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidRayMarchParameters, )
 	SHADER_PARAMETER(float, ParticleRadius)
 
 	//========================================
+	// Particle Bounding Box (카메라가 멀리 있을 때 빈 셀 건너뛰기 방지)
+	//========================================
+	SHADER_PARAMETER(FVector3f, ParticleBoundsMin)
+	SHADER_PARAMETER(FVector3f, ParticleBoundsMax)
+
+	//========================================
 	// Ray Marching Parameters
 	//========================================
 	SHADER_PARAMETER(float, SDFSmoothness)
@@ -62,6 +68,16 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidRayMarchParameters, )
 	SHADER_PARAMETER(FVector3f, SDFVolumeMin)
 	SHADER_PARAMETER(FVector3f, SDFVolumeMax)
 	SHADER_PARAMETER(FIntVector, SDFVolumeResolution)
+
+	//========================================
+	// Spatial Hash (for O(k) SDF evaluation)
+	// USE_SPATIAL_HASH=1 일 때 사용됨
+	// 주의: RenderParticles 버퍼는 위에서 선언됨 (Particle Data 섹션)
+	//========================================
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellCounts)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellStartIndices)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleIndices)
+	SHADER_PARAMETER(float, SpatialHashCellSize)
 
 	//========================================
 	// SceneDepth UV Mapping
@@ -113,6 +129,11 @@ public:
 class FUseSDFVolumeDim : SHADER_PERMUTATION_BOOL("USE_SDF_VOLUME");
 
 /**
+ * @brief Shader permutation dimension for Spatial Hash acceleration
+ */
+class FUseSpatialHashDim : SHADER_PERMUTATION_BOOL("USE_SPATIAL_HASH");
+
+/**
  * @brief Pixel shader for Ray Marching SDF fluid rendering
  *
  * Performs ray marching through metaball SDF field to render
@@ -123,9 +144,10 @@ class FUseSDFVolumeDim : SHADER_PERMUTATION_BOOL("USE_SDF_VOLUME");
  * - Specular highlights
  * - Beer's Law absorption
  *
- * Supports two modes via USE_SDF_VOLUME permutation:
- * - USE_SDF_VOLUME=0: Original O(N) particle iteration (slower)
- * - USE_SDF_VOLUME=1: Optimized O(1) volume texture sampling (faster)
+ * Supports three SDF evaluation modes (mutually exclusive):
+ * - USE_SDF_VOLUME=1: O(1) volume texture sampling (fastest, requires bake)
+ * - USE_SPATIAL_HASH=1: O(k) spatial hash neighbor search (fast, realtime)
+ * - Both=0: O(N) particle iteration (slowest, fallback)
  */
 class FFluidRayMarchPS : public FGlobalShader
 {
@@ -134,10 +156,21 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FFluidRayMarchPS, FGlobalShader);
 
 	using FParameters = FFluidRayMarchParameters;
-	using FPermutationDomain = TShaderPermutationDomain<FUseSDFVolumeDim>;
+	using FPermutationDomain = TShaderPermutationDomain<FUseSDFVolumeDim, FUseSpatialHashDim>;
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{
+		FPermutationDomain PermutationVector(Parameters.PermutationId);
+
+		// SDF Volume과 Spatial Hash는 상호 배타적
+		// 둘 다 켜져 있으면 컴파일하지 않음
+		bool bUseSDF = PermutationVector.Get<FUseSDFVolumeDim>();
+		bool bUseHash = PermutationVector.Get<FUseSpatialHashDim>();
+		if (bUseSDF && bUseHash)
+		{
+			return false;
+		}
+
 		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
 	}
 
@@ -146,7 +179,6 @@ public:
 		FShaderCompilerEnvironment& OutEnvironment)
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		// Add any defines needed for the shader
 		OutEnvironment.SetDefine(TEXT("RAY_MARCH_SDF"), 1);
 	}
 };

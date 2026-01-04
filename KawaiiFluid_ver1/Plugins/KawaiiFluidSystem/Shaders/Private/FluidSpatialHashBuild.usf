@@ -1,71 +1,159 @@
 // Copyright KawaiiFluid Team. All Rights Reserved.
-// Compute Shader for building GPU Spatial Hash Grid
+// Compute Shaders for building GPU Spatial Hash Grid (Multi-pass version)
+//
+// 멀티패스 기반 Spatial Hash 빌드:
+//   Pass 1 (Count)      : 각 셀에 파티클 몇 개인지 카운트
+//   Pass 2 (Prefix Sum) : 셀별 시작 인덱스 계산 (누적합)
+//   Pass 3 (Scatter)    : 파티클을 정렬된 위치에 저장
+//
+// 버퍼 구조:
+//   ParticlePositions[N]       : 원본 파티클 위치 (입력, 변경 안함)
+//   CellCounts[65536]          : 셀별 파티클 개수
+//   CellStartIndices[65536]    : 셀별 시작 인덱스 (prefix sum 결과)
+//   ParticleIndices[N]         : 셀 순서로 정렬된 파티클 ID
 
 #include "/Engine/Public/Platform.ush"
 #include "/Engine/Private/Common.ush"
+
+//=============================================================================
+// Shader Permutation: USE_PHYSICS_PARTICLE
+// - true:  물리 시뮬레이션용 FGPUFluidParticle (64 bytes)
+// - false: 렌더링용 FKawaiiRenderParticle (32 bytes)
+//=============================================================================
+#if USE_PHYSICS_PARTICLE
+#include "FluidGPUPhysics.ush"  // FGPUFluidParticle 정의
+#else
+#include "../KawaiiRenderParticle.ush"  // FKawaiiRenderParticle 정의
+#endif
+
 #include "FluidSpatialHash.ush"
 
 //=============================================================================
 // Shader Parameters
+// 각 패스별로 필요한 파라미터만 바인딩됨 (C++ 쉐이더 클래스 참조)
 //=============================================================================
 
-// Input: Particle positions (shared by all passes)
-StructuredBuffer<float3> ParticlePositions;
+// 공통 파라미터
 int ParticleCount;
-float ParticleRadius;
 float CellSize;
 
-// Output: Hash grid data (shared by all passes)
-// Simplified: CellCounts stores only count, startIndex = Hash * MAX_PARTICLES_PER_CELL
-RWStructuredBuffer<uint> CellCounts;            // count per cell (simplified from uint2)
-RWStructuredBuffer<uint> ParticleIndices;       // Particle indices per cell
+//-----------------------------------------------------------------------------
+// Pass 0 (ClearCellCounts): CellCounts 초기화
+//-----------------------------------------------------------------------------
+// RWStructuredBuffer<uint> CellCounts;
 
-// Used by multi-pass build only (CountParticles, PrefixSum, Scatter, Finalize)
-// These are NOT used by BuildSpatialHashSimpleCS or ClearCellDataCS (Simple version)
-#if USE_MULTIPASS_BUILD
-RWStructuredBuffer<uint> CellCounters;          // Atomic counter per cell
-RWStructuredBuffer<uint> ParticleCellHashes;    // Hash for each particle (for sorting)
-RWStructuredBuffer<uint> PrefixSumBuffer;       // Prefix sum workspace
+//-----------------------------------------------------------------------------
+// Pass 1 (CountParticles): 파티클 카운트 및 해시 저장
+//-----------------------------------------------------------------------------
+#if USE_PHYSICS_PARTICLE
+StructuredBuffer<FGPUFluidParticle> PhysicsParticles;     // 입력: 물리 파티클 (64 bytes each)
+#else
+StructuredBuffer<FKawaiiRenderParticle> RenderParticles;  // 입력: 렌더 파티클 (32 bytes each)
 #endif
+RWStructuredBuffer<uint> CellCounts;         // 출력: 셀별 파티클 개수
+RWStructuredBuffer<uint> ParticleCellHashes; // 출력: 각 파티클의 셀 해시값
+
+//-----------------------------------------------------------------------------
+// Pass 2 (PrefixSum): 누적합 계산
+//-----------------------------------------------------------------------------
+// RWStructuredBuffer<uint> CellCounts;      // 입력 (위에서 선언)
+RWStructuredBuffer<uint> CellStartIndices;   // 출력: 셀별 시작 인덱스
+
+//-----------------------------------------------------------------------------
+// Pass 2.5 (ClearWriteOffsets): 쓰기 오프셋 초기화
+//-----------------------------------------------------------------------------
+RWStructuredBuffer<uint> CellWriteOffsets;   // 출력: 셀별 현재 쓰기 위치
+
+//-----------------------------------------------------------------------------
+// Pass 3 (ScatterParticles): 파티클을 정렬된 위치에 저장
+// SRV로 읽기 전용 버퍼 사용 (UAV와 분리)
+//-----------------------------------------------------------------------------
+StructuredBuffer<uint> ParticleCellHashesSRV;  // 입력: 각 파티클의 셀 해시값 (읽기 전용)
+StructuredBuffer<uint> CellStartIndicesSRV;    // 입력: 셀별 시작 인덱스 (읽기 전용)
+// RWStructuredBuffer<uint> CellWriteOffsets;  // 입력/출력 (위에서 선언)
+RWStructuredBuffer<uint> ParticleIndices;      // 출력: 정렬된 파티클 ID
 
 //=============================================================================
-// Multi-pass build (for large particle counts > 10K)
-// Requires USE_MULTIPASS_BUILD to be defined
-//=============================================================================
-
-#if USE_MULTIPASS_BUILD
-
-//=============================================================================
-// Pass 1: Count particles per cell
+// Pass 0: Clear Cell Counts
+// 셀 카운트 버퍼를 0으로 초기화
 //=============================================================================
 
 [numthreads(256, 1, 1)]
-void CountParticlesPerCellCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+void ClearCellCountsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+    uint CellIdx = DispatchThreadId.x;
+    if (CellIdx >= SPATIAL_HASH_SIZE)
+        return;
+
+    CellCounts[CellIdx] = 0;
+}
+
+//=============================================================================
+// Pass 1: Count Particles Per Cell
+// 각 파티클이 어느 셀에 속하는지 계산하고 카운트 증가
+//=============================================================================
+
+[numthreads(256, 1, 1)]
+void CountParticlesCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
     uint ParticleIdx = DispatchThreadId.x;
     if (ParticleIdx >= (uint)ParticleCount)
         return;
 
-    float3 Pos = ParticlePositions[ParticleIdx];
+    // Permutation에 따라 적절한 버퍼에서 위치 추출
+    // 물리용: PredictedPosition (SPH는 예측 위치 기준 이웃 탐색)
+    // 렌더용: Position
+#if USE_PHYSICS_PARTICLE
+    float3 Pos = PhysicsParticles[ParticleIdx].PredictedPosition;
+#else
+    float3 Pos = RenderParticles[ParticleIdx].Position;
+#endif
     int3 CellCoord = WorldToCell(Pos, CellSize);
     uint Hash = HashCell(CellCoord);
 
-    // Store hash for this particle
+    // 파티클의 해시값 저장 (Pass 3에서 사용)
     ParticleCellHashes[ParticleIdx] = Hash;
 
-    // Atomic increment cell counter
+    // 해당 셀의 카운트 atomic 증가
     uint OldCount;
-    InterlockedAdd(CellCounters[Hash], 1, OldCount);
+    InterlockedAdd(CellCounts[Hash], 1, OldCount);
 }
 
 //=============================================================================
-// Pass 2: Prefix sum to compute start indices
+// Pass 2: Prefix Sum (Exclusive Scan)
+// 셀별 시작 인덱스 계산
+//
+// 단순 순차 prefix sum (65536개 셀에 대해 GPU 단일 스레드 실행)
+// 더 효율적인 병렬 prefix sum은 추후 구현 가능
 //=============================================================================
 
-groupshared uint SharedData[512];
+[numthreads(1, 1, 1)]
+void PrefixSumCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+    uint RunningSum = 0;
+
+    for (uint i = 0; i < SPATIAL_HASH_SIZE; ++i)
+    {
+        // Exclusive prefix sum: 현재 셀의 시작 인덱스 = 이전까지의 누적합
+        CellStartIndices[i] = RunningSum;
+
+        // 다음 셀을 위해 현재 셀의 카운트 추가
+        RunningSum += CellCounts[i];
+    }
+}
+
+//=============================================================================
+// Pass 2-Alt: Parallel Prefix Sum using Blelloch Algorithm
+// 대용량 데이터를 위한 Work-Efficient 병렬 Prefix Sum
+//
+// 사용하려면 SPATIAL_HASH_SIZE에 맞게 여러 번 디스패치 필요
+// 현재는 단순 버전(PrefixSumCS) 사용
+//=============================================================================
+
+groupshared uint SharedPrefixData[512];
 
 [numthreads(256, 1, 1)]
-void PrefixSumCS(uint3 GroupId : SV_GroupID, uint3 GroupThreadId : SV_GroupThreadID)
+void PrefixSumParallelCS(uint3 GroupId : SV_GroupID, uint3 GroupThreadId : SV_GroupThreadID)
 {
     uint tid = GroupThreadId.x;
     uint blockStart = GroupId.x * 512;
@@ -74,12 +162,12 @@ void PrefixSumCS(uint3 GroupId : SV_GroupID, uint3 GroupThreadId : SV_GroupThrea
     uint idx1 = blockStart + tid * 2;
     uint idx2 = blockStart + tid * 2 + 1;
 
-    SharedData[tid * 2] = (idx1 < SPATIAL_HASH_SIZE) ? CellCounters[idx1] : 0;
-    SharedData[tid * 2 + 1] = (idx2 < SPATIAL_HASH_SIZE) ? CellCounters[idx2] : 0;
+    SharedPrefixData[tid * 2] = (idx1 < SPATIAL_HASH_SIZE) ? CellCounts[idx1] : 0;
+    SharedPrefixData[tid * 2 + 1] = (idx2 < SPATIAL_HASH_SIZE) ? CellCounts[idx2] : 0;
 
     GroupMemoryBarrierWithGroupSync();
 
-    // Up-sweep (reduce)
+    // Up-sweep (reduce phase)
     uint offset = 1;
     for (uint d = 256; d > 0; d >>= 1)
     {
@@ -87,18 +175,18 @@ void PrefixSumCS(uint3 GroupId : SV_GroupID, uint3 GroupThreadId : SV_GroupThrea
         {
             uint ai = offset * (2 * tid + 1) - 1;
             uint bi = offset * (2 * tid + 2) - 1;
-            SharedData[bi] += SharedData[ai];
+            SharedPrefixData[bi] += SharedPrefixData[ai];
         }
         offset *= 2;
         GroupMemoryBarrierWithGroupSync();
     }
 
-    // Clear last element
+    // Clear last element for exclusive scan
     if (tid == 0)
-        SharedData[511] = 0;
+        SharedPrefixData[511] = 0;
     GroupMemoryBarrierWithGroupSync();
 
-    // Down-sweep
+    // Down-sweep phase
     for (uint d2 = 1; d2 < 512; d2 *= 2)
     {
         offset >>= 1;
@@ -106,22 +194,39 @@ void PrefixSumCS(uint3 GroupId : SV_GroupID, uint3 GroupThreadId : SV_GroupThrea
         {
             uint ai = offset * (2 * tid + 1) - 1;
             uint bi = offset * (2 * tid + 2) - 1;
-            uint t = SharedData[ai];
-            SharedData[ai] = SharedData[bi];
-            SharedData[bi] += t;
+            uint t = SharedPrefixData[ai];
+            SharedPrefixData[ai] = SharedPrefixData[bi];
+            SharedPrefixData[bi] += t;
         }
         GroupMemoryBarrierWithGroupSync();
     }
 
     // Store results
     if (idx1 < SPATIAL_HASH_SIZE)
-        PrefixSumBuffer[idx1] = SharedData[tid * 2];
+        CellStartIndices[idx1] = SharedPrefixData[tid * 2];
     if (idx2 < SPATIAL_HASH_SIZE)
-        PrefixSumBuffer[idx2] = SharedData[tid * 2 + 1];
+        CellStartIndices[idx2] = SharedPrefixData[tid * 2 + 1];
 }
 
 //=============================================================================
-// Pass 3: Scatter particles into cells
+// Pass 2.5: Clear Write Offsets (Scatter 준비)
+// CellWriteOffsets를 0으로 초기화
+//=============================================================================
+
+[numthreads(256, 1, 1)]
+void ClearWriteOffsetsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+    uint CellIdx = DispatchThreadId.x;
+    if (CellIdx >= SPATIAL_HASH_SIZE)
+        return;
+
+    CellWriteOffsets[CellIdx] = 0;
+}
+
+//=============================================================================
+// Pass 3: Scatter Particles
+// 각 파티클을 정렬된 배열의 올바른 위치에 저장
+// 주의: SRV 버퍼(ParticleCellHashesSRV, CellStartIndicesSRV) 사용
 //=============================================================================
 
 [numthreads(256, 1, 1)]
@@ -131,102 +236,68 @@ void ScatterParticlesCS(uint3 DispatchThreadId : SV_DispatchThreadID)
     if (ParticleIdx >= (uint)ParticleCount)
         return;
 
-    uint Hash = ParticleCellHashes[ParticleIdx];
-    uint StartIndex = PrefixSumBuffer[Hash];
+    // Pass 1에서 저장한 해시값 조회 (SRV 사용)
+    uint Hash = ParticleCellHashesSRV[ParticleIdx];
 
-    // Atomic increment to get position within cell
-    uint LocalIdx;
-    InterlockedAdd(CellData[Hash].y, 1, LocalIdx);
+    // 이 셀의 시작 인덱스 (SRV 사용)
+    uint StartIndex = CellStartIndicesSRV[Hash];
 
-    // Clamp to max particles per cell
-    if (LocalIdx < MAX_PARTICLES_PER_CELL)
+    // 셀 내 쓰기 위치를 atomic으로 얻음
+    uint LocalOffset;
+    InterlockedAdd(CellWriteOffsets[Hash], 1, LocalOffset);
+
+    // 정렬된 배열에 파티클 인덱스 저장
+    ParticleIndices[StartIndex + LocalOffset] = ParticleIdx;
+}
+
+//=============================================================================
+// Pass 4: Sort Particles Within Cells
+// 셀 내 파티클을 인덱스 순서로 정렬 (떨림 방지)
+// 각 셀당 하나의 스레드가 처리
+//=============================================================================
+
+StructuredBuffer<uint> CellCountsSRV;        // 입력: 셀별 파티클 개수
+// CellStartIndicesSRV는 위에서 이미 선언됨
+RWStructuredBuffer<uint> ParticleIndicesRW;  // 입출력: 정렬할 파티클 인덱스
+
+[numthreads(256, 1, 1)]
+void SortCellParticlesCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+    uint CellIdx = DispatchThreadId.x;
+    if (CellIdx >= SPATIAL_HASH_SIZE)
+        return;
+
+    uint Count = CellCountsSRV[CellIdx];
+    if (Count <= 1)
+        return;  // 정렬 필요 없음
+
+    uint StartIndex = CellStartIndicesSRV[CellIdx];
+
+    // 셀당 파티클 수 제한 (너무 많으면 성능 저하)
+    uint SortCount = min(Count, 64u);
+
+    // 간단한 Selection Sort (파티클 수 적으면 충분히 빠름)
+    for (uint i = 0; i < SortCount - 1; ++i)
     {
-        ParticleIndices[StartIndex + LocalIdx] = ParticleIdx;
+        uint minIdx = i;
+        uint minVal = ParticleIndicesRW[StartIndex + i];
+
+        for (uint j = i + 1; j < SortCount; ++j)
+        {
+            uint val = ParticleIndicesRW[StartIndex + j];
+            if (val < minVal)
+            {
+                minVal = val;
+                minIdx = j;
+            }
+        }
+
+        // Swap
+        if (minIdx != i)
+        {
+            uint tmp = ParticleIndicesRW[StartIndex + i];
+            ParticleIndicesRW[StartIndex + i] = ParticleIndicesRW[StartIndex + minIdx];
+            ParticleIndicesRW[StartIndex + minIdx] = tmp;
+        }
     }
 }
-
-//=============================================================================
-// Pass 4: Finalize cell data (set start indices)
-//=============================================================================
-
-[numthreads(256, 1, 1)]
-void FinalizeCellDataCS(uint3 DispatchThreadId : SV_DispatchThreadID)
-{
-    uint CellIdx = DispatchThreadId.x;
-    if (CellIdx >= SPATIAL_HASH_SIZE)
-        return;
-
-    uint StartIndex = PrefixSumBuffer[CellIdx];
-    uint Count = CellData[CellIdx].y;
-
-    // Clamp count to max
-    Count = min(Count, MAX_PARTICLES_PER_CELL);
-
-    CellData[CellIdx] = uint2(StartIndex, Count);
-}
-
-#endif // USE_MULTIPASS_BUILD
-
-//=============================================================================
-// Combined Pass: Simple O(N) build for small particle counts
-// More efficient than multi-pass for < 10K particles
-// This is the DEFAULT method used by FBuildSpatialHashSimpleCS
-//=============================================================================
-
-[numthreads(256, 1, 1)]
-void BuildSpatialHashSimpleCS(uint3 DispatchThreadId : SV_DispatchThreadID)
-{
-    uint ParticleIdx = DispatchThreadId.x;
-    if (ParticleIdx >= (uint)ParticleCount)
-        return;
-
-    float3 Pos = ParticlePositions[ParticleIdx];
-    int3 CellCoord = WorldToCell(Pos, CellSize);
-    uint Hash = HashCell(CellCoord);
-
-    // Atomic add to get slot in cell (now on simple uint, not uint2.y)
-    uint Slot;
-    InterlockedAdd(CellCounts[Hash], 1, Slot);
-
-    // Store particle index if within limit
-    if (Slot < MAX_PARTICLES_PER_CELL)
-    {
-        // Use hash * MAX_PARTICLES_PER_CELL as base offset (fixed layout)
-        uint BaseOffset = Hash * MAX_PARTICLES_PER_CELL;
-        ParticleIndices[BaseOffset + Slot] = ParticleIdx;
-    }
-}
-
-//=============================================================================
-// Clear buffers (Simple version)
-// Used by BuildSpatialHashSimpleCS method
-//=============================================================================
-
-[numthreads(256, 1, 1)]
-void ClearCellDataCS(uint3 DispatchThreadId : SV_DispatchThreadID)
-{
-    uint CellIdx = DispatchThreadId.x;
-    if (CellIdx >= SPATIAL_HASH_SIZE)
-        return;
-
-    // Initialize CellCounts to 0 (startIndex is implicit: CellIdx * MAX_PARTICLES_PER_CELL)
-    CellCounts[CellIdx] = 0;
-}
-
-//=============================================================================
-// Clear buffers (Multi-pass version - with CellCounters)
-// Used by multi-pass build method
-//=============================================================================
-
-#if USE_MULTIPASS_BUILD
-[numthreads(256, 1, 1)]
-void ClearCellDataMultipassCS(uint3 DispatchThreadId : SV_DispatchThreadID)
-{
-    uint CellIdx = DispatchThreadId.x;
-    if (CellIdx >= SPATIAL_HASH_SIZE)
-        return;
-
-    CellData[CellIdx] = uint2(CellIdx * MAX_PARTICLES_PER_CELL, 0);
-    CellCounters[CellIdx] = 0;
-}
-#endif

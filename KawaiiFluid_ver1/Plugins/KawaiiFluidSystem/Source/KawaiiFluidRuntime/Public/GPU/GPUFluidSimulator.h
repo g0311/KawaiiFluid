@@ -272,6 +272,7 @@ private:
 		FRDGBuilder& GraphBuilder,
 		FRDGBufferUAVRef ParticlesUAV,
 		FRDGBufferSRVRef CellCountsSRV,
+		FRDGBufferSRVRef CellStartIndicesSRV,
 		FRDGBufferSRVRef ParticleIndicesSRV,
 		const FGPUFluidSimulationParams& Params);
 
@@ -280,6 +281,7 @@ private:
 		FRDGBuilder& GraphBuilder,
 		FRDGBufferUAVRef ParticlesUAV,
 		FRDGBufferSRVRef CellCountsSRV,
+		FRDGBufferSRVRef CellStartIndicesSRV,
 		FRDGBufferSRVRef ParticleIndicesSRV,
 		const FGPUFluidSimulationParams& Params);
 
@@ -288,6 +290,7 @@ private:
 		FRDGBuilder& GraphBuilder,
 		FRDGBufferUAVRef ParticlesUAV,
 		FRDGBufferSRVRef CellCountsSRV,
+		FRDGBufferSRVRef CellStartIndicesSRV,
 		FRDGBufferSRVRef ParticleIndicesSRV,
 		const FGPUFluidSimulationParams& Params);
 

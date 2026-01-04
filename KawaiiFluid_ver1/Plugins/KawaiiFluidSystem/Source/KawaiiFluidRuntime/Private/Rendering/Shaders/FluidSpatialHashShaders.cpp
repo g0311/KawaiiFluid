@@ -10,254 +10,259 @@
 // Shader Implementations
 //=============================================================================
 
-IMPLEMENT_GLOBAL_SHADER(FClearCellDataCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "ClearCellDataCS", SF_Compute);
-IMPLEMENT_GLOBAL_SHADER(FBuildSpatialHashSimpleCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "BuildSpatialHashSimpleCS", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FClearCellCountsCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "ClearCellCountsCS", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FCountParticlesCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "CountParticlesCS", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FPrefixSumCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "PrefixSumCS", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FClearWriteOffsetsCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "ClearWriteOffsetsCS", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FScatterParticlesCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "ScatterParticlesCS", SF_Compute);
 
 //=============================================================================
 // FSpatialHashBuilder Implementation
 //=============================================================================
 
-FSpatialHashGPUResources FSpatialHashBuilder::CreateResources(
+void FSpatialHashBuilder::CreateBuffers(
     FRDGBuilder& GraphBuilder,
-    float CellSize)
-{
-    FSpatialHashGPUResources Resources;
-    Resources.CellSize = CellSize;
-
-    // Cell counts buffer: uint per cell (count only, startIndex is implicit)
-    {
-        FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), SPATIAL_HASH_SIZE);
-        Desc.Usage = EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::ShaderResource;
-        Resources.CellCountsBuffer = GraphBuilder.CreateBuffer(Desc, TEXT("SpatialHash.CellCounts"));
-        Resources.CellCountsSRV = GraphBuilder.CreateSRV(Resources.CellCountsBuffer);
-        Resources.CellCountsUAV = GraphBuilder.CreateUAV(Resources.CellCountsBuffer);
-    }
-
-    // Particle indices buffer: fixed layout (HASH_SIZE * MAX_PER_CELL)
-    {
-        uint32 TotalSlots = SPATIAL_HASH_SIZE * MAX_PARTICLES_PER_CELL;
-        FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), TotalSlots);
-        Desc.Usage = EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::ShaderResource;
-        Resources.ParticleIndicesBuffer = GraphBuilder.CreateBuffer(Desc, TEXT("SpatialHash.ParticleIndices"));
-        Resources.ParticleIndicesSRV = GraphBuilder.CreateSRV(Resources.ParticleIndicesBuffer);
-        Resources.ParticleIndicesUAV = GraphBuilder.CreateUAV(Resources.ParticleIndicesBuffer);
-    }
-
-    return Resources;
-}
-
-void FSpatialHashBuilder::ClearBuffers(
-    FRDGBuilder& GraphBuilder,
-    FSpatialHashGPUResources& Resources)
-{
-    FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
-    if (!ShaderMap)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("FSpatialHashBuilder::ClearBuffers - ShaderMap is null"));
-        return;
-    }
-
-    TShaderMapRef<FClearCellDataCS> ComputeShader(ShaderMap);
-    if (!ComputeShader.IsValid())
-    {
-        UE_LOG(LogTemp, Warning, TEXT("FSpatialHashBuilder::ClearBuffers - FClearCellDataCS shader is not valid"));
-        return;
-    }
-
-    FClearCellDataCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FClearCellDataCS::FParameters>();
-    PassParameters->CellCounts = Resources.CellCountsUAV;
-
-    uint32 NumGroups = FMath::DivideAndRoundUp(SPATIAL_HASH_SIZE, SPATIAL_HASH_THREAD_GROUP_SIZE);
-
-    GraphBuilder.AddPass(
-        RDG_EVENT_NAME("SpatialHash::Clear"),
-        PassParameters,
-        ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,
-        [ComputeShader, PassParameters, NumGroups](FRHIComputeCommandList& RHICmdList)
-        {
-            FComputeShaderUtils::Dispatch(RHICmdList, ComputeShader, *PassParameters, FIntVector(NumGroups, 1, 1));
-        });
-}
-
-bool FSpatialHashBuilder::BuildHash(
-    FRDGBuilder& GraphBuilder,
-    FRDGBufferSRVRef ParticlePositionsSRV,
     int32 ParticleCount,
-    float ParticleRadius,
-    FSpatialHashGPUResources& Resources)
-{
-    // WARNING: Resources must already be created. If this function fails,
-    // the caller is responsible for handling orphan buffers.
-    // Use CreateAndBuildHash() for safe atomic operation.
-
-    if (!Resources.IsValid())
-    {
-        UE_LOG(LogTemp, Warning, TEXT("FSpatialHashBuilder::BuildHash - Resources not valid"));
-        return false;
-    }
-
-    if (ParticleCount <= 0 || !ParticlePositionsSRV)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("FSpatialHashBuilder::BuildHash - Invalid inputs (ParticleCount: %d)"), ParticleCount);
-        return false;
-    }
-
-    FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
-    if (!ShaderMap)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("FSpatialHashBuilder::BuildHash - ShaderMap is null"));
-        return false;
-    }
-
-    TShaderMapRef<FBuildSpatialHashSimpleCS> BuildShader(ShaderMap);
-    TShaderMapRef<FClearCellDataCS> ClearShader(ShaderMap);
-
-    if (!BuildShader.IsValid() || !ClearShader.IsValid())
-    {
-        UE_LOG(LogTemp, Warning, TEXT("FSpatialHashBuilder::BuildHash - Shaders not valid"));
-        return false;
-    }
-
-    RDG_EVENT_SCOPE(GraphBuilder, "SpatialHash::Build (Particles: %d)", ParticleCount);
-
-    // Step 1: Clear buffers (CellCounts only)
-    {
-        FClearCellDataCS::FParameters* ClearParams = GraphBuilder.AllocParameters<FClearCellDataCS::FParameters>();
-        ClearParams->CellCounts = Resources.CellCountsUAV;
-
-        uint32 NumGroups = FMath::DivideAndRoundUp(SPATIAL_HASH_SIZE, SPATIAL_HASH_THREAD_GROUP_SIZE);
-
-        GraphBuilder.AddPass(
-            RDG_EVENT_NAME("SpatialHash::Clear"),
-            ClearParams,
-            ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,
-            [ClearShader, ClearParams, NumGroups](FRHIComputeCommandList& RHICmdList)
-            {
-                FComputeShaderUtils::Dispatch(RHICmdList, ClearShader, *ClearParams, FIntVector(NumGroups, 1, 1));
-            });
-    }
-
-    // Step 2: Build hash
-    {
-        FBuildSpatialHashSimpleCS::FParameters* PassParameters =
-            GraphBuilder.AllocParameters<FBuildSpatialHashSimpleCS::FParameters>();
-
-        PassParameters->ParticlePositions = ParticlePositionsSRV;
-        PassParameters->ParticleCount = ParticleCount;
-        PassParameters->ParticleRadius = ParticleRadius;
-        PassParameters->CellSize = Resources.CellSize;
-        PassParameters->CellCounts = Resources.CellCountsUAV;
-        PassParameters->ParticleIndices = Resources.ParticleIndicesUAV;
-
-        uint32 NumGroups = FMath::DivideAndRoundUp((uint32)ParticleCount, SPATIAL_HASH_THREAD_GROUP_SIZE);
-
-        GraphBuilder.AddPass(
-            RDG_EVENT_NAME("SpatialHash::BuildSimple"),
-            PassParameters,
-            ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,
-            [BuildShader, PassParameters, NumGroups](FRHIComputeCommandList& RHICmdList)
-            {
-                FComputeShaderUtils::Dispatch(RHICmdList, BuildShader, *PassParameters, FIntVector(NumGroups, 1, 1));
-            });
-    }
-
-    return true;
-}
-
-bool FSpatialHashBuilder::CreateAndBuildHash(
-    FRDGBuilder& GraphBuilder,
-    FRDGBufferSRVRef ParticlePositionsSRV,
-    int32 ParticleCount,
-    float ParticleRadius,
     float CellSize,
     FSpatialHashGPUResources& OutResources)
 {
-    OutResources = FSpatialHashGPUResources();
-
-    if (ParticleCount <= 0 || !ParticlePositionsSRV)
-    {
-        return false;
-    }
-
-    if (CellSize <= 0.0f)
-    {
-        return false;
-    }
-
-    FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
-    if (!ShaderMap)
-    {
-        return false;
-    }
-
-    TShaderMapRef<FBuildSpatialHashSimpleCS> BuildShader(ShaderMap);
-    if (!BuildShader.IsValid())
-    {
-        UE_LOG(LogTemp, Warning, TEXT("CreateAndBuildHash - BuildShader not valid"));
-        return false;
-    }
-
     OutResources.CellSize = CellSize;
+    OutResources.ParticleCount = ParticleCount;
 
-    // Create CellCounts buffer with initial data (implicit upload producer)
-    // Each cell: uint count = 0 (startIndex is implicit: cellIdx * MAX_PER_CELL)
+    // CellCounts 버퍼: 셀별 파티클 개수
     {
-        TArray<uint32> InitialCellCounts;
-        InitialCellCounts.SetNumZeroed(SPATIAL_HASH_SIZE);  // All counts start at 0
-
-        OutResources.CellCountsBuffer = CreateStructuredBuffer(
-            GraphBuilder,
-            TEXT("SpatialHash.CellCounts"),
-            sizeof(uint32),
-            SPATIAL_HASH_SIZE,
-            InitialCellCounts.GetData(),
-            InitialCellCounts.Num() * sizeof(uint32));
-
+        FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), SPATIAL_HASH_SIZE);
+        Desc.Usage = EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::ShaderResource | EBufferUsageFlags::StructuredBuffer;
+        OutResources.CellCountsBuffer = GraphBuilder.CreateBuffer(Desc, TEXT("SpatialHash.CellCounts"));
         OutResources.CellCountsSRV = GraphBuilder.CreateSRV(OutResources.CellCountsBuffer);
         OutResources.CellCountsUAV = GraphBuilder.CreateUAV(OutResources.CellCountsBuffer);
     }
 
-    // Create ParticleIndices buffer with zero initial data (implicit upload producer)
+    // CellStartIndices 버퍼: 셀별 시작 인덱스 (Prefix Sum 결과)
     {
-        uint32 TotalSlots = SPATIAL_HASH_SIZE * MAX_PARTICLES_PER_CELL;
-        TArray<uint32> InitialIndices;
-        InitialIndices.SetNumZeroed(TotalSlots);
+        FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), SPATIAL_HASH_SIZE);
+        Desc.Usage = EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::ShaderResource | EBufferUsageFlags::StructuredBuffer;
+        OutResources.CellStartIndicesBuffer = GraphBuilder.CreateBuffer(Desc, TEXT("SpatialHash.CellStartIndices"));
+        OutResources.CellStartIndicesSRV = GraphBuilder.CreateSRV(OutResources.CellStartIndicesBuffer);
+        OutResources.CellStartIndicesUAV = GraphBuilder.CreateUAV(OutResources.CellStartIndicesBuffer);
+    }
 
-        OutResources.ParticleIndicesBuffer = CreateStructuredBuffer(
-            GraphBuilder,
-            TEXT("SpatialHash.ParticleIndices"),
-            sizeof(uint32),
-            TotalSlots,
-            InitialIndices.GetData(),
-            InitialIndices.Num() * sizeof(uint32));
-
+    // ParticleIndices 버퍼: 정렬된 파티클 ID
+    {
+        FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), FMath::Max(ParticleCount, 1));
+        Desc.Usage = EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::ShaderResource | EBufferUsageFlags::StructuredBuffer;
+        OutResources.ParticleIndicesBuffer = GraphBuilder.CreateBuffer(Desc, TEXT("SpatialHash.ParticleIndices"));
         OutResources.ParticleIndicesSRV = GraphBuilder.CreateSRV(OutResources.ParticleIndicesBuffer);
         OutResources.ParticleIndicesUAV = GraphBuilder.CreateUAV(OutResources.ParticleIndicesBuffer);
     }
+}
 
-    // Build pass - writes particle indices into the hash grid
+bool FSpatialHashBuilder::BuildSpatialHash(
+    FRDGBuilder& GraphBuilder,
+    FRDGBufferSRVRef RenderParticlesSRV,
+    int32 ParticleCount,
+    float CellSize,
+    FSpatialHashGPUResources& OutResources)
+{
+    // 렌더링용: USE_PHYSICS_PARTICLE = false
+    return BuildSpatialHashInternal(GraphBuilder, RenderParticlesSRV, ParticleCount, CellSize, false, OutResources);
+}
+
+bool FSpatialHashBuilder::BuildSpatialHashForPhysics(
+    FRDGBuilder& GraphBuilder,
+    FRDGBufferSRVRef PhysicsParticlesSRV,
+    int32 ParticleCount,
+    float CellSize,
+    FSpatialHashGPUResources& OutResources)
+{
+    // 물리용: USE_PHYSICS_PARTICLE = true
+    return BuildSpatialHashInternal(GraphBuilder, PhysicsParticlesSRV, ParticleCount, CellSize, true, OutResources);
+}
+
+bool FSpatialHashBuilder::BuildSpatialHashInternal(
+    FRDGBuilder& GraphBuilder,
+    FRDGBufferSRVRef ParticlesSRV,
+    int32 ParticleCount,
+    float CellSize,
+    bool bUsePhysicsParticle,
+    FSpatialHashGPUResources& OutResources)
+{
+    // 입력 유효성 검사
+    if (ParticleCount <= 0 || !ParticlesSRV || CellSize <= 0.0f)
     {
-        FBuildSpatialHashSimpleCS::FParameters* PassParameters =
-            GraphBuilder.AllocParameters<FBuildSpatialHashSimpleCS::FParameters>();
-
-        PassParameters->ParticlePositions = ParticlePositionsSRV;
-        PassParameters->ParticleCount = ParticleCount;
-        PassParameters->ParticleRadius = ParticleRadius;
-        PassParameters->CellSize = CellSize;
-        PassParameters->CellCounts = OutResources.CellCountsUAV;
-        PassParameters->ParticleIndices = OutResources.ParticleIndicesUAV;
-
-        uint32 NumGroups = FMath::DivideAndRoundUp((uint32)ParticleCount, SPATIAL_HASH_THREAD_GROUP_SIZE);
-
-        FComputeShaderUtils::AddPass(
-            GraphBuilder,
-            RDG_EVENT_NAME("SpatialHash::Build"),
-            BuildShader,
-            PassParameters,
-            FIntVector(NumGroups, 1, 1));
+        OutResources = FSpatialHashGPUResources();
+        return false;
     }
 
-    //UE_LOG(LogTemp, Log, TEXT("CreateAndBuildHash - Success (Particles: %d, CellSize: %.2f)"), ParticleCount, CellSize);
+    // 쉐이더 맵 조회
+    FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
+    if (!ShaderMap)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("FSpatialHashBuilder::BuildSpatialHash - ShaderMap is null"));
+        return false;
+    }
+
+    // 쉐이더 Permutation 설정
+    FCountParticlesCS::FPermutationDomain CountPermutation;
+    CountPermutation.Set<FUsePhysicsParticleDim>(bUsePhysicsParticle);
+
+    UE_LOG(LogTemp, Warning, TEXT("FSpatialHashBuilder: bUsePhysicsParticle=%d, ParticleCount=%d, CellSize=%.2f"),
+        bUsePhysicsParticle ? 1 : 0, ParticleCount, CellSize);
+
+    // 쉐이더 유효성 검사
+    TShaderMapRef<FClearCellCountsCS> ClearCellCountsShader(ShaderMap);
+    TShaderMapRef<FCountParticlesCS> CountParticlesShader(ShaderMap, CountPermutation);
+    TShaderMapRef<FPrefixSumCS> PrefixSumShader(ShaderMap);
+    TShaderMapRef<FClearWriteOffsetsCS> ClearWriteOffsetsShader(ShaderMap);
+    TShaderMapRef<FScatterParticlesCS> ScatterParticlesShader(ShaderMap);
+
+    if (!ClearCellCountsShader.IsValid() || !CountParticlesShader.IsValid() ||
+        !PrefixSumShader.IsValid() || !ClearWriteOffsetsShader.IsValid() ||
+        !ScatterParticlesShader.IsValid())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("FSpatialHashBuilder::BuildSpatialHash - One or more shaders not valid"));
+        return false;
+    }
+
+    RDG_EVENT_SCOPE(GraphBuilder, "SpatialHash::Build (Particles: %d, Physics: %d)", ParticleCount, bUsePhysicsParticle ? 1 : 0);
+
+    // 버퍼 생성
+    CreateBuffers(GraphBuilder, ParticleCount, CellSize, OutResources);
+
+    // 임시 버퍼: ParticleCellHashes (각 파티클의 셀 해시)
+    FRDGBufferRef ParticleCellHashesBuffer;
+    FRDGBufferSRVRef ParticleCellHashesSRV;
+    FRDGBufferUAVRef ParticleCellHashesUAV;
+    {
+        FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), ParticleCount);
+        Desc.Usage = EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::ShaderResource | EBufferUsageFlags::StructuredBuffer;
+        ParticleCellHashesBuffer = GraphBuilder.CreateBuffer(Desc, TEXT("SpatialHash.ParticleCellHashes"));
+        ParticleCellHashesSRV = GraphBuilder.CreateSRV(ParticleCellHashesBuffer);
+        ParticleCellHashesUAV = GraphBuilder.CreateUAV(ParticleCellHashesBuffer);
+    }
+
+    // 임시 버퍼: CellWriteOffsets (Scatter용 atomic 카운터)
+    FRDGBufferRef CellWriteOffsetsBuffer;
+    FRDGBufferUAVRef CellWriteOffsetsUAV;
+    {
+        FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), SPATIAL_HASH_SIZE);
+        Desc.Usage = EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::StructuredBuffer;
+        CellWriteOffsetsBuffer = GraphBuilder.CreateBuffer(Desc, TEXT("SpatialHash.CellWriteOffsets"));
+        CellWriteOffsetsUAV = GraphBuilder.CreateUAV(CellWriteOffsetsBuffer);
+    }
+
+    uint32 NumCellGroups = FMath::DivideAndRoundUp(SPATIAL_HASH_SIZE, SPATIAL_HASH_THREAD_GROUP_SIZE);
+    uint32 NumParticleGroups = FMath::DivideAndRoundUp((uint32)ParticleCount, SPATIAL_HASH_THREAD_GROUP_SIZE);
+
+    //=========================================================================
+    // Pass 0: Clear Cell Counts
+    //=========================================================================
+    {
+        FClearCellCountsCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FClearCellCountsCS::FParameters>();
+        PassParameters->CellCounts = OutResources.CellCountsUAV;
+
+        GraphBuilder.AddPass(
+            RDG_EVENT_NAME("SpatialHash::ClearCellCounts"),
+            PassParameters,
+            ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,
+            [ClearCellCountsShader, PassParameters, NumCellGroups](FRHIComputeCommandList& RHICmdList)
+            {
+                FComputeShaderUtils::Dispatch(RHICmdList, ClearCellCountsShader, *PassParameters, FIntVector(NumCellGroups, 1, 1));
+            });
+    }
+
+    //=========================================================================
+    // Pass 1: Count Particles Per Cell
+    // Permutation에 따라 PhysicsParticles 또는 RenderParticles 사용
+    //=========================================================================
+    {
+        FCountParticlesCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FCountParticlesCS::FParameters>();
+
+        // Permutation에 따라 적절한 버퍼만 바인딩
+        if (bUsePhysicsParticle)
+        {
+            PassParameters->PhysicsParticles = ParticlesSRV;  // FGPUFluidParticle (64 bytes)
+            PassParameters->RenderParticles = nullptr;
+        }
+        else
+        {
+            PassParameters->PhysicsParticles = nullptr;
+            PassParameters->RenderParticles = ParticlesSRV;   // FKawaiiRenderParticle (32 bytes)
+        }
+
+        PassParameters->ParticleCount = ParticleCount;
+        PassParameters->CellSize = CellSize;
+        PassParameters->CellCounts = OutResources.CellCountsUAV;
+        PassParameters->ParticleCellHashes = ParticleCellHashesUAV;
+
+        GraphBuilder.AddPass(
+            RDG_EVENT_NAME("SpatialHash::CountParticles"),
+            PassParameters,
+            ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,
+            [CountParticlesShader, PassParameters, NumParticleGroups](FRHIComputeCommandList& RHICmdList)
+            {
+                FComputeShaderUtils::Dispatch(RHICmdList, CountParticlesShader, *PassParameters, FIntVector(NumParticleGroups, 1, 1));
+            });
+    }
+
+    //=========================================================================
+    // Pass 2: Prefix Sum (Sequential)
+    // 단일 스레드로 65536개 셀에 대해 순차 처리
+    //=========================================================================
+    {
+        FPrefixSumCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FPrefixSumCS::FParameters>();
+        PassParameters->CellCounts = OutResources.CellCountsUAV;
+        PassParameters->CellStartIndices = OutResources.CellStartIndicesUAV;
+
+        GraphBuilder.AddPass(
+            RDG_EVENT_NAME("SpatialHash::PrefixSum"),
+            PassParameters,
+            ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,
+            [PrefixSumShader, PassParameters](FRHIComputeCommandList& RHICmdList)
+            {
+                // 단일 스레드 그룹 디스패치 (numthreads(1,1,1) 쉐이더)
+                FComputeShaderUtils::Dispatch(RHICmdList, PrefixSumShader, *PassParameters, FIntVector(1, 1, 1));
+            });
+    }
+
+    //=========================================================================
+    // Pass 2.5: Clear Write Offsets
+    //=========================================================================
+    {
+        FClearWriteOffsetsCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FClearWriteOffsetsCS::FParameters>();
+        PassParameters->CellWriteOffsets = CellWriteOffsetsUAV;
+
+        GraphBuilder.AddPass(
+            RDG_EVENT_NAME("SpatialHash::ClearWriteOffsets"),
+            PassParameters,
+            ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,
+            [ClearWriteOffsetsShader, PassParameters, NumCellGroups](FRHIComputeCommandList& RHICmdList)
+            {
+                FComputeShaderUtils::Dispatch(RHICmdList, ClearWriteOffsetsShader, *PassParameters, FIntVector(NumCellGroups, 1, 1));
+            });
+    }
+
+    //=========================================================================
+    // Pass 3: Scatter Particles
+    // SRV 변수명: ParticleCellHashesSRV, CellStartIndicesSRV
+    //=========================================================================
+    {
+        FScatterParticlesCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FScatterParticlesCS::FParameters>();
+        PassParameters->ParticleCount = ParticleCount;
+        PassParameters->ParticleCellHashesSRV = ParticleCellHashesSRV;
+        PassParameters->CellStartIndicesSRV = OutResources.CellStartIndicesSRV;
+        PassParameters->CellWriteOffsets = CellWriteOffsetsUAV;
+        PassParameters->ParticleIndices = OutResources.ParticleIndicesUAV;
+
+        GraphBuilder.AddPass(
+            RDG_EVENT_NAME("SpatialHash::ScatterParticles"),
+            PassParameters,
+            ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,
+            [ScatterParticlesShader, PassParameters, NumParticleGroups](FRHIComputeCommandList& RHICmdList)
+            {
+                FComputeShaderUtils::Dispatch(RHICmdList, ScatterParticlesShader, *PassParameters, FIntVector(NumParticleGroups, 1, 1));
+            });
+    }
 
     return true;
 }

@@ -23,6 +23,12 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidRayMarchGBufferParameters, )
 	SHADER_PARAMETER(float, ParticleRadius)
 
 	//========================================
+	// Particle Bounding Box (카메라가 멀리 있을 때 빈 셀 건너뛰기 방지)
+	//========================================
+	SHADER_PARAMETER(FVector3f, ParticleBoundsMin)
+	SHADER_PARAMETER(FVector3f, ParticleBoundsMax)
+
+	//========================================
 	// Ray Marching Parameters
 	//========================================
 	SHADER_PARAMETER(float, SDFSmoothness)
@@ -52,6 +58,16 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidRayMarchGBufferParameters, )
 	SHADER_PARAMETER(FVector3f, SDFVolumeMin)
 	SHADER_PARAMETER(FVector3f, SDFVolumeMax)
 	SHADER_PARAMETER(FIntVector, SDFVolumeResolution)
+
+	//========================================
+	// Spatial Hash (for O(k) SDF evaluation)
+	// USE_SPATIAL_HASH=1 일 때 사용됨
+	// 주의: RenderParticles 버퍼는 위에서 선언됨 (Particle Data 섹션)
+	//========================================
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellCounts)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellStartIndices)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleIndices)
+	SHADER_PARAMETER(float, SpatialHashCellSize)
 
 	//========================================
 	// SceneDepth UV Mapping
@@ -98,6 +114,11 @@ public:
 class FUseSDFVolumeGBufferDim : SHADER_PERMUTATION_BOOL("USE_SDF_VOLUME");
 
 /**
+ * @brief Shader permutation dimension for Spatial Hash acceleration
+ */
+class FUseSpatialHashGBufferDim : SHADER_PERMUTATION_BOOL("USE_SPATIAL_HASH");
+
+/**
  * @brief Pixel shader for Ray Marching SDF → G-Buffer output
  *
  * Performs ray marching through SDF field, outputs:
@@ -106,6 +127,11 @@ class FUseSDFVolumeGBufferDim : SHADER_PERMUTATION_BOOL("USE_SDF_VOLUME");
  * - GBufferC: BaseColor, AO
  * - GBufferD: Thickness (for transparency pass)
  * - Depth: Device Z
+ *
+ * Supports three SDF evaluation modes (mutually exclusive):
+ * - USE_SDF_VOLUME=1: O(1) volume texture sampling (fastest)
+ * - USE_SPATIAL_HASH=1: O(k) spatial hash neighbor search (fast)
+ * - Both=0: O(N) particle iteration (slowest)
  *
  * After this pass, Lumen/VSM will light the surface automatically.
  * Then FluidTransparencyComposite applies refraction/transparency.
@@ -117,10 +143,20 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FFluidRayMarchGBufferPS, FGlobalShader);
 
 	using FParameters = FFluidRayMarchGBufferParameters;
-	using FPermutationDomain = TShaderPermutationDomain<FUseSDFVolumeGBufferDim>;
+	using FPermutationDomain = TShaderPermutationDomain<FUseSDFVolumeGBufferDim, FUseSpatialHashGBufferDim>;
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{
+		FPermutationDomain PermutationVector(Parameters.PermutationId);
+
+		// SDF Volume과 Spatial Hash는 상호 배타적
+		bool bUseSDF = PermutationVector.Get<FUseSDFVolumeGBufferDim>();
+		bool bUseHash = PermutationVector.Get<FUseSpatialHashGBufferDim>();
+		if (bUseSDF && bUseHash)
+		{
+			return false;
+		}
+
 		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
 	}
 
