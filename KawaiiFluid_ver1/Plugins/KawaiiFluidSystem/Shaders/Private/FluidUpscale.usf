@@ -1,0 +1,136 @@
+// Copyright KawaiiFluid Team. All Rights Reserved.
+// Smart Bilinear Upscale for fluid rendering
+// - Bilinear interpolation for smooth surfaces
+// - Depth-aware weighting to prevent halo artifacts at edges
+
+#include "/Engine/Public/Platform.ush"
+#include "/Engine/Private/Common.ush"
+
+// Input textures
+Texture2D<float4> InputTexture;      // Scaled-res fluid color
+SamplerState InputSampler;           // Bilinear sampler
+
+Texture2D<float> FluidDepthTexture;  // Scaled-res fluid depth (DeviceZ)
+SamplerState DepthSampler;           // Point sampler
+
+Texture2D<float> SceneDepthTexture;  // Full-res scene depth (unused for now)
+
+// Resolution info
+float2 InputSize;       // Scaled-res size
+float2 OutputSize;      // Full-res size
+float2 SceneDepthSize;  // Scene depth texture size
+
+struct FUpscaleVSToPS
+{
+	float4 Position : SV_POSITION;
+	float2 UV : TEXCOORD0;
+};
+
+void MainVS(
+	in uint VertexID : SV_VertexID,
+	out FUpscaleVSToPS Output)
+{
+	// Fullscreen Triangle
+	float2 UV = float2((VertexID << 1) & 2, VertexID & 2);
+	Output.UV = UV;
+	Output.Position = float4(UV * float2(2, -2) + float2(-1, 1), 0.5f, 1.0f);
+}
+
+void MainPS(
+	FUpscaleVSToPS Input,
+	out float4 OutColor : SV_Target0)
+{
+	float2 UV = Input.UV;
+	float2 TexelSize = 1.0 / InputSize;
+
+	// Calculate texel position and fraction for bilinear interpolation
+	float2 TexelPos = UV * InputSize - 0.5;
+	float2 Fraction = frac(TexelPos);
+	float2 BaseUV = (floor(TexelPos) + 0.5) * TexelSize;
+
+	// 4 sample offsets (2x2 grid)
+	float2 Offsets[4] = {
+		float2(0, 0),                    // TL
+		float2(TexelSize.x, 0),          // TR
+		float2(0, TexelSize.y),          // BL
+		float2(TexelSize.x, TexelSize.y) // BR
+	};
+
+	// Bilinear weights
+	float BilinearWeights[4] = {
+		(1.0 - Fraction.x) * (1.0 - Fraction.y),  // TL
+		(Fraction.x)       * (1.0 - Fraction.y),  // TR
+		(1.0 - Fraction.x) * (Fraction.y),        // BL
+		(Fraction.x)       * (Fraction.y)         // BR
+	};
+
+	// Sample 4 texels
+	float4 Colors[4];
+	float Depths[4];
+
+	[unroll]
+	for (int i = 0; i < 4; i++)
+	{
+		float2 SampleUV = BaseUV + Offsets[i];
+		Colors[i] = InputTexture.SampleLevel(InputSampler, SampleUV, 0);
+		Depths[i] = FluidDepthTexture.SampleLevel(DepthSampler, SampleUV, 0);
+	}
+
+	// Reference depth: closest to camera (min depth in reversed-Z means closest)
+	// Actually in reversed-Z, larger value = closer, so we want max
+	float RefDepth = max(max(Depths[0], Depths[1]), max(Depths[2], Depths[3]));
+
+	// If no fluid in any sample, pass through
+	if (RefDepth < 0.0001)
+	{
+		OutColor = InputTexture.Sample(InputSampler, UV);
+		return;
+	}
+
+	// Calculate depth-aware weights
+	float4 FinalColor = 0;
+	float TotalWeight = 0.0001;
+
+	const float DepthSensitivity = 5000.0;  // Higher = more sensitive to depth differences
+
+	[unroll]
+	for (int i = 0; i < 4; i++)
+	{
+		// Skip empty samples
+		if (Depths[i] < 0.0001)
+		{
+			continue;
+		}
+
+		// Depth similarity weight
+		float DepthDiff = abs(RefDepth - Depths[i]);
+		float DepthWeight = 1.0 / (1.0 + DepthDiff * DepthSensitivity);
+
+		// Final weight = Bilinear × Depth similarity
+		float W = BilinearWeights[i] * DepthWeight;
+
+		FinalColor += Colors[i] * W;
+		TotalWeight += W;
+	}
+
+	// Normalize
+	if (TotalWeight > 0.001)
+	{
+		OutColor = FinalColor / TotalWeight;
+	}
+	else
+	{
+		// Fallback: use nearest valid sample
+		OutColor = Colors[0];
+		float MaxDepth = Depths[0];
+		[unroll]
+		for (int i = 1; i < 4; i++)
+		{
+			if (Depths[i] > MaxDepth)
+			{
+				MaxDepth = Depths[i];
+				OutColor = Colors[i];
+			}
+		}
+	}
+}

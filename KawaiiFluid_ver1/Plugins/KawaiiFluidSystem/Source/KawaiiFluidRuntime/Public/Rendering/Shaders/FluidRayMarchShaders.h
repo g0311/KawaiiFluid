@@ -156,3 +156,55 @@ public:
 		OutEnvironment.SetDefine(TEXT("RAY_MARCH_SDF"), 1);
 	}
 };
+
+//=============================================================================
+// Upscale Shader (for Half Resolution rendering)
+//=============================================================================
+
+BEGIN_SHADER_PARAMETER_STRUCT(FFluidUpscaleParameters, )
+	// Scaled-res fluid color texture
+	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, InputTexture)
+	SHADER_PARAMETER_SAMPLER(SamplerState, InputSampler)
+
+	// Scaled-res fluid depth texture
+	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, FluidDepthTexture)
+	SHADER_PARAMETER_SAMPLER(SamplerState, DepthSampler)
+
+	// Full-res scene depth for depth-aware upsampling
+	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneDepthTexture)
+
+	// Resolution info
+	SHADER_PARAMETER(FVector2f, InputSize)
+	SHADER_PARAMETER(FVector2f, OutputSize)
+	SHADER_PARAMETER(FVector2f, SceneDepthSize)
+
+	RENDER_TARGET_BINDING_SLOTS()
+END_SHADER_PARAMETER_STRUCT()
+
+class FFluidUpscaleVS : public FGlobalShader
+{
+public:
+	DECLARE_GLOBAL_SHADER(FFluidUpscaleVS);
+	SHADER_USE_PARAMETER_STRUCT(FFluidUpscaleVS, FGlobalShader);
+
+	using FParameters = FFluidUpscaleParameters;
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+};
+
+class FFluidUpscalePS : public FGlobalShader
+{
+public:
+	DECLARE_GLOBAL_SHADER(FFluidUpscalePS);
+	SHADER_USE_PARAMETER_STRUCT(FFluidUpscalePS, FGlobalShader);
+
+	using FParameters = FFluidUpscaleParameters;
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+};

@@ -311,11 +311,54 @@ void KawaiiRayMarchShading::RenderPostProcessShading(
 
 	RDG_EVENT_SCOPE(GraphBuilder, "MetaballShading_PostProcess_RayMarching");
 
-	// Create depth output texture if requested
+	//========================================
+	// Scaled Resolution Setup
+	//========================================
+	const FIntRect FullViewRect = Output.ViewRect;
+	const float RenderScale = FMath::Clamp(RenderParams.RenderTargetScale, 0.25f, 1.0f);
+	const bool bUseScaledRes = RenderScale < 0.99f;
+
+	FIntPoint ScaledSize(
+		FMath::Max(1, FMath::RoundToInt(FullViewRect.Width() * RenderScale)),
+		FMath::Max(1, FMath::RoundToInt(FullViewRect.Height() * RenderScale))
+	);
+
+	// Create intermediate texture for scaled resolution rendering
+	FRDGTextureRef IntermediateTarget = nullptr;
+	FRDGTextureRef ScaledDepthTexture = nullptr;
+	if (bUseScaledRes)
+	{
+		// Color texture (scaled-res)
+		FRDGTextureDesc IntermediateDesc = FRDGTextureDesc::Create2D(
+			ScaledSize,
+			PF_FloatRGBA,
+			FClearValueBinding::Transparent,
+			TexCreate_RenderTargetable | TexCreate_ShaderResource
+		);
+		IntermediateTarget = GraphBuilder.CreateTexture(IntermediateDesc, TEXT("FluidRayMarch_Scaled"));
+
+		// Depth texture (scaled-res) for depth-aware upsampling
+		FRDGTextureDesc ScaledDepthDesc = FRDGTextureDesc::Create2D(
+			ScaledSize,
+			PF_R32_FLOAT,
+			FClearValueBinding::Black,
+			TexCreate_RenderTargetable | TexCreate_ShaderResource
+		);
+		ScaledDepthTexture = GraphBuilder.CreateTexture(ScaledDepthDesc, TEXT("FluidRayMarch_ScaledDepth"));
+	}
+
+	// Select render target based on scaled resolution mode
+	FRDGTextureRef RayMarchTarget = bUseScaledRes ? IntermediateTarget : Output.Texture;
+	FIntRect RenderViewRect = bUseScaledRes ? FIntRect(0, 0, ScaledSize.X, ScaledSize.Y) : FullViewRect;
+
+	// Enable depth output for scaled-res (needed for depth-aware upsampling) or if explicitly requested
+	const bool bNeedDepthOutput = bOutputDepth || bUseScaledRes;
+
+	// Create depth output texture if requested (full-res for shadow, etc.)
 	FRDGTextureRef FluidDepthTexture = nullptr;
 	if (bOutputDepth)
 	{
-		FIntRect ViewRect = Output.ViewRect;
+		FIntRect ViewRect = FullViewRect;
 		FRDGTextureDesc DepthDesc = FRDGTextureDesc::Create2D(
 			FIntPoint(ViewRect.Width(), ViewRect.Height()),
 			PF_R32_FLOAT,
@@ -326,7 +369,8 @@ void KawaiiRayMarchShading::RenderPostProcessShading(
 
 		if (OutFluidDepthTexture)
 		{
-			*OutFluidDepthTexture = FluidDepthTexture;
+			// 스케일링 모드면 ScaledDepthTexture 사용 (실제 depth가 출력되는 텍스처)
+			*OutFluidDepthTexture = (bUseScaledRes && ScaledDepthTexture) ? ScaledDepthTexture : FluidDepthTexture;
 		}
 	}
 
@@ -380,19 +424,28 @@ void KawaiiRayMarchShading::RenderPostProcessShading(
 	PassParameters->ViewMatrix = FMatrix44f(View.ViewMatrices.GetViewMatrix());
 	PassParameters->ProjectionMatrix = FMatrix44f(View.ViewMatrices.GetProjectionMatrix());
 
-	// Viewport size
-	FIntRect ViewRect = Output.ViewRect;
-	PassParameters->ViewportSize = FVector2f(ViewRect.Width(), ViewRect.Height());
+	// Viewport size (use scaled size for half-res rendering)
+	PassParameters->ViewportSize = FVector2f(RenderViewRect.Width(), RenderViewRect.Height());
 
 	// SceneDepth UV transform
 	const FViewInfo& ViewInfo = static_cast<const FViewInfo&>(View);
 	PassParameters->SceneViewRect = FVector2f(ViewInfo.ViewRect.Width(), ViewInfo.ViewRect.Height());
 	PassParameters->SceneTextureSize = FVector2f(SceneDepthTexture->Desc.Extent.X, SceneDepthTexture->Desc.Extent.Y);
 
-	// Render targets
-	PassParameters->RenderTargets[0] = FRenderTargetBinding(Output.Texture, ERenderTargetLoadAction::ELoad);
-	if (bOutputDepth && FluidDepthTexture)
+	// Render targets (use intermediate for scaled-res, direct for full-res)
+	PassParameters->RenderTargets[0] = FRenderTargetBinding(
+		RayMarchTarget,
+		bUseScaledRes ? ERenderTargetLoadAction::EClear : ERenderTargetLoadAction::ELoad);
+
+	// Depth output: use scaled depth for upsampling, or full-res depth for shadows
+	if (bUseScaledRes && ScaledDepthTexture)
 	{
+		// Scaled-res mode: output to scaled depth texture for depth-aware upsampling
+		PassParameters->RenderTargets[1] = FRenderTargetBinding(ScaledDepthTexture, ERenderTargetLoadAction::EClear);
+	}
+	else if (bOutputDepth && FluidDepthTexture)
+	{
+		// Full-res mode with depth output: output to full-res depth texture
 		PassParameters->RenderTargets[1] = FRenderTargetBinding(FluidDepthTexture, ERenderTargetLoadAction::EClear);
 	}
 
@@ -402,19 +455,20 @@ void KawaiiRayMarchShading::RenderPostProcessShading(
 
 	FFluidRayMarchPS::FPermutationDomain PermutationVector;
 	PermutationVector.Set<FUseSDFVolumeDim>(bUseSDFVolume);
-	PermutationVector.Set<FOutputDepthDim>(bOutputDepth);
+	PermutationVector.Set<FOutputDepthDim>(bNeedDepthOutput);  // Enable depth output for scaled-res
 	TShaderMapRef<FFluidRayMarchPS> PixelShader(GlobalShaderMap, PermutationVector);
 
 	GraphBuilder.AddPass(
-		RDG_EVENT_NAME("MetaballPostProcess_RayMarching (%s%s)",
+		RDG_EVENT_NAME("MetaballPostProcess_RayMarching (%s%s%s)",
 			bUseSDFVolume ? TEXT("SDFVolume") : TEXT("Direct"),
-			bOutputDepth ? TEXT(", DepthOut") : TEXT("")),
+			bOutputDepth ? TEXT(", DepthOut") : TEXT(""),
+			bUseScaledRes ? TEXT(", ScaledRes") : TEXT("")),
 		PassParameters,
 		ERDGPassFlags::Raster,
-		[VertexShader, PixelShader, PassParameters, ViewRect](FRHICommandList& RHICmdList)
+		[VertexShader, PixelShader, PassParameters, RenderViewRect, bUseScaledRes](FRHICommandList& RHICmdList)
 		{
-			RHICmdList.SetViewport(ViewRect.Min.X, ViewRect.Min.Y, 0.0f, ViewRect.Max.X, ViewRect.Max.Y, 1.0f);
-			RHICmdList.SetScissorRect(true, ViewRect.Min.X, ViewRect.Min.Y, ViewRect.Max.X, ViewRect.Max.Y);
+			RHICmdList.SetViewport(RenderViewRect.Min.X, RenderViewRect.Min.Y, 0.0f, RenderViewRect.Max.X, RenderViewRect.Max.Y, 1.0f);
+			RHICmdList.SetScissorRect(true, RenderViewRect.Min.X, RenderViewRect.Min.Y, RenderViewRect.Max.X, RenderViewRect.Max.Y);
 
 			FGraphicsPipelineStateInitializer GraphicsPSOInit;
 			GraphicsPSOInit.BoundShaderState.VertexDeclarationRHI = GEmptyVertexDeclaration.VertexDeclarationRHI;
@@ -422,12 +476,21 @@ void KawaiiRayMarchShading::RenderPostProcessShading(
 			GraphicsPSOInit.BoundShaderState.PixelShaderRHI = PixelShader.GetPixelShader();
 			GraphicsPSOInit.PrimitiveType = PT_TriangleList;
 
-			// Alpha blending
-			GraphicsPSOInit.BlendState = TStaticBlendState<
-				CW_RGBA,
-				BO_Add, BF_SourceAlpha, BF_InverseSourceAlpha,
-				BO_Add, BF_Zero, BF_One
-			>::GetRHI();
+			if (bUseScaledRes)
+			{
+				// Scaled-res: No blending, write RGBA directly to intermediate target
+				// (Alpha blending will be done in upscale pass)
+				GraphicsPSOInit.BlendState = TStaticBlendState<CW_RGBA>::GetRHI();
+			}
+			else
+			{
+				// Full-res: Alpha blending directly to scene
+				GraphicsPSOInit.BlendState = TStaticBlendState<
+					CW_RGBA,
+					BO_Add, BF_SourceAlpha, BF_InverseSourceAlpha,
+					BO_Add, BF_Zero, BF_One
+				>::GetRHI();
+			}
 			GraphicsPSOInit.RasterizerState = TStaticRasterizerState<FM_Solid, CM_None>::GetRHI();
 			GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<false, CF_Always>::GetRHI();
 
@@ -437,4 +500,66 @@ void KawaiiRayMarchShading::RenderPostProcessShading(
 
 			RHICmdList.DrawPrimitive(0, 1, 1);
 		});
+
+	//========================================
+	// Pass 2: Upscale (Scaled Resolution only)
+	//========================================
+	if (bUseScaledRes)
+	{
+		auto* UpscaleParameters = GraphBuilder.AllocParameters<FFluidUpscalePS::FParameters>();
+
+		// Input: Scaled-res color texture
+		UpscaleParameters->InputTexture = IntermediateTarget;
+		UpscaleParameters->InputSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+
+		// Input: Scaled-res fluid depth texture (for depth-aware upsampling)
+		UpscaleParameters->FluidDepthTexture = ScaledDepthTexture;
+		UpscaleParameters->DepthSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+
+		// Input: Full-res scene depth texture (for depth comparison)
+		UpscaleParameters->SceneDepthTexture = SceneDepthTexture;
+
+		// Resolution info
+		UpscaleParameters->InputSize = FVector2f(ScaledSize.X, ScaledSize.Y);
+		UpscaleParameters->OutputSize = FVector2f(FullViewRect.Width(), FullViewRect.Height());
+		UpscaleParameters->SceneDepthSize = FVector2f(SceneDepthTexture->Desc.Extent.X, SceneDepthTexture->Desc.Extent.Y);
+
+		// Output: Full-res scene texture (ELoad to preserve scene)
+		UpscaleParameters->RenderTargets[0] = FRenderTargetBinding(Output.Texture, ERenderTargetLoadAction::ELoad);
+
+		TShaderMapRef<FFluidUpscaleVS> UpscaleVS(GlobalShaderMap);
+		TShaderMapRef<FFluidUpscalePS> UpscalePS(GlobalShaderMap);
+
+		GraphBuilder.AddPass(
+			RDG_EVENT_NAME("FluidUpscale_AlphaBlend"),
+			UpscaleParameters,
+			ERDGPassFlags::Raster,
+			[UpscaleVS, UpscalePS, UpscaleParameters, FullViewRect](FRHICommandList& RHICmdList)
+			{
+				// Restore viewport to full resolution
+				RHICmdList.SetViewport(FullViewRect.Min.X, FullViewRect.Min.Y, 0.0f, FullViewRect.Max.X, FullViewRect.Max.Y, 1.0f);
+				RHICmdList.SetScissorRect(true, FullViewRect.Min.X, FullViewRect.Min.Y, FullViewRect.Max.X, FullViewRect.Max.Y);
+
+				FGraphicsPipelineStateInitializer GraphicsPSOInit;
+				GraphicsPSOInit.BoundShaderState.VertexDeclarationRHI = GEmptyVertexDeclaration.VertexDeclarationRHI;
+				GraphicsPSOInit.BoundShaderState.VertexShaderRHI = UpscaleVS.GetVertexShader();
+				GraphicsPSOInit.BoundShaderState.PixelShaderRHI = UpscalePS.GetPixelShader();
+				GraphicsPSOInit.PrimitiveType = PT_TriangleList;
+
+				// Alpha blending to composite onto scene
+				GraphicsPSOInit.BlendState = TStaticBlendState<
+					CW_RGBA,
+					BO_Add, BF_SourceAlpha, BF_InverseSourceAlpha,
+					BO_Add, BF_Zero, BF_One
+				>::GetRHI();
+				GraphicsPSOInit.RasterizerState = TStaticRasterizerState<FM_Solid, CM_None>::GetRHI();
+				GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<false, CF_Always>::GetRHI();
+
+				RHICmdList.ApplyCachedRenderTargets(GraphicsPSOInit);
+				SetGraphicsPipelineState(RHICmdList, GraphicsPSOInit, 0);
+				SetShaderParameters(RHICmdList, UpscalePS, UpscalePS.GetPixelShader(), *UpscaleParameters);
+
+				RHICmdList.DrawPrimitive(0, 1, 1);
+			});
+	}
 }
