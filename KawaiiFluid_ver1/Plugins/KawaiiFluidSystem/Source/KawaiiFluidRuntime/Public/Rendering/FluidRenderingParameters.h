@@ -220,6 +220,19 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 			ClampMin = "32", ClampMax = "256"))
 	int32 SDFVolumeResolution = 64;
 
+	/**
+	 * Use Spatial Hash for hybrid SDF evaluation (with SDF Volume)
+	 * HYBRID MODE: SDF Volume for fast 90% ray march + Spatial Hash for precise 10% final evaluation
+	 * SDF Volume: O(1) texture sampling for fast approach to surface
+	 * Spatial Hash: O(k) neighbor lookup for accurate final surface detection
+	 * Note: Only available when bUseSDFVolumeOptimization is enabled
+	 *
+	 * HybridSwitchThreshold is auto-calculated: ParticleRadius * 2.0 + SDFSmoothness
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching",
+		meta = (EditCondition = "SSFRMode == ESSFRRenderingMode::RayMarching && bUseSDFVolumeOptimization"))
+	bool bUseSpatialHash = false;
+
 	//========================================
 	// Shadow Casting (VSM)
 	//========================================
@@ -312,6 +325,7 @@ FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
 	Hash = HashCombine(Hash, GetTypeHash(Params.SSSColor.ToString()));
 	Hash = HashCombine(Hash, GetTypeHash(Params.bUseSDFVolumeOptimization));
 	Hash = HashCombine(Hash, GetTypeHash(Params.SDFVolumeResolution));
+	Hash = HashCombine(Hash, GetTypeHash(Params.bUseSpatialHash));
 	// Shadow parameters
 	Hash = HashCombine(Hash, GetTypeHash(Params.bEnableShadowCasting));
 	Hash = HashCombine(Hash, GetTypeHash(Params.VSMResolution));
@@ -351,6 +365,7 @@ FORCEINLINE bool operator==(const FFluidRenderingParameters& A, const FFluidRend
 	       A.SSSColor.Equals(B.SSSColor, 0.001f) &&
 	       A.bUseSDFVolumeOptimization == B.bUseSDFVolumeOptimization &&
 	       A.SDFVolumeResolution == B.SDFVolumeResolution &&
+	       A.bUseSpatialHash == B.bUseSpatialHash &&
 	       // Shadow parameters
 	       A.bEnableShadowCasting == B.bEnableShadowCasting &&
 	       A.VSMResolution == B.VSMResolution &&

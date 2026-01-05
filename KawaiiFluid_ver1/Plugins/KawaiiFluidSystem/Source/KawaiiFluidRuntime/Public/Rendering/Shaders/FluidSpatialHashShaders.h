@@ -45,7 +45,7 @@ public:
 };
 
 //=============================================================================
-// Build Spatial Hash (Simple version) Compute Shader
+// Simple Version Shaders
 //=============================================================================
 
 class FBuildSpatialHashSimpleCS : public FGlobalShader
@@ -55,13 +55,36 @@ public:
     SHADER_USE_PARAMETER_STRUCT(FBuildSpatialHashSimpleCS, FGlobalShader);
 
     BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-        // Input
         SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FVector3f>, ParticlePositions)
         SHADER_PARAMETER(int32, ParticleCount)
         SHADER_PARAMETER(float, ParticleRadius)
         SHADER_PARAMETER(float, CellSize)
+        SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, CellCounts)
+        SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, ParticleIndices)
+    END_SHADER_PARAMETER_STRUCT()
 
-        // Output
+    static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+    {
+        return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+    }
+
+    static void ModifyCompilationEnvironment(
+        const FGlobalShaderPermutationParameters& Parameters,
+        FShaderCompilerEnvironment& OutEnvironment)
+    {
+        FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+        OutEnvironment.SetDefine(TEXT("SPATIAL_HASH_SIZE"), SPATIAL_HASH_SIZE);
+        OutEnvironment.SetDefine(TEXT("MAX_PARTICLES_PER_CELL"), MAX_PARTICLES_PER_CELL);
+    }
+};
+
+class FSortCellParticlesCS : public FGlobalShader
+{
+public:
+    DECLARE_GLOBAL_SHADER(FSortCellParticlesCS);
+    SHADER_USE_PARAMETER_STRUCT(FSortCellParticlesCS, FGlobalShader);
+
+    BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
         SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, CellCounts)
         SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, ParticleIndices)
     END_SHADER_PARAMETER_STRUCT()
@@ -82,7 +105,174 @@ public:
 };
 
 //=============================================================================
-// Spatial Hash GPU Resources
+// Multi-pass Version Shaders (Dynamic Array - No particle limit per cell)
+//=============================================================================
+
+class FClearCellDataMultipassCS : public FGlobalShader
+{
+public:
+    DECLARE_GLOBAL_SHADER(FClearCellDataMultipassCS);
+    SHADER_USE_PARAMETER_STRUCT(FClearCellDataMultipassCS, FGlobalShader);
+
+    BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+        SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FUintVector2>, CellData)
+        SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, CellCounters)
+    END_SHADER_PARAMETER_STRUCT()
+
+    static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+    {
+        return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+    }
+
+    static void ModifyCompilationEnvironment(
+        const FGlobalShaderPermutationParameters& Parameters,
+        FShaderCompilerEnvironment& OutEnvironment)
+    {
+        FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+        OutEnvironment.SetDefine(TEXT("USE_MULTIPASS_BUILD"), 1);
+        OutEnvironment.SetDefine(TEXT("SPATIAL_HASH_SIZE"), SPATIAL_HASH_SIZE);
+    }
+};
+
+class FCountParticlesPerCellCS : public FGlobalShader
+{
+public:
+    DECLARE_GLOBAL_SHADER(FCountParticlesPerCellCS);
+    SHADER_USE_PARAMETER_STRUCT(FCountParticlesPerCellCS, FGlobalShader);
+
+    BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+        SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FVector3f>, ParticlePositions)
+        SHADER_PARAMETER(int32, ParticleCount)
+        SHADER_PARAMETER(float, CellSize)
+        SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, CellCounters)
+        SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, ParticleCellHashes)
+    END_SHADER_PARAMETER_STRUCT()
+
+    static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+    {
+        return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+    }
+
+    static void ModifyCompilationEnvironment(
+        const FGlobalShaderPermutationParameters& Parameters,
+        FShaderCompilerEnvironment& OutEnvironment)
+    {
+        FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+        OutEnvironment.SetDefine(TEXT("USE_MULTIPASS_BUILD"), 1);
+        OutEnvironment.SetDefine(TEXT("SPATIAL_HASH_SIZE"), SPATIAL_HASH_SIZE);
+    }
+};
+
+class FPrefixSumCS : public FGlobalShader
+{
+public:
+    DECLARE_GLOBAL_SHADER(FPrefixSumCS);
+    SHADER_USE_PARAMETER_STRUCT(FPrefixSumCS, FGlobalShader);
+
+    BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+        SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, CellCounters)
+        SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, PrefixSumBuffer)
+    END_SHADER_PARAMETER_STRUCT()
+
+    static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+    {
+        return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+    }
+
+    static void ModifyCompilationEnvironment(
+        const FGlobalShaderPermutationParameters& Parameters,
+        FShaderCompilerEnvironment& OutEnvironment)
+    {
+        FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+        OutEnvironment.SetDefine(TEXT("USE_MULTIPASS_BUILD"), 1);
+        OutEnvironment.SetDefine(TEXT("SPATIAL_HASH_SIZE"), SPATIAL_HASH_SIZE);
+    }
+};
+
+class FScatterParticlesCS : public FGlobalShader
+{
+public:
+    DECLARE_GLOBAL_SHADER(FScatterParticlesCS);
+    SHADER_USE_PARAMETER_STRUCT(FScatterParticlesCS, FGlobalShader);
+
+    BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+        SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, ParticleCellHashes)
+        SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, PrefixSumBuffer)
+        SHADER_PARAMETER(int32, ParticleCount)
+        SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, CellCounters)
+        SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, ParticleIndices)
+    END_SHADER_PARAMETER_STRUCT()
+
+    static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+    {
+        return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+    }
+
+    static void ModifyCompilationEnvironment(
+        const FGlobalShaderPermutationParameters& Parameters,
+        FShaderCompilerEnvironment& OutEnvironment)
+    {
+        FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+        OutEnvironment.SetDefine(TEXT("USE_MULTIPASS_BUILD"), 1);
+        OutEnvironment.SetDefine(TEXT("SPATIAL_HASH_SIZE"), SPATIAL_HASH_SIZE);
+    }
+};
+
+class FFinalizeCellDataCS : public FGlobalShader
+{
+public:
+    DECLARE_GLOBAL_SHADER(FFinalizeCellDataCS);
+    SHADER_USE_PARAMETER_STRUCT(FFinalizeCellDataCS, FGlobalShader);
+
+    BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+        SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, PrefixSumBuffer)
+        SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, CellCounters)
+        SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FUintVector2>, CellData)
+    END_SHADER_PARAMETER_STRUCT()
+
+    static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+    {
+        return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+    }
+
+    static void ModifyCompilationEnvironment(
+        const FGlobalShaderPermutationParameters& Parameters,
+        FShaderCompilerEnvironment& OutEnvironment)
+    {
+        FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+        OutEnvironment.SetDefine(TEXT("USE_MULTIPASS_BUILD"), 1);
+        OutEnvironment.SetDefine(TEXT("SPATIAL_HASH_SIZE"), SPATIAL_HASH_SIZE);
+    }
+};
+
+class FSortBucketParticlesCS : public FGlobalShader
+{
+public:
+    DECLARE_GLOBAL_SHADER(FSortBucketParticlesCS);
+    SHADER_USE_PARAMETER_STRUCT(FSortBucketParticlesCS, FGlobalShader);
+
+    BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+        SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FUintVector2>, CellData)
+        SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, ParticleIndices)
+    END_SHADER_PARAMETER_STRUCT()
+
+    static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+    {
+        return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+    }
+
+    static void ModifyCompilationEnvironment(
+        const FGlobalShaderPermutationParameters& Parameters,
+        FShaderCompilerEnvironment& OutEnvironment)
+    {
+        FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+        OutEnvironment.SetDefine(TEXT("USE_MULTIPASS_BUILD"), 1);
+        OutEnvironment.SetDefine(TEXT("SPATIAL_HASH_SIZE"), SPATIAL_HASH_SIZE);
+    }
+};
+
+//=============================================================================
+// Spatial Hash GPU Resources (Simple Version)
 //=============================================================================
 
 /**
@@ -108,6 +298,64 @@ struct FSpatialHashGPUResources
     bool IsValid() const
     {
         return CellCountsBuffer != nullptr && ParticleIndicesBuffer != nullptr;
+    }
+};
+
+//=============================================================================
+// Spatial Hash GPU Resources (Multi-pass Version - Dynamic Array)
+//=============================================================================
+
+struct FSpatialHashMultipassResources
+{
+    // CellData: {startIndex, count} per cell
+    FRDGBufferRef CellDataBuffer = nullptr;
+    FRDGBufferSRVRef CellDataSRV = nullptr;
+    FRDGBufferUAVRef CellDataUAV = nullptr;
+
+    // Particle indices (dynamic size = ParticleCount)
+    FRDGBufferRef ParticleIndicesBuffer = nullptr;
+    FRDGBufferSRVRef ParticleIndicesSRV = nullptr;
+    FRDGBufferUAVRef ParticleIndicesUAV = nullptr;
+
+    // Temporary buffers for build
+    FRDGBufferRef CellCountersBuffer = nullptr;
+    FRDGBufferUAVRef CellCountersUAV = nullptr;
+
+    FRDGBufferRef ParticleCellHashesBuffer = nullptr;
+    FRDGBufferSRVRef ParticleCellHashesSRV = nullptr;
+    FRDGBufferUAVRef ParticleCellHashesUAV = nullptr;
+
+    FRDGBufferRef PrefixSumBuffer = nullptr;
+    FRDGBufferSRVRef PrefixSumSRV = nullptr;
+    FRDGBufferUAVRef PrefixSumUAV = nullptr;
+
+    // Configuration
+    float CellSize = 0.0f;
+    int32 ParticleCount = 0;
+
+    bool IsValid() const
+    {
+        return CellDataBuffer != nullptr && ParticleIndicesBuffer != nullptr;
+    }
+
+    void Reset()
+    {
+        CellDataBuffer = nullptr;
+        CellDataSRV = nullptr;
+        CellDataUAV = nullptr;
+        ParticleIndicesBuffer = nullptr;
+        ParticleIndicesSRV = nullptr;
+        ParticleIndicesUAV = nullptr;
+        CellCountersBuffer = nullptr;
+        CellCountersUAV = nullptr;
+        ParticleCellHashesBuffer = nullptr;
+        ParticleCellHashesSRV = nullptr;
+        ParticleCellHashesUAV = nullptr;
+        PrefixSumBuffer = nullptr;
+        PrefixSumSRV = nullptr;
+        PrefixSumUAV = nullptr;
+        CellSize = 0.0f;
+        ParticleCount = 0;
     }
 };
 
@@ -159,8 +407,20 @@ public:
         float CellSize,
         FSpatialHashGPUResources& OutResources);
 
+    // Multi-pass version (dynamic array, no particle limit per cell)
+    static bool CreateAndBuildHashMultipass(
+        FRDGBuilder& GraphBuilder,
+        FRDGBufferSRVRef ParticlePositionsSRV,
+        int32 ParticleCount,
+        float CellSize,
+        FSpatialHashMultipassResources& OutResources);
+
 private:
     static void ClearBuffers(
+        FRDGBuilder& GraphBuilder,
+        FSpatialHashGPUResources& Resources);
+
+    static void SortCellParticles(
         FRDGBuilder& GraphBuilder,
         FSpatialHashGPUResources& Resources);
 };

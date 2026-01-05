@@ -138,6 +138,7 @@ void UKawaiiFluidMetaballRenderer::ApplySettings(const FKawaiiFluidMetaballRende
 	LocalParameters.SSSColor = Settings.SSSColor;
 	LocalParameters.bUseSDFVolumeOptimization = Settings.bUseSDFVolumeOptimization;
 	LocalParameters.SDFVolumeResolution = Settings.SDFVolumeResolution;
+	LocalParameters.bUseSpatialHash = Settings.bUseSpatialHash;
 
 	// Shadow parameters
 	LocalParameters.bEnableShadowCasting = Settings.bEnableShadowCasting;

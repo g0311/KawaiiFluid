@@ -23,6 +23,7 @@ RWStructuredBuffer<uint> ParticleIndices;       // Particle indices per cell
 // Used by multi-pass build only (CountParticles, PrefixSum, Scatter, Finalize)
 // These are NOT used by BuildSpatialHashSimpleCS or ClearCellDataCS (Simple version)
 #if USE_MULTIPASS_BUILD
+RWStructuredBuffer<uint2> CellData;             // {startIndex, count} per cell
 RWStructuredBuffer<uint> CellCounters;          // Atomic counter per cell
 RWStructuredBuffer<uint> ParticleCellHashes;    // Hash for each particle (for sorting)
 RWStructuredBuffer<uint> PrefixSumBuffer;       // Prefix sum workspace
@@ -59,69 +60,24 @@ void CountParticlesPerCellCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 }
 
 //=============================================================================
-// Pass 2: Prefix sum to compute start indices
+// Pass 2: Prefix sum to compute start indices (Single-threaded for correctness)
 //=============================================================================
 
-groupshared uint SharedData[512];
-
-[numthreads(256, 1, 1)]
-void PrefixSumCS(uint3 GroupId : SV_GroupID, uint3 GroupThreadId : SV_GroupThreadID)
+[numthreads(1, 1, 1)]
+void PrefixSumCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
-    uint tid = GroupThreadId.x;
-    uint blockStart = GroupId.x * 512;
-
-    // Load two elements per thread
-    uint idx1 = blockStart + tid * 2;
-    uint idx2 = blockStart + tid * 2 + 1;
-
-    SharedData[tid * 2] = (idx1 < SPATIAL_HASH_SIZE) ? CellCounters[idx1] : 0;
-    SharedData[tid * 2 + 1] = (idx2 < SPATIAL_HASH_SIZE) ? CellCounters[idx2] : 0;
-
-    GroupMemoryBarrierWithGroupSync();
-
-    // Up-sweep (reduce)
-    uint offset = 1;
-    for (uint d = 256; d > 0; d >>= 1)
+    uint sum = 0;
+    for (uint i = 0; i < SPATIAL_HASH_SIZE; ++i)
     {
-        if (tid < d)
-        {
-            uint ai = offset * (2 * tid + 1) - 1;
-            uint bi = offset * (2 * tid + 2) - 1;
-            SharedData[bi] += SharedData[ai];
-        }
-        offset *= 2;
-        GroupMemoryBarrierWithGroupSync();
+        uint count = CellCounters[i];
+        PrefixSumBuffer[i] = sum;
+        sum += count;
     }
-
-    // Clear last element
-    if (tid == 0)
-        SharedData[511] = 0;
-    GroupMemoryBarrierWithGroupSync();
-
-    // Down-sweep
-    for (uint d2 = 1; d2 < 512; d2 *= 2)
-    {
-        offset >>= 1;
-        if (tid < d2)
-        {
-            uint ai = offset * (2 * tid + 1) - 1;
-            uint bi = offset * (2 * tid + 2) - 1;
-            uint t = SharedData[ai];
-            SharedData[ai] = SharedData[bi];
-            SharedData[bi] += t;
-        }
-        GroupMemoryBarrierWithGroupSync();
-    }
-
-    // Store results
-    if (idx1 < SPATIAL_HASH_SIZE)
-        PrefixSumBuffer[idx1] = SharedData[tid * 2];
-    if (idx2 < SPATIAL_HASH_SIZE)
-        PrefixSumBuffer[idx2] = SharedData[tid * 2 + 1];
 }
 
 //=============================================================================
 // Pass 3: Scatter particles into cells
+// NOTE: CellCounters is reused as local index counter (cleared before scatter)
 //=============================================================================
 
 [numthreads(256, 1, 1)]
@@ -134,15 +90,13 @@ void ScatterParticlesCS(uint3 DispatchThreadId : SV_DispatchThreadID)
     uint Hash = ParticleCellHashes[ParticleIdx];
     uint StartIndex = PrefixSumBuffer[Hash];
 
-    // Atomic increment to get position within cell
+    // Atomic increment CellCounters to get position within cell
+    // CellCounters was cleared between Count and Scatter passes
     uint LocalIdx;
-    InterlockedAdd(CellData[Hash].y, 1, LocalIdx);
+    InterlockedAdd(CellCounters[Hash], 1, LocalIdx);
 
-    // Clamp to max particles per cell
-    if (LocalIdx < MAX_PARTICLES_PER_CELL)
-    {
-        ParticleIndices[StartIndex + LocalIdx] = ParticleIdx;
-    }
+    // Write particle index to sorted position (no limit in multipass)
+    ParticleIndices[StartIndex + LocalIdx] = ParticleIdx;
 }
 
 //=============================================================================
@@ -157,10 +111,8 @@ void FinalizeCellDataCS(uint3 DispatchThreadId : SV_DispatchThreadID)
         return;
 
     uint StartIndex = PrefixSumBuffer[CellIdx];
-    uint Count = CellData[CellIdx].y;
-
-    // Clamp count to max
-    Count = min(Count, MAX_PARTICLES_PER_CELL);
+    // Read count from CellCounters (after Scatter pass)
+    uint Count = CellCounters[CellIdx];
 
     CellData[CellIdx] = uint2(StartIndex, Count);
 }
@@ -214,6 +166,59 @@ void ClearCellDataCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 }
 
 //=============================================================================
+// Simple Version: Sort particles within each cell
+// For fixed-layout hash (Hash * MAX_PARTICLES_PER_CELL)
+//=============================================================================
+
+[numthreads(256, 1, 1)]
+void SortCellParticlesCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+    uint CellIdx = DispatchThreadId.x;
+    if (CellIdx >= SPATIAL_HASH_SIZE)
+        return;
+
+    uint Count = min(CellCounts[CellIdx], MAX_PARTICLES_PER_CELL);
+    if (Count <= 1)
+        return;
+
+    uint BaseOffset = CellIdx * MAX_PARTICLES_PER_CELL;
+
+    // Load indices into local array
+    uint LocalIndices[MAX_PARTICLES_PER_CELL];
+    for (uint i = 0; i < Count; ++i)
+    {
+        LocalIndices[i] = ParticleIndices[BaseOffset + i];
+    }
+
+    // Simple insertion sort
+    for (uint j = 1; j < Count; ++j)
+    {
+        uint key = LocalIndices[j];
+        uint insertPos = j;
+
+        for (uint scan = j; scan > 0; --scan)
+        {
+            if (LocalIndices[scan - 1] > key)
+            {
+                LocalIndices[scan] = LocalIndices[scan - 1];
+                insertPos = scan - 1;
+            }
+            else
+            {
+                break;
+            }
+        }
+        LocalIndices[insertPos] = key;
+    }
+
+    // Write back sorted indices
+    for (uint m = 0; m < Count; ++m)
+    {
+        ParticleIndices[BaseOffset + m] = LocalIndices[m];
+    }
+}
+
+//=============================================================================
 // Clear buffers (Multi-pass version - with CellCounters)
 // Used by multi-pass build method
 //=============================================================================
@@ -226,7 +231,51 @@ void ClearCellDataMultipassCS(uint3 DispatchThreadId : SV_DispatchThreadID)
     if (CellIdx >= SPATIAL_HASH_SIZE)
         return;
 
-    CellData[CellIdx] = uint2(CellIdx * MAX_PARTICLES_PER_CELL, 0);
+    // CellData will be filled by Finalize pass
+    CellData[CellIdx] = uint2(0, 0);
     CellCounters[CellIdx] = 0;
+}
+
+//=============================================================================
+// Sort particles within each bucket (deterministic order for smin)
+// Uses Selection Sort in global memory - NO size limit per bucket
+//=============================================================================
+
+[numthreads(256, 1, 1)]
+void SortBucketParticlesCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+    uint CellIdx = DispatchThreadId.x;
+    if (CellIdx >= SPATIAL_HASH_SIZE)
+        return;
+
+    uint2 Cell = CellData[CellIdx];
+    uint StartIndex = Cell.x;
+    uint Count = Cell.y;
+
+    if (Count <= 1)
+        return;
+
+    // Selection Sort in global memory (O(n²) but no size limit)
+    for (uint i = 0; i < Count - 1; ++i)
+    {
+        uint minIdx = i;
+        uint minVal = ParticleIndices[StartIndex + i];
+
+        for (uint j = i + 1; j < Count; ++j)
+        {
+            uint val = ParticleIndices[StartIndex + j];
+            if (val < minVal)
+            {
+                minIdx = j;
+                minVal = val;
+            }
+        }
+
+        if (minIdx != i)
+        {
+            ParticleIndices[StartIndex + minIdx] = ParticleIndices[StartIndex + i];
+            ParticleIndices[StartIndex + i] = minVal;
+        }
+    }
 }
 #endif

@@ -10,8 +10,18 @@
 // Shader Implementations
 //=============================================================================
 
+// Simple Version Shaders
 IMPLEMENT_GLOBAL_SHADER(FClearCellDataCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "ClearCellDataCS", SF_Compute);
 IMPLEMENT_GLOBAL_SHADER(FBuildSpatialHashSimpleCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "BuildSpatialHashSimpleCS", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FSortCellParticlesCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "SortCellParticlesCS", SF_Compute);
+
+// Multi-pass Version Shaders
+IMPLEMENT_GLOBAL_SHADER(FClearCellDataMultipassCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "ClearCellDataMultipassCS", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FCountParticlesPerCellCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "CountParticlesPerCellCS", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FPrefixSumCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "PrefixSumCS", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FScatterParticlesCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "ScatterParticlesCS", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FFinalizeCellDataCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "FinalizeCellDataCS", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FSortBucketParticlesCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "SortBucketParticlesCS", SF_Compute);
 
 //=============================================================================
 // FSpatialHashBuilder Implementation
@@ -259,6 +269,223 @@ bool FSpatialHashBuilder::CreateAndBuildHash(
     }
 
     //UE_LOG(LogTemp, Log, TEXT("CreateAndBuildHash - Success (Particles: %d, CellSize: %.2f)"), ParticleCount, CellSize);
+
+    return true;
+}
+
+//=============================================================================
+// Multi-pass Spatial Hash Build (Dynamic Array - No particle limit per cell)
+//=============================================================================
+
+bool FSpatialHashBuilder::CreateAndBuildHashMultipass(
+    FRDGBuilder& GraphBuilder,
+    FRDGBufferSRVRef ParticlePositionsSRV,
+    int32 ParticleCount,
+    float CellSize,
+    FSpatialHashMultipassResources& OutResources)
+{
+    OutResources.Reset();
+
+    if (ParticleCount <= 0 || !ParticlePositionsSRV)
+    {
+        return false;
+    }
+
+    if (CellSize <= 0.0f)
+    {
+        return false;
+    }
+
+    FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
+    if (!ShaderMap)
+    {
+        return false;
+    }
+
+    // Get all shaders
+    TShaderMapRef<FClearCellDataMultipassCS> ClearShader(ShaderMap);
+    TShaderMapRef<FCountParticlesPerCellCS> CountShader(ShaderMap);
+    TShaderMapRef<FPrefixSumCS> PrefixSumShader(ShaderMap);
+    TShaderMapRef<FScatterParticlesCS> ScatterShader(ShaderMap);
+    TShaderMapRef<FFinalizeCellDataCS> FinalizeShader(ShaderMap);
+    TShaderMapRef<FSortBucketParticlesCS> SortShader(ShaderMap);
+
+    if (!ClearShader.IsValid() || !CountShader.IsValid() || !PrefixSumShader.IsValid() ||
+        !ScatterShader.IsValid() || !FinalizeShader.IsValid() || !SortShader.IsValid())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("CreateAndBuildHashMultipass - One or more shaders not valid"));
+        return false;
+    }
+
+    OutResources.CellSize = CellSize;
+    OutResources.ParticleCount = ParticleCount;
+
+    RDG_EVENT_SCOPE(GraphBuilder, "SpatialHash::BuildMultipass (Particles: %d)", ParticleCount);
+
+    //=========================================================================
+    // Create Buffers
+    //=========================================================================
+
+    // CellData: {startIndex, count} per cell
+    {
+        FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(FUintVector2), SPATIAL_HASH_SIZE);
+        Desc.Usage |= EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::ShaderResource;
+        OutResources.CellDataBuffer = GraphBuilder.CreateBuffer(Desc, TEXT("SpatialHash.CellData"));
+        OutResources.CellDataSRV = GraphBuilder.CreateSRV(OutResources.CellDataBuffer);
+        OutResources.CellDataUAV = GraphBuilder.CreateUAV(OutResources.CellDataBuffer);
+    }
+
+    // ParticleIndices: Dynamic size = ParticleCount
+    {
+        FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), ParticleCount);
+        Desc.Usage |= EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::ShaderResource;
+        OutResources.ParticleIndicesBuffer = GraphBuilder.CreateBuffer(Desc, TEXT("SpatialHash.ParticleIndices"));
+        OutResources.ParticleIndicesSRV = GraphBuilder.CreateSRV(OutResources.ParticleIndicesBuffer);
+        OutResources.ParticleIndicesUAV = GraphBuilder.CreateUAV(OutResources.ParticleIndicesBuffer);
+    }
+
+    // CellCounters: Atomic counter per cell (temporary)
+    {
+        FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), SPATIAL_HASH_SIZE);
+        Desc.Usage |= EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::ShaderResource;
+        OutResources.CellCountersBuffer = GraphBuilder.CreateBuffer(Desc, TEXT("SpatialHash.CellCounters"));
+        OutResources.CellCountersUAV = GraphBuilder.CreateUAV(OutResources.CellCountersBuffer);
+    }
+
+    // ParticleCellHashes: Hash for each particle
+    {
+        FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), ParticleCount);
+        Desc.Usage |= EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::ShaderResource;
+        OutResources.ParticleCellHashesBuffer = GraphBuilder.CreateBuffer(Desc, TEXT("SpatialHash.ParticleCellHashes"));
+        OutResources.ParticleCellHashesSRV = GraphBuilder.CreateSRV(OutResources.ParticleCellHashesBuffer);
+        OutResources.ParticleCellHashesUAV = GraphBuilder.CreateUAV(OutResources.ParticleCellHashesBuffer);
+    }
+
+    // PrefixSumBuffer: Prefix sum workspace
+    {
+        FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), SPATIAL_HASH_SIZE);
+        Desc.Usage |= EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::ShaderResource;
+        OutResources.PrefixSumBuffer = GraphBuilder.CreateBuffer(Desc, TEXT("SpatialHash.PrefixSum"));
+        OutResources.PrefixSumSRV = GraphBuilder.CreateSRV(OutResources.PrefixSumBuffer);
+        OutResources.PrefixSumUAV = GraphBuilder.CreateUAV(OutResources.PrefixSumBuffer);
+    }
+
+    uint32 NumCellGroups = FMath::DivideAndRoundUp(SPATIAL_HASH_SIZE, SPATIAL_HASH_THREAD_GROUP_SIZE);
+    uint32 NumParticleGroups = FMath::DivideAndRoundUp((uint32)ParticleCount, SPATIAL_HASH_THREAD_GROUP_SIZE);
+
+    //=========================================================================
+    // Pass 1: Clear CellData and CellCounters
+    //=========================================================================
+    {
+        FClearCellDataMultipassCS::FParameters* ClearParams =
+            GraphBuilder.AllocParameters<FClearCellDataMultipassCS::FParameters>();
+        ClearParams->CellData = OutResources.CellDataUAV;
+        ClearParams->CellCounters = OutResources.CellCountersUAV;
+
+        FComputeShaderUtils::AddPass(
+            GraphBuilder,
+            RDG_EVENT_NAME("SpatialHash::Clear"),
+            ClearShader,
+            ClearParams,
+            FIntVector(NumCellGroups, 1, 1));
+    }
+
+    //=========================================================================
+    // Pass 2: Count particles per cell
+    //=========================================================================
+    {
+        FCountParticlesPerCellCS::FParameters* CountParams =
+            GraphBuilder.AllocParameters<FCountParticlesPerCellCS::FParameters>();
+        CountParams->ParticlePositions = ParticlePositionsSRV;
+        CountParams->ParticleCount = ParticleCount;
+        CountParams->CellSize = CellSize;
+        CountParams->CellCounters = OutResources.CellCountersUAV;
+        CountParams->ParticleCellHashes = OutResources.ParticleCellHashesUAV;
+
+        FComputeShaderUtils::AddPass(
+            GraphBuilder,
+            RDG_EVENT_NAME("SpatialHash::CountParticles"),
+            CountShader,
+            CountParams,
+            FIntVector(NumParticleGroups, 1, 1));
+    }
+
+    //=========================================================================
+    // Pass 3: Prefix sum (single-threaded for correctness)
+    //=========================================================================
+    {
+        FPrefixSumCS::FParameters* PrefixParams =
+            GraphBuilder.AllocParameters<FPrefixSumCS::FParameters>();
+        PrefixParams->CellCounters = OutResources.CellCountersUAV;
+        PrefixParams->PrefixSumBuffer = OutResources.PrefixSumUAV;
+
+        FComputeShaderUtils::AddPass(
+            GraphBuilder,
+            RDG_EVENT_NAME("SpatialHash::PrefixSum"),
+            PrefixSumShader,
+            PrefixParams,
+            FIntVector(1, 1, 1));
+    }
+
+    //=========================================================================
+    // Pass 3.5: Clear CellCounters before Scatter (reuse as local index)
+    //=========================================================================
+    AddClearUAVPass(GraphBuilder, OutResources.CellCountersUAV, 0u);
+
+    //=========================================================================
+    // Pass 4: Scatter particles into cells
+    //=========================================================================
+    {
+        FScatterParticlesCS::FParameters* ScatterParams =
+            GraphBuilder.AllocParameters<FScatterParticlesCS::FParameters>();
+        ScatterParams->ParticleCellHashes = OutResources.ParticleCellHashesUAV;
+        ScatterParams->PrefixSumBuffer = OutResources.PrefixSumUAV;
+        ScatterParams->ParticleCount = ParticleCount;
+        ScatterParams->CellCounters = OutResources.CellCountersUAV;
+        ScatterParams->ParticleIndices = OutResources.ParticleIndicesUAV;
+
+        FComputeShaderUtils::AddPass(
+            GraphBuilder,
+            RDG_EVENT_NAME("SpatialHash::Scatter"),
+            ScatterShader,
+            ScatterParams,
+            FIntVector(NumParticleGroups, 1, 1));
+    }
+
+    //=========================================================================
+    // Pass 5: Finalize cell data (set start indices)
+    //=========================================================================
+    {
+        FFinalizeCellDataCS::FParameters* FinalizeParams =
+            GraphBuilder.AllocParameters<FFinalizeCellDataCS::FParameters>();
+        FinalizeParams->PrefixSumBuffer = OutResources.PrefixSumUAV;
+        FinalizeParams->CellCounters = OutResources.CellCountersUAV;
+        FinalizeParams->CellData = OutResources.CellDataUAV;
+
+        FComputeShaderUtils::AddPass(
+            GraphBuilder,
+            RDG_EVENT_NAME("SpatialHash::Finalize"),
+            FinalizeShader,
+            FinalizeParams,
+            FIntVector(NumCellGroups, 1, 1));
+    }
+
+    //=========================================================================
+    // Pass 6: Sort particles within each bucket (deterministic order)
+    //=========================================================================
+    {
+        FSortBucketParticlesCS::FParameters* SortParams =
+            GraphBuilder.AllocParameters<FSortBucketParticlesCS::FParameters>();
+        SortParams->CellData = OutResources.CellDataUAV;
+        SortParams->ParticleIndices = OutResources.ParticleIndicesUAV;
+
+        FComputeShaderUtils::AddPass(
+            GraphBuilder,
+            RDG_EVENT_NAME("SpatialHash::Sort"),
+            SortShader,
+            SortParams,
+            FIntVector(NumCellGroups, 1, 1));
+    }
 
     return true;
 }

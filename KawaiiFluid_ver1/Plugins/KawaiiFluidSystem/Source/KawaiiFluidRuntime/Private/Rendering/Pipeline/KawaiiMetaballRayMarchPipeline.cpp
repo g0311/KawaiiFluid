@@ -6,6 +6,8 @@
 #include "GPU/GPUFluidSimulator.h"
 #include "GPU/GPUFluidSimulatorShaders.h"
 #include "Core/KawaiiRenderParticle.h"
+#include "Rendering/Shaders/FluidSpatialHashShaders.h"
+#include "Rendering/Shaders/ExtractRenderPositionsShaders.h"
 
 // Separated shading implementation
 #include "Rendering/Shading/KawaiiRayMarchShadingImpl.h"
@@ -352,11 +354,69 @@ bool FKawaiiMetaballRayMarchPipeline::PrepareParticleBuffer(
 
 		UE_LOG(LogTemp, Verbose, TEXT("KawaiiFluid: Using SDF Volume optimization (%dx%dx%d)"),
 			Resolution, Resolution, Resolution);
+
+		// ========== HYBRID MODE: Build Spatial Hash for precise final evaluation ==========
+		// SDF Volume handles 90% of ray distance (fast O(1) sampling)
+		// Spatial Hash handles 10% final evaluation (precise O(k) lookup)
+		const bool bUseSpatialHash = RenderParams.bUseSpatialHash;
+		if (bUseSpatialHash)
+		{
+			RDG_EVENT_SCOPE(GraphBuilder, "SpatialHashBuild_Hybrid");
+
+			// Cell size = SearchRadius to ensure 3x3x3 search covers all neighbors
+			// SearchRadius = ParticleRadius * 2.0 + Smoothness
+			float SearchRadius = AverageParticleRadius * 2.0f + RenderParams.SDFSmoothness;
+			float CellSize = SearchRadius;
+
+			// Step 1: Extract float3 positions from FKawaiiRenderParticle buffer
+			FRDGBufferRef PositionBuffer = GraphBuilder.CreateBuffer(
+				FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector3f), TotalParticleCount),
+				TEXT("SpatialHash.ExtractedPositions"));
+			FRDGBufferUAVRef PositionUAV = GraphBuilder.CreateUAV(PositionBuffer);
+			FRDGBufferSRVRef PositionSRV = GraphBuilder.CreateSRV(PositionBuffer);
+
+			FExtractRenderPositionsPassBuilder::AddExtractPositionsPass(
+				GraphBuilder,
+				ParticleBufferSRV,
+				PositionUAV,
+				TotalParticleCount);
+
+			// Step 2: Build Multi-pass Spatial Hash with extracted positions
+			FSpatialHashMultipassResources HashResources;
+			bool bHashSuccess = FSpatialHashBuilder::CreateAndBuildHashMultipass(
+				GraphBuilder,
+				PositionSRV,
+				TotalParticleCount,
+				CellSize,
+				HashResources);
+
+			if (bHashSuccess && HashResources.IsValid())
+			{
+				CachedPipelineData.SpatialHashData.bUseSpatialHash = true;
+				CachedPipelineData.SpatialHashData.CellDataSRV = HashResources.CellDataSRV;
+				CachedPipelineData.SpatialHashData.ParticleIndicesSRV = HashResources.ParticleIndicesSRV;
+				CachedPipelineData.SpatialHashData.CellSize = CellSize;
+
+				UE_LOG(LogTemp, Verbose, TEXT("KawaiiFluid: HYBRID MODE - SDF Volume + Spatial Hash (%d particles, CellSize: %.2f)"),
+					TotalParticleCount, CellSize);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("KawaiiFluid: Spatial Hash build failed for Hybrid mode, using SDF Volume only"));
+				CachedPipelineData.SpatialHashData.bUseSpatialHash = false;
+			}
+		}
+		else
+		{
+			CachedPipelineData.SpatialHashData.bUseSpatialHash = false;
+		}
 	}
 	else
 	{
+		// No SDF Volume: Direct O(N) particle iteration (legacy mode)
 		CachedPipelineData.SDFVolumeData.bUseSDFVolume = false;
-		UE_LOG(LogTemp, Verbose, TEXT("KawaiiFluid: Using direct particle iteration (legacy)"));
+		CachedPipelineData.SpatialHashData.bUseSpatialHash = false;
+		UE_LOG(LogTemp, Verbose, TEXT("KawaiiFluid: Using direct particle iteration (legacy O(N))"));
 	}
 
 	return true;

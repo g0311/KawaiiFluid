@@ -26,6 +26,16 @@ float3 SDFVolumeMax;
 int3 SDFVolumeResolution;
 #endif
 
+//=============================================================================
+// Spatial Hash Parameters (used when USE_SDF_VOLUME && USE_SPATIAL_HASH)
+// HYBRID MODE: SDF Volume for fast 90% approach, Spatial Hash for precise 10% final
+//=============================================================================
+#if USE_SDF_VOLUME && USE_SPATIAL_HASH
+StructuredBuffer<uint2> CellData;                   // {startIndex, count} per cell
+StructuredBuffer<uint> SpatialHashParticleIndices;  // Sorted particle indices
+float SpatialHashCellSize;
+#endif
+
 // Ray Marching Parameters
 float SDFSmoothness;
 int MaxRayMarchSteps;
@@ -206,10 +216,20 @@ FRayMarchResult RayMarchSDF(float3 ro, float3 rd, float maxDist)
 		float3 p = ro + rd * t;
 
 #if USE_SDF_VOLUME
-		// Optimized path: Sample from pre-baked 3D SDF texture (O(1))
+		// Phase 1: Fast approach using SDF Volume (O(1) texture sampling)
 		float sdf = SampleSDFVolume(p);
+
+	#if USE_SPATIAL_HASH
+		// HYBRID MODE: When close to surface, switch to Spatial Hash for precise evaluation
+		// SDF Volume is fast but approximate, Spatial Hash gives accurate surface detection
+		if (sdf < SpatialHashCellSize)
+		{
+			// Phase 2: Precise evaluation using Spatial Hash (O(k) neighbor lookup)
+			sdf = EvaluateMetaballSDFWithSpatialHash(p, RenderParticles, CellData, SpatialHashParticleIndices, ParticleCount, ParticleRadius, SDFSmoothness, SpatialHashCellSize);
+		}
+	#endif
 #else
-		// Direct path: Evaluate metaball SDF from particle buffer (O(N) particles)
+		// Fallback: Direct O(N) particle iteration (legacy mode, no SDF Volume)
 		float sdf = EvaluateMetaballSDFFromRenderParticles(p, RenderParticles, ParticleCount, ParticleRadius, SDFSmoothness);
 #endif
 
@@ -224,10 +244,15 @@ FRayMarchResult RayMarchSDF(float3 ro, float3 rd, float maxDist)
 			result.LastSDF = sdf;
 
 #if USE_SDF_VOLUME
-			// Calculate normal from volume texture
+	#if USE_SPATIAL_HASH
+			// OPTIMIZED: Analytic gradient normal (1-Loop instead of 5-Loop)
+			result.Normal = CalculateNormalAnalyticWithSpatialHash(p, sdf, RenderParticles, CellData, SpatialHashParticleIndices, ParticleCount, ParticleRadius, SDFSmoothness, SpatialHashCellSize);
+	#else
+			// Normal from SDF Volume texture
 			result.Normal = CalculateSDFNormalFromVolume(p, sdf);
+	#endif
 #else
-			// Calculate normal using 3-tap from particle buffer (faster)
+			// Fallback: Normal from direct particle evaluation
 			result.Normal = CalculateSDFNormal3TapFromRenderParticles(p, sdf, RenderParticles, ParticleCount, ParticleRadius, SDFSmoothness);
 #endif
 

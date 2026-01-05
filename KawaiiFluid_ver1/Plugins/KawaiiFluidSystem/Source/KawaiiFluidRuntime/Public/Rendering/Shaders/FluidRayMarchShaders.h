@@ -64,6 +64,14 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidRayMarchParameters, )
 	SHADER_PARAMETER(FIntVector, SDFVolumeResolution)
 
 	//========================================
+	// Spatial Hash (for hybrid mode: SDF Volume + Spatial Hash)
+	// HYBRID: SDF Volume for 90% fast approach, Spatial Hash for 10% precise final
+	//========================================
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FUintVector2>, CellData)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, SpatialHashParticleIndices)
+	SHADER_PARAMETER(float, SpatialHashCellSize)
+
+	//========================================
 	// SceneDepth UV Mapping
 	//========================================
 	SHADER_PARAMETER(FVector2f, SceneViewRect)
@@ -113,6 +121,12 @@ public:
 class FUseSDFVolumeDim : SHADER_PERMUTATION_BOOL("USE_SDF_VOLUME");
 
 /**
+ * @brief Shader permutation dimension for Spatial Hash acceleration
+ * When enabled, uses O(k) spatial hash lookup instead of O(N) particle iteration
+ */
+class FUseSpatialHashDim : SHADER_PERMUTATION_BOOL("USE_SPATIAL_HASH");
+
+/**
  * @brief Shader permutation dimension for Depth output (MRT for shadow projection)
  * When enabled, outputs fluid depth to RenderTarget[1] for VSM shadow generation.
  */
@@ -129,9 +143,11 @@ class FOutputDepthDim : SHADER_PERMUTATION_BOOL("OUTPUT_DEPTH");
  * - Specular highlights
  * - Beer's Law absorption
  *
- * Supports two modes via USE_SDF_VOLUME permutation:
- * - USE_SDF_VOLUME=0: Original O(N) particle iteration (slower)
- * - USE_SDF_VOLUME=1: Optimized O(1) volume texture sampling (faster)
+ * Permutation modes:
+ * - USE_SDF_VOLUME=0: Original O(N) particle iteration (slowest, legacy)
+ * - USE_SDF_VOLUME=1, USE_SPATIAL_HASH=0: O(1) volume texture sampling (fast)
+ * - USE_SDF_VOLUME=1, USE_SPATIAL_HASH=1: HYBRID mode - SDF Volume for 90%
+ *   fast ray approach + Spatial Hash for 10% precise final evaluation (best quality)
  */
 class FFluidRayMarchPS : public FGlobalShader
 {
@@ -140,7 +156,7 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FFluidRayMarchPS, FGlobalShader);
 
 	using FParameters = FFluidRayMarchParameters;
-	using FPermutationDomain = TShaderPermutationDomain<FUseSDFVolumeDim, FOutputDepthDim>;
+	using FPermutationDomain = TShaderPermutationDomain<FUseSDFVolumeDim, FUseSpatialHashDim, FOutputDepthDim>;
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{

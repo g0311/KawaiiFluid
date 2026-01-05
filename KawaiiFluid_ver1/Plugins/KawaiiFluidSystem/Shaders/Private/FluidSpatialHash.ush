@@ -1,6 +1,5 @@
 // Copyright KawaiiFluid Team. All Rights Reserved.
-// GPU Spatial Hash for accelerated SDF evaluation
-// Reduces O(N) per-sample to O(k) where k = avg particles per cell
+// GPU Spatial Hash for physics simulation (density, pressure, viscosity)
 
 #pragma once
 
@@ -13,25 +12,10 @@
 #define SPATIAL_HASH_SIZE 65536  // 2^16 = 64K cells
 #endif
 
-// Maximum particles per cell (trade-off: memory vs accuracy)
+// Maximum particles per cell (for Simple version fixed layout)
 #ifndef MAX_PARTICLES_PER_CELL
 #define MAX_PARTICLES_PER_CELL 16
 #endif
-
-// Search radius multiplier (how many cells to search)
-// Increased to 4 for proper smooth blending with large SDFSmoothness values
-#ifndef SPATIAL_HASH_SEARCH_RADIUS
-#define SPATIAL_HASH_SEARCH_RADIUS 4
-#endif
-
-//=============================================================================
-// Spatial Hash Data Structures
-//=============================================================================
-
-// Simplified structure for reliable atomic operations:
-// CellCounts[hash] = count (number of particles in this cell)
-// StartIndex is implicitly: hash * MAX_PARTICLES_PER_CELL
-// Particles stored in ParticleIndices[hash * MAX_PARTICLES_PER_CELL + slot]
 
 //=============================================================================
 // Hash Functions
@@ -44,140 +28,12 @@ int3 WorldToCell(float3 WorldPos, float CellSize)
 }
 
 // Hash function for 3D cell coordinate
-// Uses prime multiplication for better distribution
 uint HashCell(int3 CellCoord)
 {
-    // Large primes for hash mixing
     const uint p1 = 73856093u;
     const uint p2 = 19349663u;
     const uint p3 = 83492791u;
 
     uint h = (uint(CellCoord.x) * p1) ^ (uint(CellCoord.y) * p2) ^ (uint(CellCoord.z) * p3);
-    return h & (SPATIAL_HASH_SIZE - 1);  // Fast modulo for power of 2
-}
-
-// Alternative: Morton code (Z-order curve) for better cache locality
-uint MortonHash(int3 CellCoord)
-{
-    // Expand bits for interleaving
-    uint x = uint(CellCoord.x) & 0x1FF;  // 9 bits
-    uint y = uint(CellCoord.y) & 0x1FF;
-    uint z = uint(CellCoord.z) & 0x1FF;
-
-    // Interleave bits
-    x = (x | (x << 16)) & 0x030000FF;
-    x = (x | (x << 8)) & 0x0300F00F;
-    x = (x | (x << 4)) & 0x030C30C3;
-    x = (x | (x << 2)) & 0x09249249;
-
-    y = (y | (y << 16)) & 0x030000FF;
-    y = (y | (y << 8)) & 0x0300F00F;
-    y = (y | (y << 4)) & 0x030C30C3;
-    y = (y | (y << 2)) & 0x09249249;
-
-    z = (z | (z << 16)) & 0x030000FF;
-    z = (z | (z << 8)) & 0x0300F00F;
-    z = (z | (z << 4)) & 0x030C30C3;
-    z = (z | (z << 2)) & 0x09249249;
-
-    return (x | (y << 1) | (z << 2)) & (SPATIAL_HASH_SIZE - 1);
-}
-
-//=============================================================================
-// SDF Evaluation with Spatial Hash
-//=============================================================================
-
-// Evaluate metaball SDF using spatial hash for acceleration
-// Instead of O(N) all particles, only checks O(k) nearby particles
-float EvaluateMetaballSDFWithHash(
-    float3 p,
-    StructuredBuffer<float3> ParticlePositions,
-    StructuredBuffer<uint> CellCounts,          // count per cell (simplified from uint2)
-    StructuredBuffer<uint> ParticleIndices,     // Particle indices per cell
-    int ParticleCount,
-    float ParticleRadius,
-    float Smoothness,
-    float CellSize)
-{
-    if (ParticleCount <= 0)
-        return 1e10;
-
-    // Determine search range in cells
-    float SearchRadius = ParticleRadius * 2.0 + Smoothness;
-    int CellRadius = int(ceil(SearchRadius / CellSize));
-    CellRadius = min(CellRadius, SPATIAL_HASH_SEARCH_RADIUS);
-
-    // Get center cell
-    int3 CenterCell = WorldToCell(p, CellSize);
-
-    // Initialize SDF to large value
-    float sdf = 1e10;
-    bool bFoundAny = false;
-
-    // Search neighboring cells
-    for (int dz = -CellRadius; dz <= CellRadius; ++dz)
-    {
-        for (int dy = -CellRadius; dy <= CellRadius; ++dy)
-        {
-            for (int dx = -CellRadius; dx <= CellRadius; ++dx)
-            {
-                int3 NeighborCell = CenterCell + int3(dx, dy, dz);
-                uint Hash = HashCell(NeighborCell);
-
-                // Get cell count (startIndex is implicitly Hash * MAX_PARTICLES_PER_CELL)
-                uint Count = min(CellCounts[Hash], MAX_PARTICLES_PER_CELL);
-                uint StartIndex = Hash * MAX_PARTICLES_PER_CELL;
-
-                // Process particles in this cell
-                for (uint i = 0; i < Count; ++i)
-                {
-                    uint ParticleIdx = ParticleIndices[StartIndex + i];
-                    if (ParticleIdx >= (uint)ParticleCount)
-                        continue;
-
-                    float3 ParticlePos = ParticlePositions[ParticleIdx];
-                    float d = length(p - ParticlePos) - ParticleRadius;
-
-                    if (!bFoundAny)
-                    {
-                        sdf = d;
-                        bFoundAny = true;
-                    }
-                    else
-                    {
-                        // Smooth minimum (polynomial)
-                        float h = max(Smoothness - abs(sdf - d), 0.0) / Smoothness;
-                        sdf = min(sdf, d) - h * h * Smoothness * 0.25;
-                    }
-                }
-            }
-        }
-    }
-
-    return bFoundAny ? sdf : 1e10;
-}
-
-//=============================================================================
-// Normal Calculation with Spatial Hash
-//=============================================================================
-
-float3 CalculateSDFNormal3TapWithHash(
-    float3 p,
-    float centerSDF,
-    StructuredBuffer<float3> ParticlePositions,
-    StructuredBuffer<uint> CellCounts,
-    StructuredBuffer<uint> ParticleIndices,
-    int ParticleCount,
-    float ParticleRadius,
-    float Smoothness,
-    float CellSize)
-{
-    const float eps = 0.001;
-
-    float3 n;
-    n.x = EvaluateMetaballSDFWithHash(p + float3(eps, 0, 0), ParticlePositions, CellCounts, ParticleIndices, ParticleCount, ParticleRadius, Smoothness, CellSize) - centerSDF;
-    n.y = EvaluateMetaballSDFWithHash(p + float3(0, eps, 0), ParticlePositions, CellCounts, ParticleIndices, ParticleCount, ParticleRadius, Smoothness, CellSize) - centerSDF;
-    n.z = EvaluateMetaballSDFWithHash(p + float3(0, 0, eps), ParticlePositions, CellCounts, ParticleIndices, ParticleCount, ParticleRadius, Smoothness, CellSize) - centerSDF;
-
-    return normalize(n);
+    return h & (SPATIAL_HASH_SIZE - 1);
 }

@@ -81,6 +81,38 @@ struct FSDFVolumeData
 };
 
 /**
+ * Spatial Hash data for accelerated SDF evaluation
+ * Uses GPU spatial hash grid for O(k) neighbor lookup
+ */
+struct FSpatialHashData
+{
+	/** Whether to use Spatial Hash acceleration */
+	bool bUseSpatialHash = false;
+
+	/** CellData buffer SRV: {startIndex, count} per cell */
+	FRDGBufferSRVRef CellDataSRV = nullptr;
+
+	/** ParticleIndices buffer SRV: sorted particle indices */
+	FRDGBufferSRVRef ParticleIndicesSRV = nullptr;
+
+	/** Cell size for spatial hashing */
+	float CellSize = 0.0f;
+
+	bool IsValid() const
+	{
+		return bUseSpatialHash && CellDataSRV != nullptr && ParticleIndicesSRV != nullptr;
+	}
+
+	void Reset()
+	{
+		bUseSpatialHash = false;
+		CellDataSRV = nullptr;
+		ParticleIndicesSRV = nullptr;
+		CellSize = 0.0f;
+	}
+};
+
+/**
  * RayMarching Pipeline data
  * Contains particle buffer information for ray marching
  */
@@ -98,6 +130,9 @@ struct FRayMarchingPipelineData
 	/** SDF Volume data for optimized ray marching */
 	FSDFVolumeData SDFVolumeData;
 
+	/** Spatial Hash data for accelerated evaluation */
+	FSpatialHashData SpatialHashData;
+
 	bool IsValid() const
 	{
 		return ParticleBufferSRV != nullptr && ParticleCount > 0;
@@ -109,5 +144,6 @@ struct FRayMarchingPipelineData
 		ParticleCount = 0;
 		ParticleRadius = 0.0f;
 		SDFVolumeData.Reset();
+		SpatialHashData.Reset();
 	}
 };

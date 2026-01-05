@@ -297,6 +297,9 @@ void KawaiiRayMarchShading::RenderPostProcessShading(
 	FRDGTextureRef* OutFluidDepthTexture)
 {
 	const bool bUseSDFVolume = PipelineData.SDFVolumeData.IsValid();
+	// HYBRID MODE: Spatial Hash is only used WITH SDF Volume for precise final evaluation
+	// SDF Volume for 90% fast approach + Spatial Hash for 10% precise final
+	const bool bUseSpatialHash = bUseSDFVolume && PipelineData.SpatialHashData.IsValid();
 
 	if (!bUseSDFVolume && !PipelineData.IsValid())
 	{
@@ -391,6 +394,15 @@ void KawaiiRayMarchShading::RenderPostProcessShading(
 		PassParameters->SDFVolumeResolution = PipelineData.SDFVolumeData.VolumeResolution;
 	}
 
+	// Spatial Hash data for HYBRID mode (used WITH SDF Volume)
+	// SDF Volume for 90% fast approach + Spatial Hash for 10% precise final
+	if (bUseSpatialHash)
+	{
+		PassParameters->CellData = PipelineData.SpatialHashData.CellDataSRV;
+		PassParameters->SpatialHashParticleIndices = PipelineData.SpatialHashData.ParticleIndicesSRV;
+		PassParameters->SpatialHashCellSize = PipelineData.SpatialHashData.CellSize;
+	}
+
 	// Ray marching parameters
 	PassParameters->SDFSmoothness = RenderParams.SDFSmoothness;
 	PassParameters->MaxRayMarchSteps = RenderParams.MaxRayMarchSteps;
@@ -455,12 +467,13 @@ void KawaiiRayMarchShading::RenderPostProcessShading(
 
 	FFluidRayMarchPS::FPermutationDomain PermutationVector;
 	PermutationVector.Set<FUseSDFVolumeDim>(bUseSDFVolume);
+	PermutationVector.Set<FUseSpatialHashDim>(bUseSpatialHash);
 	PermutationVector.Set<FOutputDepthDim>(bNeedDepthOutput);  // Enable depth output for scaled-res
 	TShaderMapRef<FFluidRayMarchPS> PixelShader(GlobalShaderMap, PermutationVector);
 
 	GraphBuilder.AddPass(
 		RDG_EVENT_NAME("MetaballPostProcess_RayMarching (%s%s%s)",
-			bUseSDFVolume ? TEXT("SDFVolume") : TEXT("Direct"),
+			bUseSDFVolume ? (bUseSpatialHash ? TEXT("Hybrid:SDF+Hash") : TEXT("SDFVolume")) : TEXT("Direct"),
 			bOutputDepth ? TEXT(", DepthOut") : TEXT(""),
 			bUseScaledRes ? TEXT(", ScaledRes") : TEXT("")),
 		PassParameters,

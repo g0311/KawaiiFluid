@@ -193,6 +193,15 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidMetaballRendererSettings
 			ClampMin = "32", ClampMax = "256"))
 	int32 SDFVolumeResolution = 64;
 
+	/**
+	 * Use Spatial Hash for hybrid SDF evaluation (with SDF Volume)
+	 * HYBRID MODE: SDF Volume for fast 90% ray march + Spatial Hash for precise 10% final evaluation
+	 * HybridSwitchThreshold is auto-calculated: ParticleRadius * 2.0 + SDFSmoothness
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching",
+		meta = (EditCondition = "bEnabled && PipelineType == EMetaballPipelineType::RayMarching && bUseSDFVolumeOptimization"))
+	bool bUseSpatialHash = false;
+
 	//========================================
 	// G-Buffer Mode Parameters
 	//========================================

@@ -589,7 +589,7 @@ private:
 	bool bSimulationEnabled = true;
 
 	/** Independent 모드 플래그 */
-	bool bIndependentSimulation = false;
+	bool bIndependentSimulation = true;
 
 	/** 초기화 여부 */
 	bool bIsInitialized = false;
