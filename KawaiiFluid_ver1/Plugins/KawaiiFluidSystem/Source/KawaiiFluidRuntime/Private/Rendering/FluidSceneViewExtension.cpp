@@ -177,8 +177,7 @@ static void ApplyFluidShadowReceiver(
 		return;
 	}
 
-	TRefCountPtr<IPooledRenderTarget>& VSMTextureRead = Subsystem->GetVSMTextureRead();
-
+	TRefCountPtr<IPooledRenderTarget> VSMTextureRead = Subsystem->GetVSMTextureRead();
 	UE_LOG(LogTemp, Log, TEXT("FluidShadow: ApplyFluidShadowReceiver called - VSMTexture_Read=%d, ShadowCasting=%d"),
 		VSMTextureRead.IsValid(), RenderParams.bEnableShadowCasting);
 
