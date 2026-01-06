@@ -1,0 +1,286 @@
+// Copyright KawaiiFluid Team. All Rights Reserved.
+//
+// Fluid VSM Depth Shader
+//
+// Shadow depth pixel shader that ray marches through the fluid density grid
+// and outputs the actual fluid surface depth via SV_Depth.
+//
+// This shader is used in shadow passes to make the fluid cast proper shadows
+// without requiring mesh geometry generation.
+
+#include "/Engine/Private/Common.ush"
+
+// Density grid parameters
+float3 GridBoundsMin;
+float3 GridBoundsMax;
+float3 GridResolution;
+float3 InvGridSize;
+float SurfaceDensityThreshold;
+int MaxRayMarchSteps;
+
+// Light space matrices
+float4x4 WorldToLightClip;
+float4x4 LightViewMatrix;
+
+// 3D density grid texture
+Texture3D<float> DensityGridTexture;
+SamplerState DensityGridSampler;
+
+/**
+ * Sample density at world position.
+ */
+float SampleDensity(float3 WorldPos)
+{
+    // Convert world position to UV coordinates [0, 1]
+    float3 UV = (WorldPos - GridBoundsMin) * InvGridSize;
+
+    // Check bounds
+    if (any(UV < 0.0f) || any(UV > 1.0f))
+    {
+        return 0.0f;
+    }
+
+    return DensityGridTexture.SampleLevel(DensityGridSampler, UV, 0);
+}
+
+/**
+ * Calculate ray-box intersection.
+ * Returns (tEnter, tExit). tEnter < 0 or tEnter > tExit means no intersection.
+ */
+float2 RayBoxIntersection(float3 RayOrigin, float3 InvRayDir, float3 BoxMin, float3 BoxMax)
+{
+    float3 t0 = (BoxMin - RayOrigin) * InvRayDir;
+    float3 t1 = (BoxMax - RayOrigin) * InvRayDir;
+
+    float3 tMin = min(t0, t1);
+    float3 tMax = max(t0, t1);
+
+    float tEnter = max(max(tMin.x, tMin.y), tMin.z);
+    float tExit = min(min(tMax.x, tMax.y), tMax.z);
+
+    return float2(tEnter, tExit);
+}
+
+/**
+ * Ray march through density grid to find fluid surface.
+ *
+ * @param RayOrigin Ray origin in world space
+ * @param RayDir Normalized ray direction in world space
+ * @param OutHitPos Output hit position in world space
+ * @return True if surface was found
+ */
+bool RayMarchFluidSurface(float3 RayOrigin, float3 RayDir, out float3 OutHitPos)
+{
+    OutHitPos = float3(0, 0, 0);
+
+    // Calculate ray-box intersection
+    float3 InvDir = 1.0f / (RayDir + sign(RayDir) * 0.0001f);
+    float2 tRange = RayBoxIntersection(RayOrigin, InvDir, GridBoundsMin, GridBoundsMax);
+
+    float tEnter = tRange.x;
+    float tExit = tRange.y;
+
+    // No intersection with grid bounds
+    if (tEnter > tExit || tExit < 0.0f)
+    {
+        return false;
+    }
+
+    // Start from grid entry point (or ray origin if inside)
+    tEnter = max(tEnter, 0.001f);
+
+    // Calculate step size based on grid resolution
+    float3 GridSize = GridBoundsMax - GridBoundsMin;
+    float MinVoxelSize = min(min(GridSize.x, GridSize.y), GridSize.z) /
+                         max(max(GridResolution.x, GridResolution.y), GridResolution.z);
+    float StepSize = MinVoxelSize * 0.5f;
+
+    // Ray march loop
+    float t = tEnter;
+    float PrevDensity = 0.0f;
+
+    for (int i = 0; i < MaxRayMarchSteps; ++i)
+    {
+        if (t > tExit)
+        {
+            break;
+        }
+
+        float3 SamplePos = RayOrigin + RayDir * t;
+        float Density = SampleDensity(SamplePos);
+
+        // Check for surface crossing (density threshold)
+        if (Density >= SurfaceDensityThreshold)
+        {
+            // Binary search for precise surface location
+            float tLow = t - StepSize;
+            float tHigh = t;
+
+            for (int j = 0; j < 5; ++j)
+            {
+                float tMid = (tLow + tHigh) * 0.5f;
+                float3 MidPos = RayOrigin + RayDir * tMid;
+                float MidDensity = SampleDensity(MidPos);
+
+                if (MidDensity >= SurfaceDensityThreshold)
+                {
+                    tHigh = tMid;
+                }
+                else
+                {
+                    tLow = tMid;
+                }
+            }
+
+            OutHitPos = RayOrigin + RayDir * tHigh;
+            return true;
+        }
+
+        PrevDensity = Density;
+        t += StepSize;
+    }
+
+    return false;
+}
+
+/**
+ * Convert world position to light clip space depth.
+ */
+float WorldPosToLightDepth(float3 WorldPos)
+{
+    float4 ClipPos = mul(float4(WorldPos, 1.0f), WorldToLightClip);
+    return ClipPos.z / ClipPos.w;
+}
+
+//=============================================================================
+// Vertex Shader
+//=============================================================================
+
+struct FVertexInput
+{
+    float4 Position : ATTRIBUTE0;
+    uint VertexId : SV_VertexID;
+};
+
+struct FVertexOutput
+{
+    float4 Position : SV_POSITION;
+    float3 WorldPosition : TEXCOORD0;
+    float3 LightRayDir : TEXCOORD1;
+};
+
+// View uniform buffer for matrices
+float4x4 LocalToWorld;
+float3 LightDirection;  // Light direction in world space (pointing towards light)
+
+FVertexOutput MainVS(FVertexInput Input)
+{
+    FVertexOutput Output;
+
+    // Transform vertex to world space
+    float4 WorldPos = mul(Input.Position, LocalToWorld);
+    Output.WorldPosition = WorldPos.xyz;
+
+    // Transform to light clip space
+    Output.Position = mul(WorldPos, WorldToLightClip);
+
+    // Light ray direction (from surface towards light)
+    // For shadow mapping, we march from light into scene, so negate
+    Output.LightRayDir = -normalize(LightDirection);
+
+    return Output;
+}
+
+//=============================================================================
+// Pixel Shader
+//=============================================================================
+
+struct FPixelOutput
+{
+    float Depth : SV_Depth;
+};
+
+FPixelOutput MainPS(FVertexOutput Input)
+{
+    FPixelOutput Output;
+
+    // Get ray origin from the rasterized position on the bounding box
+    float3 RayOrigin = Input.WorldPosition;
+    float3 RayDir = normalize(Input.LightRayDir);
+
+    // Ray march to find fluid surface
+    float3 HitPos;
+    bool bHit = RayMarchFluidSurface(RayOrigin, RayDir, HitPos);
+
+    if (!bHit)
+    {
+        // No fluid hit - discard this pixel
+        discard;
+    }
+
+    // Convert hit position to light space depth
+    Output.Depth = WorldPosToLightDepth(HitPos);
+
+    return Output;
+}
+
+//=============================================================================
+// Alternative: Light-space ray origin version
+// More accurate for directional lights
+//=============================================================================
+
+struct FVertexOutputLightSpace
+{
+    float4 Position : SV_POSITION;
+    float3 WorldPosition : TEXCOORD0;
+    float4 LightSpacePos : TEXCOORD1;
+};
+
+float4x4 LightToWorld;  // Inverse of light view-projection
+
+FVertexOutputLightSpace MainVS_LightSpace(FVertexInput Input)
+{
+    FVertexOutputLightSpace Output;
+
+    // Transform vertex to world space
+    float4 WorldPos = mul(Input.Position, LocalToWorld);
+    Output.WorldPosition = WorldPos.xyz;
+
+    // Transform to light clip space
+    Output.Position = mul(WorldPos, WorldToLightClip);
+    Output.LightSpacePos = Output.Position;
+
+    return Output;
+}
+
+FPixelOutput MainPS_LightSpace(FVertexOutputLightSpace Input)
+{
+    FPixelOutput Output;
+
+    // Reconstruct world position from light space
+    float3 WorldPos = Input.WorldPosition;
+
+    // For directional light, use light direction as ray direction
+    float3 RayDir = -normalize(LightDirection);
+
+    // Start ray from far side of bounding box
+    // Calculate entry point into grid from this direction
+    float3 InvDir = 1.0f / (RayDir + sign(RayDir) * 0.0001f);
+    float2 tRange = RayBoxIntersection(WorldPos - RayDir * 10000.0f, InvDir, GridBoundsMin, GridBoundsMax);
+
+    float3 RayOrigin = WorldPos - RayDir * 10000.0f + RayDir * max(0.0f, tRange.x);
+
+    // Ray march to find fluid surface
+    float3 HitPos;
+    bool bHit = RayMarchFluidSurface(RayOrigin, RayDir, HitPos);
+
+    if (!bHit)
+    {
+        discard;
+    }
+
+    // Convert hit position to light space depth
+    Output.Depth = WorldPosToLightDepth(HitPos);
+
+    return Output;
+}

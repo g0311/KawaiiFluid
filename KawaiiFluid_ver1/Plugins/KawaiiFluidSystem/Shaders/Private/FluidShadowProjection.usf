@@ -208,12 +208,12 @@ void ProjectFluidShadowCS(uint3 DispatchThreadId : SV_DispatchThreadID)
         return;
     }
 
-    // Atomic min-depth update
-    // We use InterlockedMax because in reversed-Z, closer objects have larger depth values
-    // For standard depth (0=near, 1=far), use InterlockedMin
+    // Atomic max-depth update for reversed-Z
+    // In reversed-Z: closer objects have larger depth values (1=near, 0=far)
+    // We want the closest depth (largest value) for shadow casting
     uint EncodedDepth = EncodeDepthToUint(LightDepth);
     uint OldValue;
-    InterlockedMin(DepthAtomicBuffer[VSMCoord], EncodedDepth, OldValue);
+    InterlockedMax(DepthAtomicBuffer[VSMCoord], EncodedDepth, OldValue);
 
     // Note: VSM values (depth, depth²) are computed in a separate finalization pass
     // because we need the final min depth first before computing variance
@@ -238,10 +238,10 @@ void FinalizeVSMCS(uint3 DispatchThreadId : SV_DispatchThreadID)
     // Read atomic depth
     uint EncodedDepth = DepthAtomicBuffer[Coord];
 
-    // Check if any fluid was written (initial value is 0xFFFFFFFF for min operation)
-    if (EncodedDepth == 0xFFFFFFFF)
+    // Check if any fluid was written (initial value is 0 for max operation)
+    if (EncodedDepth == 0)
     {
-        // No fluid at this pixel - write far depth
+        // No fluid at this pixel - write far depth (0 in reversed-Z)
         VSMTexture[Coord] = float2(1.0f, 1.0f);
         return;
     }
@@ -254,7 +254,7 @@ void FinalizeVSMCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 }
 
 /**
- * Clear pass: Initialize atomic buffer to max value.
+ * Clear pass: Initialize atomic buffer to zero for max operation.
  */
 [numthreads(THREADGROUP_SIZE_X, THREADGROUP_SIZE_Y, 1)]
 void ClearAtomicBufferCS(uint3 DispatchThreadId : SV_DispatchThreadID)
@@ -264,6 +264,6 @@ void ClearAtomicBufferCS(uint3 DispatchThreadId : SV_DispatchThreadID)
         return;
     }
 
-    // Initialize to max uint (represents far plane for min operation)
-    DepthAtomicBuffer[int2(DispatchThreadId.xy)] = 0xFFFFFFFF;
+    // Initialize to 0 (represents far plane in reversed-Z for max operation)
+    DepthAtomicBuffer[int2(DispatchThreadId.xy)] = 0;
 }

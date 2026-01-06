@@ -234,12 +234,13 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	bool bUseSpatialHash = false;
 
 	//========================================
-	// Shadow Casting (VSM)
+	// Shadow Casting (VSM) - Legacy
 	//========================================
 
-	/** Enable fluid shadow casting */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Shadow")
-	bool bEnableShadowCasting = true;
+	/** Enable fluid shadow casting (Legacy VSM approach) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Shadow",
+		meta = (DisplayName = "Enable Shadow Casting (Legacy)"))
+	bool bEnableShadowCasting = false;
 
 	/** VSM shadow map resolution */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Shadow",

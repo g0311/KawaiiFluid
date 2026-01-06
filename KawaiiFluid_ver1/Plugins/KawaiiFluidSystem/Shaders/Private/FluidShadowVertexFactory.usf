@@ -1,0 +1,178 @@
+// Copyright KawaiiFluid Team. All Rights Reserved.
+//
+// Fluid Shadow Vertex Factory
+//
+// Custom vertex factory for fluid shadow rendering. Extends LocalVertexFactory
+// to provide density grid access for ray marching in shadow depth pass.
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/LocalVertexFactory.ush"
+
+// Density grid parameters (from uniform buffer)
+#if FLUID_SHADOW_VERTEX_FACTORY
+
+// 3D density grid texture
+Texture3D<float> FluidDensityGridTexture;
+SamplerState FluidDensityGridSampler;
+
+// Grid bounds and resolution from uniform buffer
+// FluidShadowVF.GridBoundsMin
+// FluidShadowVF.GridBoundsMax
+// FluidShadowVF.GridResolution
+// FluidShadowVF.InvGridSize
+// FluidShadowVF.SurfaceDensityThreshold
+// FluidShadowVF.MaxRayMarchSteps
+
+/**
+ * Sample density at world position.
+ */
+float SampleDensityAtWorldPos(float3 WorldPos)
+{
+    // Convert world position to UV coordinates [0, 1]
+    float3 UV = (WorldPos - FluidShadowVF.GridBoundsMin) * FluidShadowVF.InvGridSize;
+
+    // Check bounds
+    if (any(UV < 0.0f) || any(UV > 1.0f))
+    {
+        return 0.0f;
+    }
+
+    return FluidDensityGridTexture.SampleLevel(FluidDensityGridSampler, UV, 0);
+}
+
+/**
+ * Ray march through density grid to find surface.
+ * Returns depth along ray where surface is found, or -1 if no hit.
+ */
+float RayMarchDensityGrid(float3 RayOrigin, float3 RayDir)
+{
+    // Calculate ray intersection with grid bounds
+    float3 InvDir = 1.0f / (RayDir + 0.0001f);
+
+    float3 t0 = (FluidShadowVF.GridBoundsMin - RayOrigin) * InvDir;
+    float3 t1 = (FluidShadowVF.GridBoundsMax - RayOrigin) * InvDir;
+
+    float3 tMin = min(t0, t1);
+    float3 tMax = max(t0, t1);
+
+    float tEnter = max(max(tMin.x, tMin.y), tMin.z);
+    float tExit = min(min(tMax.x, tMax.y), tMax.z);
+
+    // No intersection with grid bounds
+    if (tEnter > tExit || tExit < 0.0f)
+    {
+        return -1.0f;
+    }
+
+    // Start from grid entry point (or ray origin if inside)
+    tEnter = max(tEnter, 0.0f);
+
+    // Calculate step size based on grid resolution
+    float3 GridSize = FluidShadowVF.GridBoundsMax - FluidShadowVF.GridBoundsMin;
+    float MinVoxelSize = min(min(GridSize.x, GridSize.y), GridSize.z) /
+                         max(max(FluidShadowVF.GridResolution.x, FluidShadowVF.GridResolution.y),
+                             FluidShadowVF.GridResolution.z);
+    float StepSize = MinVoxelSize * 0.5f;
+
+    // Ray march
+    float t = tEnter;
+    int MaxSteps = FluidShadowVF.MaxRayMarchSteps;
+
+    for (int i = 0; i < MaxSteps; ++i)
+    {
+        if (t > tExit)
+        {
+            break;
+        }
+
+        float3 SamplePos = RayOrigin + RayDir * t;
+        float Density = SampleDensityAtWorldPos(SamplePos);
+
+        if (Density >= FluidShadowVF.SurfaceDensityThreshold)
+        {
+            // Hit surface - refine with binary search
+            float tLow = t - StepSize;
+            float tHigh = t;
+
+            for (int j = 0; j < 4; ++j)
+            {
+                float tMid = (tLow + tHigh) * 0.5f;
+                float3 MidPos = RayOrigin + RayDir * tMid;
+                float MidDensity = SampleDensityAtWorldPos(MidPos);
+
+                if (MidDensity >= FluidShadowVF.SurfaceDensityThreshold)
+                {
+                    tHigh = tMid;
+                }
+                else
+                {
+                    tLow = tMid;
+                }
+            }
+
+            return tHigh;
+        }
+
+        t += StepSize;
+    }
+
+    return -1.0f;
+}
+
+#endif // FLUID_SHADOW_VERTEX_FACTORY
+
+// Vertex factory input/output structures (same as LocalVertexFactory)
+struct FVertexFactoryInput
+{
+    float4 Position : ATTRIBUTE0;
+
+#if !MANUAL_VERTEX_FETCH
+    #if METAL_PROFILE
+        float3 TangentX : ATTRIBUTE1;
+        float4 TangentZ : ATTRIBUTE2;
+        float4 Color : ATTRIBUTE3;
+    #else
+        half3 TangentX : ATTRIBUTE1;
+        half4 TangentZ : ATTRIBUTE2;
+        half4 Color : ATTRIBUTE3;
+    #endif
+
+    #if NUM_MATERIAL_TEXCOORDS_VERTEX
+        #if NUM_MATERIAL_TEXCOORDS_VERTEX > 1
+            float4 TexCoords0 : ATTRIBUTE4;
+        #else
+            float2 TexCoords0 : ATTRIBUTE4;
+        #endif
+        #if NUM_MATERIAL_TEXCOORDS_VERTEX > 2
+            float4 TexCoords1 : ATTRIBUTE5;
+        #endif
+    #endif
+#endif
+
+    VF_GPUSCENE_DECLARE_INPUT_BLOCK(13)
+    VF_INSTANCED_STEREO_DECLARE_INPUT_BLOCK()
+};
+
+struct FPositionOnlyVertexFactoryInput
+{
+    float4 Position : ATTRIBUTE0;
+    VF_GPUSCENE_DECLARE_INPUT_BLOCK(1)
+    VF_INSTANCED_STEREO_DECLARE_INPUT_BLOCK()
+};
+
+struct FPositionAndNormalOnlyVertexFactoryInput
+{
+    float4 Position : ATTRIBUTE0;
+    float4 Normal : ATTRIBUTE2;
+    VF_GPUSCENE_DECLARE_INPUT_BLOCK(1)
+    VF_INSTANCED_STEREO_DECLARE_INPUT_BLOCK()
+};
+
+// Use LocalVertexFactory implementations for standard functions
+#define FVertexFactoryInterpolantsVSToPS FLocalVertexFactoryInterpolantsVSToPS
+#define FVertexFactoryInterpolantsVSToDS FLocalVertexFactoryInterpolantsVSToDS
+#define FVertexFactoryRayTracingInterpolants FLocalVertexFactoryRayTracingInterpolants
+
+// Include LocalVertexFactory for base implementations
+// The actual vertex transformation is handled by LocalVertexFactory
+// We only add the density grid sampling functions above

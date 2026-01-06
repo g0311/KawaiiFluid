@@ -245,6 +245,57 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 		RenderingModule->UpdateRenderers();
 	}
 
+	// VSM Integration: Update shadow proxy with particle data
+	if (SimulationModule && SimulationModule->GetParticleCount() > 0)
+	{
+		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+		{
+			// Debug log (throttled)
+			static int32 VSMLogCounter = 0;
+			if (++VSMLogCounter % 300 == 1)
+			{
+				UE_LOG(LogTemp, Log, TEXT("KFC VSM Check: bEnable=%d, Particles=%d, Material=%s"),
+					RendererSubsystem->bEnableVSMIntegration,
+					SimulationModule->GetParticleCount(),
+					RendererSubsystem->ShadowMaterial ? *RendererSubsystem->ShadowMaterial->GetName() : TEXT("NULL"));
+			}
+
+			if (RendererSubsystem->bEnableVSMIntegration)
+			{
+				// Get particle positions
+				const TArray<FFluidParticle>& Particles = SimulationModule->GetParticles();
+				const int32 NumParticles = Particles.Num();
+
+				if (NumParticles > 0)
+				{
+					// Calculate fluid bounds from particles
+					FBox FluidBounds(ForceInit);
+					TArray<FVector> Positions;
+					Positions.SetNum(NumParticles);
+
+					for (int32 i = 0; i < NumParticles; ++i)
+					{
+						Positions[i] = Particles[i].Position;
+						FluidBounds += Particles[i].Position;
+					}
+
+					// Expand bounds by particle radius
+					const float ParticleRadius = SimulationModule->GetParticleRadius();
+					FluidBounds = FluidBounds.ExpandBy(ParticleRadius * 2.0f);
+
+					// Update shadow proxy state (creates HISM if needed)
+					RendererSubsystem->UpdateShadowProxyState();
+
+					// Update HISM shadow instances from particle positions
+					RendererSubsystem->UpdateShadowInstances(Positions.GetData(), NumParticles);
+
+					// Legacy: Update density grid (for future use)
+					RendererSubsystem->UpdateDensityGrid(Positions.GetData(), NumParticles, FluidBounds);
+				}
+			}
+		}
+	}
+
 #if WITH_EDITOR
 	// 에디터에서 스폰 영역 시각화 (게임 월드가 아닐 때만)
 	if (!bIsGameWorld)

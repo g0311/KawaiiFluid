@@ -226,13 +226,13 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidMetaballRendererSettings
 	float SubsurfaceOpacity = 0.5f;
 
 	//========================================
-	// Shadow Casting (VSM)
+	// Shadow Casting (VSM) - Legacy
 	//========================================
 
-	/** Enable fluid shadow casting onto other objects */
+	/** Enable fluid shadow casting onto other objects (Legacy VSM approach) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shadow",
-		meta = (EditCondition = "bEnabled"))
-	bool bEnableShadowCasting = true;
+		meta = (EditCondition = "bEnabled", DisplayName = "Enable Shadow Casting (Legacy)"))
+	bool bEnableShadowCasting = false;
 
 	/** VSM shadow map resolution (higher = sharper shadows but more expensive) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shadow",
