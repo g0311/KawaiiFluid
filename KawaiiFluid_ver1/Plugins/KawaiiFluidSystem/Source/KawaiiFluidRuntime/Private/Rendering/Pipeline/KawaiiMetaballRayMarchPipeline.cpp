@@ -163,6 +163,31 @@ bool FKawaiiMetaballRayMarchPipeline::PrepareParticleBuffer(
 
 				// Store bounds buffer SRV for SDF baking and ray marching
 				CachedGPUBoundsBufferSRV = GraphBuilder.CreateSRV(GPUBoundsBuffer);
+				// Get SoA pooled buffers from RenderResource (populated by UpdateFromGPUBuffer)
+				FKawaiiFluidRenderResource* RenderResourceSoA = Renderer->GetFluidRenderResource();
+				if (RenderResourceSoA && RenderResourceSoA->HasValidSoABuffers())
+				{
+					TRefCountPtr<FRDGPooledBuffer> PositionPooled = RenderResourceSoA->GetPooledPositionBuffer();
+					TRefCountPtr<FRDGPooledBuffer> VelocityPooled = RenderResourceSoA->GetPooledVelocityBuffer();
+
+					if (PositionPooled.IsValid())
+					{
+						FRDGBufferRef PositionBuffer = GraphBuilder.RegisterExternalBuffer(
+							PositionPooled, TEXT("RenderPositionsSoA"));
+						CachedPipelineData.PositionBufferSRV = GraphBuilder.CreateSRV(PositionBuffer);
+					}
+					if (VelocityPooled.IsValid())
+					{
+						FRDGBufferRef VelocityBuffer = GraphBuilder.RegisterExternalBuffer(
+							VelocityPooled, TEXT("RenderVelocitiesSoA"));
+						CachedPipelineData.VelocityBufferSRV = GraphBuilder.CreateSRV(VelocityBuffer);
+					}
+					CachedPipelineData.bUseSoABuffers = PositionPooled.IsValid();
+
+					UE_LOG(LogTemp, Verbose, TEXT("  >>> SoA Buffers enabled (Position: %s, Velocity: %s)"),
+						PositionPooled.IsValid() ? TEXT("Valid") : TEXT("Invalid"),
+						VelocityPooled.IsValid() ? TEXT("Valid") : TEXT("Invalid"));
+				}
 
 				UE_LOG(LogTemp, Verbose, TEXT("  >>> GPU MODE: ExtractRenderData+Bounds MERGED (%d particles, radius: %.2f)"),
 					TotalParticleCount, ParticleRadius);
@@ -256,6 +281,20 @@ bool FKawaiiMetaballRayMarchPipeline::PrepareParticleBuffer(
 
 		ParticleBufferSRV = GraphBuilder.CreateSRV(ParticleBuffer);
 		TotalParticleCount = AllParticles.Num();
+
+		// ========== CPU 모드 SoA 버퍼 생성 ==========
+		FRDGBufferRef PositionBuffer = GraphBuilder.CreateBuffer(
+			FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector3f), AllParticlePositions.Num()),
+			TEXT("CPUModePositionsSoA"));
+
+		GraphBuilder.QueueBufferUpload(
+			PositionBuffer,
+			AllParticlePositions.GetData(),
+			AllParticlePositions.Num() * sizeof(FVector3f),
+			ERDGInitialDataFlags::None);
+
+		CachedPipelineData.PositionBufferSRV = GraphBuilder.CreateSRV(PositionBuffer);
+		CachedPipelineData.bUseSoABuffers = true;
 	}
 
 	if (ValidCount > 0)

@@ -27,7 +27,11 @@ struct FRenderParticle
 // Shader Parameters
 //=============================================================================
 
-StructuredBuffer<FRenderParticle> RenderParticles;
+#if USE_SOA_BUFFERS
+StructuredBuffer<float3> RenderPositions;  // SoA: 12B per particle (62% bandwidth reduction)
+#else
+StructuredBuffer<FRenderParticle> RenderParticles;  // AoS: 32B per particle (legacy)
+#endif
 RWStructuredBuffer<float3> OutputBounds; // [0] = Min, [1] = Max
 uint ParticleCount;
 float ParticleRadius;  // Added: expand bounds by particle radius
@@ -67,7 +71,11 @@ void CalculateBoundsCS(uint3 GroupId : SV_GroupID, uint3 DTid : SV_DispatchThrea
 
 	for (uint i = GI; i < ParticleCount; i += THREAD_GROUP_SIZE)
 	{
+#if USE_SOA_BUFFERS
+		float3 pos = RenderPositions[i];
+#else
 		float3 pos = RenderParticles[i].Position;
+#endif
 
 		// Filter out invalid positions:
 		// - NaN check: any(isnan(pos))

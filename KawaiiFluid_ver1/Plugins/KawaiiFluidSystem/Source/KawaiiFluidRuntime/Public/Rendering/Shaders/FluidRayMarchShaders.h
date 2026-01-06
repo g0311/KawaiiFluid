@@ -23,6 +23,14 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidRayMarchParameters, )
 	SHADER_PARAMETER(float, ParticleRadius)
 
 	//========================================
+	// SoA Particle Data (Memory bandwidth optimized)
+	// - RenderPositions: 12B/particle (vs 32B AoS) - 62% reduction for SDF
+	// - RenderVelocities: Motion blur only
+	//========================================
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FVector3f>, RenderPositions)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FVector3f>, RenderVelocities)
+
+	//========================================
 	// Ray Marching Parameters
 	//========================================
 	SHADER_PARAMETER(float, SDFSmoothness)
@@ -146,6 +154,13 @@ class FOutputDepthDim : SHADER_PERMUTATION_BOOL("OUTPUT_DEPTH");
 class FUseGPUBoundsDim : SHADER_PERMUTATION_BOOL("USE_GPU_BOUNDS");
 
 /**
+ * @brief Shader permutation dimension for SoA (Structure of Arrays) buffer layout
+ * When enabled, uses separate Position buffer (12B) instead of RenderParticles (32B).
+ * Provides 62% memory bandwidth reduction for SDF evaluation.
+ */
+class FUseSoABuffersDim : SHADER_PERMUTATION_BOOL("USE_SOA_BUFFERS");
+
+/**
  * @brief Pixel shader for Ray Marching SDF fluid rendering
  *
  * Performs ray marching through metaball SDF field to render
@@ -169,7 +184,7 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FFluidRayMarchPS, FGlobalShader);
 
 	using FParameters = FFluidRayMarchParameters;
-	using FPermutationDomain = TShaderPermutationDomain<FUseSDFVolumeDim, FUseSpatialHashDim, FOutputDepthDim, FUseGPUBoundsDim>;
+	using FPermutationDomain = TShaderPermutationDomain<FUseSDFVolumeDim, FUseSpatialHashDim, FOutputDepthDim, FUseGPUBoundsDim, FUseSoABuffersDim>;
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{

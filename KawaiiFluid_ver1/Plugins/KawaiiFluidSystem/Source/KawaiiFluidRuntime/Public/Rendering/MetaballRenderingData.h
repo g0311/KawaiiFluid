@@ -126,8 +126,22 @@ struct FSpatialHashData
  */
 struct FRayMarchingPipelineData
 {
-	/** Particle positions buffer */
+	/** Particle positions buffer (Legacy AoS - 32B per particle) */
 	FRDGBufferSRVRef ParticleBufferSRV = nullptr;
+
+	//========================================
+	// SoA Buffers (Memory Bandwidth Optimized)
+	// - 62% reduction: 32B/particle → 12B/particle for SDF
+	//========================================
+
+	/** Position buffer SRV (SoA - 12B per particle) */
+	FRDGBufferSRVRef PositionBufferSRV = nullptr;
+
+	/** Velocity buffer SRV (SoA - 12B per particle, for motion blur) */
+	FRDGBufferSRVRef VelocityBufferSRV = nullptr;
+
+	/** Whether to use SoA buffers for ray marching */
+	bool bUseSoABuffers = false;
 
 	/** Number of particles */
 	int32 ParticleCount = 0;
@@ -146,9 +160,18 @@ struct FRayMarchingPipelineData
 		return ParticleBufferSRV != nullptr && ParticleCount > 0;
 	}
 
+	/** Check if SoA buffers are valid and ready for use */
+	bool HasValidSoABuffers() const
+	{
+		return bUseSoABuffers && PositionBufferSRV != nullptr && ParticleCount > 0;
+	}
+
 	void Reset()
 	{
 		ParticleBufferSRV = nullptr;
+		PositionBufferSRV = nullptr;
+		VelocityBufferSRV = nullptr;
+		bUseSoABuffers = false;
 		ParticleCount = 0;
 		ParticleRadius = 0.0f;
 		SDFVolumeData.Reset();

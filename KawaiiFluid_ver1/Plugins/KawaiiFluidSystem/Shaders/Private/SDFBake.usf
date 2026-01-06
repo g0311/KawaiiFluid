@@ -21,8 +21,12 @@ struct FRenderParticle
 // Shader Parameters
 //=============================================================================
 
-// Particle Data (Input) - now uses FRenderParticle for GPU simulation compatibility
-StructuredBuffer<FRenderParticle> RenderParticles;
+// Particle Data (Input)
+#if USE_SOA_BUFFERS
+StructuredBuffer<float3> RenderPositions;  // SoA: 12B per particle (62% bandwidth reduction)
+#else
+StructuredBuffer<FRenderParticle> RenderParticles;  // AoS: 32B per particle (legacy)
+#endif
 int ParticleCount;
 float ParticleRadius;
 float SDFSmoothness;
@@ -76,14 +80,21 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
     }
 
     // Evaluate metaball SDF at this position
-    // Now reading from FRenderParticle structure for GPU simulation compatibility
+#if USE_SOA_BUFFERS
+    float sdf = sdSphere(worldPos, RenderPositions[0], ParticleRadius);
+    for (int i = 1; i < ParticleCount; ++i)
+    {
+        float d = sdSphere(worldPos, RenderPositions[i], ParticleRadius);
+        sdf = smin(sdf, d, SDFSmoothness);
+    }
+#else
     float sdf = sdSphere(worldPos, RenderParticles[0].Position, ParticleRadius);
-
     for (int i = 1; i < ParticleCount; ++i)
     {
         float d = sdSphere(worldPos, RenderParticles[i].Position, ParticleRadius);
         sdf = smin(sdf, d, SDFSmoothness);
     }
+#endif
 
     // Store SDF value in volume texture
     SDFVolume[DispatchThreadId] = sdf;

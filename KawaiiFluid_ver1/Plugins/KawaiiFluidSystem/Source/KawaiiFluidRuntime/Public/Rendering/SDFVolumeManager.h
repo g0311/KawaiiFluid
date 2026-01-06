@@ -42,7 +42,8 @@ public:
 		FRDGBufferSRVRef ParticleBufferSRV,
 		int32 ParticleCount,
 		float ParticleRadius,
-		float Margin);
+		float Margin,
+		FRDGBufferSRVRef PositionBufferSRV = nullptr);  // SoA: optional, nullptr = use AoS
 
 	/**
 	 * @brief Bake SDF volume using pre-calculated GPU bounds (legacy - uses cached bounds)
@@ -64,7 +65,8 @@ public:
 		int32 ParticleCount,
 		float ParticleRadius,
 		float SDFSmoothness,
-		FRDGBufferRef BoundsBuffer);
+		FRDGBufferRef BoundsBuffer,
+		FRDGBufferSRVRef PositionBufferSRV = nullptr);  // SoA: optional, nullptr = use AoS
 
 	/**
 	 * @brief Bake SDF volume reading bounds directly from GPU buffer (Optimized - no readback)
@@ -86,7 +88,8 @@ public:
 		int32 ParticleCount,
 		float ParticleRadius,
 		float SDFSmoothness,
-		FRDGBufferSRVRef BoundsBufferSRV);
+		FRDGBufferSRVRef BoundsBufferSRV,
+		FRDGBufferSRVRef PositionBufferSRV = nullptr);  // SoA: optional, nullptr = use AoS
 
 	/**
 	 * @brief Bake SDF volume from particle positions (legacy - CPU bounds)
@@ -110,7 +113,8 @@ public:
 		float ParticleRadius,
 		float SDFSmoothness,
 		const FVector3f& VolumeMin,
-		const FVector3f& VolumeMax);
+		const FVector3f& VolumeMax,
+		FRDGBufferSRVRef PositionBufferSRV = nullptr);  // SoA: optional, nullptr = use AoS
 
 	/** Get volume resolution (default: 64x64x64) */
 	FIntVector GetVolumeResolution() const { return VolumeResolution; }

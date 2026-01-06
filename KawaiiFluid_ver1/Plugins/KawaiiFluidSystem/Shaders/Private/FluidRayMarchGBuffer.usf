@@ -11,8 +11,11 @@
 //=============================================================================
 
 // Particle Data (used when USE_SDF_VOLUME is 0)
-// Uses FKawaiiRenderParticle struct for GPU mode compatibility
-StructuredBuffer<FKawaiiRenderParticle> RenderParticles;
+#if USE_SOA_BUFFERS
+StructuredBuffer<float3> RenderPositions;  // SoA: 12B per particle (62% bandwidth reduction)
+#else
+StructuredBuffer<FKawaiiRenderParticle> RenderParticles;  // AoS: 32B per particle (legacy)
+#endif
 int ParticleCount;
 float ParticleRadius;
 
@@ -206,7 +209,11 @@ FRayMarchResult RayMarchSDF(float3 ro, float3 rd, float maxDist)
 #if USE_SDF_VOLUME
 		float sdf = SampleSDFVolume(p);
 #else
+	#if USE_SOA_BUFFERS
+		float sdf = EvaluateMetaballSDFFromPositions_SoA(p, RenderPositions, ParticleCount, ParticleRadius, SDFSmoothness);
+	#else
 		float sdf = EvaluateMetaballSDFFromRenderParticles(p, RenderParticles, ParticleCount, ParticleRadius, SDFSmoothness);
+	#endif
 #endif
 
 		if (sdf < RayMarchHitThreshold)
@@ -218,7 +225,11 @@ FRayMarchResult RayMarchSDF(float3 ro, float3 rd, float maxDist)
 #if USE_SDF_VOLUME
 			result.WorldNormal = CalculateSDFNormalFromVolume(p);
 #else
+	#if USE_SOA_BUFFERS
+			result.WorldNormal = CalculateSDFNormal3Tap_SoA(p, sdf, RenderPositions, ParticleCount, ParticleRadius, SDFSmoothness);
+	#else
 			result.WorldNormal = CalculateSDFNormal3TapFromRenderParticles(p, sdf, RenderParticles, ParticleCount, ParticleRadius, SDFSmoothness);
+	#endif
 #endif
 
 			// Estimate thickness

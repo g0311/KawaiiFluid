@@ -21,7 +21,8 @@ FRDGBufferRef FSDFVolumeManager::CalculateGPUBounds(
 	FRDGBufferSRVRef ParticleBufferSRV,
 	int32 ParticleCount,
 	float ParticleRadius,
-	float Margin)
+	float Margin,
+	FRDGBufferSRVRef PositionBufferSRV)  // SoA: optional, nullptr = use AoS
 {
 	// Create output buffer for bounds: [0] = Min, [1] = Max
 	FRDGBufferRef BoundsBuffer = GraphBuilder.CreateBuffer(
@@ -30,21 +31,33 @@ FRDGBufferRef FSDFVolumeManager::CalculateGPUBounds(
 
 	FRDGBufferUAVRef BoundsBufferUAV = GraphBuilder.CreateUAV(BoundsBuffer);
 
+	// Determine if using SoA mode
+	const bool bUseSoA = (PositionBufferSRV != nullptr);
+
 	// Setup compute shader parameters
 	FBoundsReductionCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FBoundsReductionCS::FParameters>();
-	PassParameters->RenderParticles = ParticleBufferSRV;
+	if (bUseSoA)
+	{
+		PassParameters->RenderPositions = PositionBufferSRV;
+	}
+	else
+	{
+		PassParameters->RenderParticles = ParticleBufferSRV;
+	}
 	PassParameters->ParticleCount = static_cast<uint32>(ParticleCount);
 	PassParameters->ParticleRadius = ParticleRadius;
 	PassParameters->BoundsMargin = Margin;
 	PassParameters->OutputBounds = BoundsBufferUAV;
 
-	// Get compute shader
-	TShaderMapRef<FBoundsReductionCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+	// Get compute shader with permutation
+	FBoundsReductionCS::FPermutationDomain PermutationVector;
+	PermutationVector.Set<FBoundsReductionUseSoADim>(bUseSoA);
+	TShaderMapRef<FBoundsReductionCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel), PermutationVector);
 
 	// Dispatch single group of 256 threads (grid-stride loop handles all particles)
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
-		RDG_EVENT_NAME("CalculateParticleBounds(%d particles)", ParticleCount),
+		RDG_EVENT_NAME("CalculateParticleBounds(%d particles, SoA=%d)", ParticleCount, bUseSoA ? 1 : 0),
 		ERDGPassFlags::AsyncCompute | ERDGPassFlags::NeverCull,
 		ComputeShader,
 		PassParameters,
@@ -59,7 +72,8 @@ FRDGTextureSRVRef FSDFVolumeManager::BakeSDFVolumeWithGPUBounds(
 	int32 ParticleCount,
 	float ParticleRadius,
 	float SDFSmoothness,
-	FRDGBufferRef BoundsBuffer)
+	FRDGBufferRef BoundsBuffer,
+	FRDGBufferSRVRef PositionBufferSRV)  // SoA: optional, nullptr = use AoS
 {
 	// Create 3D texture for SDF volume
 	FRDGTextureDesc SDFVolumeDesc = FRDGTextureDesc::Create3D(
@@ -74,10 +88,8 @@ FRDGTextureSRVRef FSDFVolumeManager::BakeSDFVolumeWithGPUBounds(
 	// Create SRV for bounds buffer to read in SDF bake shader
 	FRDGBufferSRVRef BoundsBufferSRV = GraphBuilder.CreateSRV(BoundsBuffer);
 
-	// Setup compute shader parameters
-	// Note: We need a modified version of SDFBake shader that reads bounds from buffer
-	// For now, we use the standard BakeSDFVolume with cached bounds from previous frame
-	// This works because GPU bounds are calculated and cached for next frame use
+	// Determine if using SoA mode
+	const bool bUseSoA = (PositionBufferSRV != nullptr);
 
 	// Use cached GPU bounds if available
 	FVector3f VolumeMin = LastGPUBoundsMin;
@@ -95,7 +107,14 @@ FRDGTextureSRVRef FSDFVolumeManager::BakeSDFVolumeWithGPUBounds(
 	CachedVolumeMax = VolumeMax;
 
 	FSDFBakeCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FSDFBakeCS::FParameters>();
-	PassParameters->RenderParticles = ParticleBufferSRV;
+	if (bUseSoA)
+	{
+		PassParameters->RenderPositions = PositionBufferSRV;
+	}
+	else
+	{
+		PassParameters->RenderParticles = ParticleBufferSRV;
+	}
 	PassParameters->ParticleCount = ParticleCount;
 	PassParameters->ParticleRadius = ParticleRadius;
 	PassParameters->SDFSmoothness = SDFSmoothness;
@@ -104,8 +123,10 @@ FRDGTextureSRVRef FSDFVolumeManager::BakeSDFVolumeWithGPUBounds(
 	PassParameters->VolumeResolution = VolumeResolution;
 	PassParameters->SDFVolume = SDFVolumeUAV;
 
-	// Get compute shader
-	TShaderMapRef<FSDFBakeCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+	// Get compute shader with permutation
+	FSDFBakeCS::FPermutationDomain PermutationVector;
+	PermutationVector.Set<FSDFBakeUseSoADim>(bUseSoA);
+	TShaderMapRef<FSDFBakeCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel), PermutationVector);
 
 	// Calculate dispatch group counts
 	const int32 ThreadGroupSize = FSDFBakeCS::ThreadGroupSize;
@@ -117,7 +138,7 @@ FRDGTextureSRVRef FSDFVolumeManager::BakeSDFVolumeWithGPUBounds(
 	// Add compute pass (must run after bounds calculation)
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
-		RDG_EVENT_NAME("SDFBake_WithGPUBounds(%dx%dx%d)", VolumeResolution.X, VolumeResolution.Y, VolumeResolution.Z),
+		RDG_EVENT_NAME("SDFBake_WithGPUBounds(%dx%dx%d, SoA=%d)", VolumeResolution.X, VolumeResolution.Y, VolumeResolution.Z, bUseSoA ? 1 : 0),
 		ERDGPassFlags::AsyncCompute | ERDGPassFlags::NeverCull,
 		ComputeShader,
 		PassParameters,
@@ -133,7 +154,8 @@ FRDGTextureSRVRef FSDFVolumeManager::BakeSDFVolumeWithGPUBoundsDirect(
 	int32 ParticleCount,
 	float ParticleRadius,
 	float SDFSmoothness,
-	FRDGBufferSRVRef BoundsBufferSRV)
+	FRDGBufferSRVRef BoundsBufferSRV,
+	FRDGBufferSRVRef PositionBufferSRV)  // SoA: optional, nullptr = use AoS
 {
 	// Create 3D texture for SDF volume
 	FRDGTextureDesc SDFVolumeDesc = FRDGTextureDesc::Create3D(
@@ -145,10 +167,20 @@ FRDGTextureSRVRef FSDFVolumeManager::BakeSDFVolumeWithGPUBoundsDirect(
 	FRDGTextureRef SDFVolumeTexture = GraphBuilder.CreateTexture(SDFVolumeDesc, TEXT("SDFVolumeTexture"));
 	FRDGTextureUAVRef SDFVolumeUAV = GraphBuilder.CreateUAV(SDFVolumeTexture);
 
+	// Determine if using SoA mode
+	const bool bUseSoA = (PositionBufferSRV != nullptr);
+
 	// Use the new shader that reads bounds from buffer
 	FSDFBakeWithGPUBoundsCS::FParameters* PassParameters =
 		GraphBuilder.AllocParameters<FSDFBakeWithGPUBoundsCS::FParameters>();
-	PassParameters->RenderParticles = ParticleBufferSRV;
+	if (bUseSoA)
+	{
+		PassParameters->RenderPositions = PositionBufferSRV;
+	}
+	else
+	{
+		PassParameters->RenderParticles = ParticleBufferSRV;
+	}
 	PassParameters->ParticleCount = ParticleCount;
 	PassParameters->ParticleRadius = ParticleRadius;
 	PassParameters->SDFSmoothness = SDFSmoothness;
@@ -156,8 +188,10 @@ FRDGTextureSRVRef FSDFVolumeManager::BakeSDFVolumeWithGPUBoundsDirect(
 	PassParameters->VolumeResolution = VolumeResolution;
 	PassParameters->SDFVolume = SDFVolumeUAV;
 
-	// Get compute shader
-	TShaderMapRef<FSDFBakeWithGPUBoundsCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+	// Get compute shader with permutation
+	FSDFBakeWithGPUBoundsCS::FPermutationDomain PermutationVector;
+	PermutationVector.Set<FSDFBakeUseSoADim>(bUseSoA);
+	TShaderMapRef<FSDFBakeWithGPUBoundsCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel), PermutationVector);
 
 	// Calculate dispatch group counts
 	const int32 ThreadGroupSize = FSDFBakeWithGPUBoundsCS::ThreadGroupSize;
@@ -169,7 +203,7 @@ FRDGTextureSRVRef FSDFVolumeManager::BakeSDFVolumeWithGPUBoundsDirect(
 	// Add compute pass - must run after bounds buffer is written
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
-		RDG_EVENT_NAME("SDFBake_GPUBoundsDirect(%dx%dx%d)", VolumeResolution.X, VolumeResolution.Y, VolumeResolution.Z),
+		RDG_EVENT_NAME("SDFBake_GPUBoundsDirect(%dx%dx%d, SoA=%d)", VolumeResolution.X, VolumeResolution.Y, VolumeResolution.Z, bUseSoA ? 1 : 0),
 		ERDGPassFlags::AsyncCompute | ERDGPassFlags::NeverCull,
 		ComputeShader,
 		PassParameters,
@@ -186,11 +220,15 @@ FRDGTextureSRVRef FSDFVolumeManager::BakeSDFVolume(
 	float ParticleRadius,
 	float SDFSmoothness,
 	const FVector3f& VolumeMin,
-	const FVector3f& VolumeMax)
+	const FVector3f& VolumeMax,
+	FRDGBufferSRVRef PositionBufferSRV)  // SoA: optional, nullptr = use AoS
 {
 	// Cache volume bounds
 	CachedVolumeMin = VolumeMin;
 	CachedVolumeMax = VolumeMax;
+
+	// Determine if using SoA mode
+	const bool bUseSoA = (PositionBufferSRV != nullptr);
 
 	// Create 3D texture for SDF volume
 	FRDGTextureDesc SDFVolumeDesc = FRDGTextureDesc::Create3D(
@@ -204,7 +242,14 @@ FRDGTextureSRVRef FSDFVolumeManager::BakeSDFVolume(
 
 	// Setup compute shader parameters
 	FSDFBakeCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FSDFBakeCS::FParameters>();
-	PassParameters->RenderParticles = ParticleBufferSRV;
+	if (bUseSoA)
+	{
+		PassParameters->RenderPositions = PositionBufferSRV;
+	}
+	else
+	{
+		PassParameters->RenderParticles = ParticleBufferSRV;
+	}
 	PassParameters->ParticleCount = ParticleCount;
 	PassParameters->ParticleRadius = ParticleRadius;
 	PassParameters->SDFSmoothness = SDFSmoothness;
@@ -213,8 +258,10 @@ FRDGTextureSRVRef FSDFVolumeManager::BakeSDFVolume(
 	PassParameters->VolumeResolution = VolumeResolution;
 	PassParameters->SDFVolume = SDFVolumeUAV;
 
-	// Get compute shader
-	TShaderMapRef<FSDFBakeCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+	// Get compute shader with permutation
+	FSDFBakeCS::FPermutationDomain PermutationVector;
+	PermutationVector.Set<FSDFBakeUseSoADim>(bUseSoA);
+	TShaderMapRef<FSDFBakeCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel), PermutationVector);
 
 	// Calculate dispatch group counts
 	const int32 ThreadGroupSize = FSDFBakeCS::ThreadGroupSize;
@@ -226,7 +273,7 @@ FRDGTextureSRVRef FSDFVolumeManager::BakeSDFVolume(
 	// Add compute pass (Async Compute for parallel execution with graphics)
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
-		RDG_EVENT_NAME("SDFBake_Async(%dx%dx%d)", VolumeResolution.X, VolumeResolution.Y, VolumeResolution.Z),
+		RDG_EVENT_NAME("SDFBake_Async(%dx%dx%d, SoA=%d)", VolumeResolution.X, VolumeResolution.Y, VolumeResolution.Z, bUseSoA ? 1 : 0),
 		ERDGPassFlags::AsyncCompute | ERDGPassFlags::NeverCull,
 		ComputeShader,
 		PassParameters,

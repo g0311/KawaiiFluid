@@ -54,6 +54,10 @@ IMPLEMENT_GLOBAL_SHADER(FExtractRenderDataWithBoundsCS,
 	"/Plugin/KawaiiFluidSystem/Private/FluidExtractRenderDataWithBounds.usf",
 	"ExtractRenderDataWithBoundsCS", SF_Compute);
 
+IMPLEMENT_GLOBAL_SHADER(FExtractRenderDataSoACS,
+	"/Plugin/KawaiiFluidSystem/Private/FluidExtractRenderData.usf",
+	"ExtractRenderDataSoACS", SF_Compute);
+
 IMPLEMENT_GLOBAL_SHADER(FCopyParticlesCS,
 	"/Plugin/KawaiiFluidSystem/Private/FluidCopyParticles.usf",
 	"CopyParticlesCS", SF_Compute);
@@ -555,4 +559,40 @@ void FGPUFluidSimulatorPassBuilder::AddExtractRenderDataWithBoundsPass(
 		ComputeShader,
 		PassParameters,
 		FIntVector(1, 1, 1));
+}
+
+void FGPUFluidSimulatorPassBuilder::AddExtractRenderDataSoAPass(
+	FRDGBuilder& GraphBuilder,
+	FRDGBufferSRVRef PhysicsParticlesSRV,
+	FRDGBufferUAVRef RenderPositionsUAV,
+	FRDGBufferUAVRef RenderVelocitiesUAV,
+	int32 ParticleCount,
+	float ParticleRadius)
+{
+	if (ParticleCount <= 0 || !PhysicsParticlesSRV || !RenderPositionsUAV || !RenderVelocitiesUAV)
+	{
+		return;
+	}
+
+	FGlobalShaderMap* GlobalShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
+	TShaderMapRef<FExtractRenderDataSoACS> ComputeShader(GlobalShaderMap);
+
+	FExtractRenderDataSoACS::FParameters* PassParameters =
+		GraphBuilder.AllocParameters<FExtractRenderDataSoACS::FParameters>();
+
+	PassParameters->PhysicsParticles = PhysicsParticlesSRV;
+	PassParameters->RenderPositions = RenderPositionsUAV;
+	PassParameters->RenderVelocities = RenderVelocitiesUAV;
+	PassParameters->ParticleCount = ParticleCount;
+	PassParameters->ParticleRadius = ParticleRadius;
+
+	const int32 ThreadGroupSize = FExtractRenderDataSoACS::ThreadGroupSize;
+	const int32 NumGroups = FMath::DivideAndRoundUp(ParticleCount, ThreadGroupSize);
+
+	FComputeShaderUtils::AddPass(
+		GraphBuilder,
+		RDG_EVENT_NAME("GPUFluid::ExtractRenderDataSoA(%d)", ParticleCount),
+		ComputeShader,
+		PassParameters,
+		FIntVector(NumGroups, 1, 1));
 }

@@ -16,6 +16,16 @@ int ParticleCount;
 float ParticleRadius;
 
 //=============================================================================
+// SoA (Structure of Arrays) Particle Buffers
+// - RenderPositions: 12B/particle (vs 32B AoS) - 62% bandwidth reduction
+// - RenderVelocities: Motion blur only
+//=============================================================================
+#if USE_SOA_BUFFERS
+StructuredBuffer<float3> RenderPositions;
+StructuredBuffer<float3> RenderVelocities;
+#endif
+
+//=============================================================================
 // SDF Volume Parameters (used when USE_SDF_VOLUME is 1)
 //=============================================================================
 #if USE_SDF_VOLUME
@@ -206,10 +216,14 @@ bool RayBoxIntersect(float3 ro, float3 rd, float3 boxMin, float3 boxMax, out flo
 #endif
 
 //=============================================================================
-// Ray Marching
+// Ray Marching with Temporal Jittering
+//=============================================================================
+// Jittering + TAA optimization:
+// - Add noise to ray start position -> converts banding to noise
+// - TAA averages noise over time -> smooth result with fewer steps
 //=============================================================================
 
-FRayMarchResult RayMarchSDF(float3 ro, float3 rd, float maxDist)
+FRayMarchResult RayMarchSDF(float3 ro, float3 rd, float maxDist, float2 screenPos)
 {
 	FRayMarchResult result;
 	result.bHit = false;
@@ -233,6 +247,18 @@ FRayMarchResult RayMarchSDF(float3 ro, float3 rd, float maxDist)
 	// Start marching from volume entry point
 	float t = tBoxMin + 0.01;
 	float marchMaxDist = min(maxDist, tBoxMax);
+
+	// [JITTERING] Temporal noise for TAA integration
+	// InterleavedGradientNoise: Blue noise-like, TAA-friendly
+	// View.StateFrameIndexMod8: Changes every frame for temporal variation
+	float jitterNoise = InterleavedGradientNoise(screenPos, View.StateFrameIndexMod8);
+
+	// Sample SDF at entry point to get safe jitter distance
+	float3 entryPos = ro + rd * t;
+	float entrySDF = SampleSDFVolume(entryPos);
+
+	// Jitter start position within safe distance (won't overshoot surface)
+	t += entrySDF * jitterNoise * 0.5;
 #else
 	float t = 0.0;
 	float marchMaxDist = maxDist;
@@ -257,7 +283,12 @@ FRayMarchResult RayMarchSDF(float3 ro, float3 rd, float maxDist)
 		if (sdf < SpatialHashCellSize)
 		{
 			// Phase 2: Precise evaluation using Spatial Hash (O(k) neighbor lookup)
+		#if USE_SOA_BUFFERS
+			// SoA: 62% bandwidth reduction (12B vs 32B per particle)
+			float hashSdf = EvaluateMetaballSDFWithSpatialHash_SoA(p, RenderPositions, CellData, SpatialHashParticleIndices, ParticleCount, ParticleRadius, SDFSmoothness, SpatialHashCellSize);
+		#else
 			float hashSdf = EvaluateMetaballSDFWithSpatialHash(p, RenderParticles, CellData, SpatialHashParticleIndices, ParticleCount, ParticleRadius, SDFSmoothness, SpatialHashCellSize);
+		#endif
 
 			// Fallback: If Spatial Hash finds no particles (smin blend surface without nearby particles),
 			// keep SDF Volume value to avoid huge step that would skip the surface
@@ -271,7 +302,11 @@ FRayMarchResult RayMarchSDF(float3 ro, float3 rd, float maxDist)
 	#endif
 #else
 		// Fallback: Direct O(N) particle iteration (legacy mode, no SDF Volume)
+	#if USE_SOA_BUFFERS
+		float sdf = EvaluateMetaballSDFFromPositions_SoA(p, RenderPositions, ParticleCount, ParticleRadius, SDFSmoothness);
+	#else
 		float sdf = EvaluateMetaballSDFFromRenderParticles(p, RenderParticles, ParticleCount, ParticleRadius, SDFSmoothness);
+	#endif
 #endif
 
 		lastSDF = sdf;
@@ -290,7 +325,11 @@ FRayMarchResult RayMarchSDF(float3 ro, float3 rd, float maxDist)
 			if (bUsedSpatialHash)
 			{
 				// Analytic gradient normal from Spatial Hash (1-Loop instead of 5-Loop)
+			#if USE_SOA_BUFFERS
+				result.Normal = CalculateNormalAnalyticWithSpatialHash_SoA(p, sdf, RenderPositions, CellData, SpatialHashParticleIndices, ParticleCount, ParticleRadius, SDFSmoothness, SpatialHashCellSize);
+			#else
 				result.Normal = CalculateNormalAnalyticWithSpatialHash(p, sdf, RenderParticles, CellData, SpatialHashParticleIndices, ParticleCount, ParticleRadius, SDFSmoothness, SpatialHashCellSize);
+			#endif
 			}
 			else
 			{
@@ -303,7 +342,11 @@ FRayMarchResult RayMarchSDF(float3 ro, float3 rd, float maxDist)
 	#endif
 #else
 			// Fallback: Normal from direct particle evaluation
+		#if USE_SOA_BUFFERS
+			result.Normal = CalculateSDFNormal3Tap_SoA(p, sdf, RenderPositions, ParticleCount, ParticleRadius, SDFSmoothness);
+		#else
 			result.Normal = CalculateSDFNormal3TapFromRenderParticles(p, sdf, RenderParticles, ParticleCount, ParticleRadius, SDFSmoothness);
+		#endif
 #endif
 
 			// Estimate thickness based on SDF and particle radius (simple approximation)
@@ -403,8 +446,8 @@ void MainPS(
 	// Clamp max distance to scene depth
 	float MaxDist = min(RayMarchMaxDistance, SceneLinearDepth * 100.0);  // Convert to world units
 
-	// Ray march
-	FRayMarchResult result = RayMarchSDF(RayOrigin, RayDirection, RayMarchMaxDistance);
+	// Ray march (with screen position for temporal jittering)
+	FRayMarchResult result = RayMarchSDF(RayOrigin, RayDirection, RayMarchMaxDistance, Input.Position.xy);
 
 	if (!result.bHit)
 	{

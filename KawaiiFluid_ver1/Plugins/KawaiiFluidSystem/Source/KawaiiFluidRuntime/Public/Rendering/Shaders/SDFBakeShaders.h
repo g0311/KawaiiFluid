@@ -18,9 +18,10 @@
  */
 BEGIN_SHADER_PARAMETER_STRUCT(FSDFBakeParameters, )
 	//========================================
-	// Particle Data (Input) - Uses FKawaiiRenderParticle for GPU buffer compatibility
+	// Particle Data (Input) - SoA or AoS based on permutation
 	//========================================
-	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FKawaiiRenderParticle>, RenderParticles)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FVector3f>, RenderPositions)  // SoA: 12B per particle
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FKawaiiRenderParticle>, RenderParticles)  // AoS: 32B per particle (legacy)
 	SHADER_PARAMETER(int32, ParticleCount)
 	SHADER_PARAMETER(float, ParticleRadius)
 	SHADER_PARAMETER(float, SDFSmoothness)
@@ -39,6 +40,11 @@ BEGIN_SHADER_PARAMETER_STRUCT(FSDFBakeParameters, )
 END_SHADER_PARAMETER_STRUCT()
 
 /**
+ * @brief Shader permutation for SoA buffer layout
+ */
+class FSDFBakeUseSoADim : SHADER_PERMUTATION_BOOL("USE_SOA_BUFFERS");
+
+/**
  * @brief Compute shader for baking SDF volume
  *
  * Dispatches threads for each voxel in the 3D volume.
@@ -47,6 +53,10 @@ END_SHADER_PARAMETER_STRUCT()
  *
  * Thread group size: 8x8x8 = 512 threads per group
  * For 64^3 volume: 8x8x8 dispatch = 512 groups = 262,144 total threads
+ *
+ * Permutations:
+ * - USE_SOA_BUFFERS=0: AoS (32B per particle, legacy)
+ * - USE_SOA_BUFFERS=1: SoA (12B per particle, 62% bandwidth reduction)
  */
 class FSDFBakeCS : public FGlobalShader
 {
@@ -55,6 +65,7 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FSDFBakeCS, FGlobalShader);
 
 	using FParameters = FSDFBakeParameters;
+	using FPermutationDomain = TShaderPermutationDomain<FSDFBakeUseSoADim>;
 
 	static constexpr int32 ThreadGroupSize = 8;
 
@@ -83,7 +94,8 @@ public:
  * This eliminates 1-frame latency from CPU readback.
  */
 BEGIN_SHADER_PARAMETER_STRUCT(FSDFBakeWithGPUBoundsParameters, )
-	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FKawaiiRenderParticle>, RenderParticles)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FVector3f>, RenderPositions)  // SoA: 12B per particle
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FKawaiiRenderParticle>, RenderParticles)  // AoS: 32B per particle (legacy)
 	SHADER_PARAMETER(int32, ParticleCount)
 	SHADER_PARAMETER(float, ParticleRadius)
 	SHADER_PARAMETER(float, SDFSmoothness)
@@ -98,6 +110,10 @@ END_SHADER_PARAMETER_STRUCT()
  * Same as FSDFBakeCS but reads VolumeMin/VolumeMax from a structured buffer
  * instead of uniform parameters. This allows using bounds calculated in the
  * same frame without CPU readback.
+ *
+ * Permutations:
+ * - USE_SOA_BUFFERS=0: AoS (32B per particle, legacy)
+ * - USE_SOA_BUFFERS=1: SoA (12B per particle, 62% bandwidth reduction)
  */
 class FSDFBakeWithGPUBoundsCS : public FGlobalShader
 {
@@ -106,6 +122,7 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FSDFBakeWithGPUBoundsCS, FGlobalShader);
 
 	using FParameters = FSDFBakeWithGPUBoundsParameters;
+	using FPermutationDomain = TShaderPermutationDomain<FSDFBakeUseSoADim>;
 
 	static constexpr int32 ThreadGroupSize = 8;
 

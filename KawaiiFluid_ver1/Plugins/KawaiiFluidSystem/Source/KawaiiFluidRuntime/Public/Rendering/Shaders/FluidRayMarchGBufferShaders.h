@@ -16,9 +16,10 @@
  */
 BEGIN_SHADER_PARAMETER_STRUCT(FFluidRayMarchGBufferParameters, )
 	//========================================
-	// Particle Data (FKawaiiRenderParticle: Position, Velocity, Radius, Padding)
+	// Particle Data - SoA or AoS based on permutation
 	//========================================
-	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FKawaiiRenderParticle>, RenderParticles)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FVector3f>, RenderPositions)  // SoA: 12B per particle
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FKawaiiRenderParticle>, RenderParticles)  // AoS: 32B per particle (legacy)
 	SHADER_PARAMETER(int32, ParticleCount)
 	SHADER_PARAMETER(float, ParticleRadius)
 
@@ -110,6 +111,12 @@ class FUseSDFVolumeGBufferDim : SHADER_PERMUTATION_BOOL("USE_SDF_VOLUME");
 class FUseGPUBoundsGBufferDim : SHADER_PERMUTATION_BOOL("USE_GPU_BOUNDS");
 
 /**
+ * @brief Shader permutation dimension for SoA buffer layout (GBuffer)
+ * When enabled, uses separate Position buffer (12B) instead of RenderParticles (32B).
+ */
+class FUseSoABuffersGBufferDim : SHADER_PERMUTATION_BOOL("USE_SOA_BUFFERS");
+
+/**
  * @brief Pixel shader for Ray Marching SDF → G-Buffer output
  *
  * Performs ray marching through SDF field, outputs:
@@ -129,7 +136,7 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FFluidRayMarchGBufferPS, FGlobalShader);
 
 	using FParameters = FFluidRayMarchGBufferParameters;
-	using FPermutationDomain = TShaderPermutationDomain<FUseSDFVolumeGBufferDim, FUseGPUBoundsGBufferDim>;
+	using FPermutationDomain = TShaderPermutationDomain<FUseSDFVolumeGBufferDim, FUseGPUBoundsGBufferDim, FUseSoABuffersGBufferDim>;
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{

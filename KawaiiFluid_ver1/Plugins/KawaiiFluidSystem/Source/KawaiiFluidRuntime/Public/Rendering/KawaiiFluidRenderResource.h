@@ -80,7 +80,7 @@ public:
 	// GPU 버퍼 접근 (Phase 2: GPU → GPU 렌더링)
 	//========================================
 
-	/** GPU Pooled Buffer 반환 (RDG 등록용) */
+	/** GPU Pooled Buffer 반환 (RDG 등록용) - Legacy AoS */
 	TRefCountPtr<FRDGPooledBuffer> GetPooledParticleBuffer() const
 	{
 		return PooledParticleBuffer;
@@ -98,6 +98,29 @@ public:
 	/** Check if GPU mode is active (UpdateFromGPUBuffer was called instead of UpdateParticleData) */
 	bool IsInGPUMode() const { return bIsInGPUMode.load(); }
 
+	//========================================
+	// SoA (Structure of Arrays) 버퍼 접근
+	// - 메모리 대역폭 최적화: 32B/particle → 12B/particle (SDF용)
+	//========================================
+
+	/** Position 전용 SoA 버퍼 (float3 * N, 12B each) - SDF 핫패스 */
+	TRefCountPtr<FRDGPooledBuffer> GetPooledPositionBuffer() const
+	{
+		return PooledPositionBuffer;
+	}
+
+	/** Velocity 전용 SoA 버퍼 (float3 * N, 12B each) - 모션블러용 */
+	TRefCountPtr<FRDGPooledBuffer> GetPooledVelocityBuffer() const
+	{
+		return PooledVelocityBuffer;
+	}
+
+	/** SoA 버퍼가 유효한지 확인 */
+	bool HasValidSoABuffers() const
+	{
+		return PooledPositionBuffer.IsValid() && ParticleCount > 0 && bBufferReadyForRendering.load();
+	}
+
 private:
 	//========================================
 	// GPU 리소스
@@ -112,8 +135,18 @@ private:
 	/** Unordered Access View (쉐이더 쓰기용 - Phase 2 GPU→GPU 복사) */
 	FUnorderedAccessViewRHIRef ParticleUAV;
 
-	/** Pooled Buffer for RDG registration (Phase 2 GPU→GPU 복사) */
+	/** Pooled Buffer for RDG registration (Phase 2 GPU→GPU 복사) - Legacy AoS */
 	TRefCountPtr<FRDGPooledBuffer> PooledParticleBuffer;
+
+	//========================================
+	// SoA (Structure of Arrays) 버퍼
+	//========================================
+
+	/** Position 전용 버퍼 (float3 * N, 12B each) - SDF 핫패스 */
+	TRefCountPtr<FRDGPooledBuffer> PooledPositionBuffer;
+
+	/** Velocity 전용 버퍼 (float3 * N, 12B each) - 모션블러용 */
+	TRefCountPtr<FRDGPooledBuffer> PooledVelocityBuffer;
 
 	/** 현재 버퍼에 저장된 파티클 수 */
 	int32 ParticleCount;

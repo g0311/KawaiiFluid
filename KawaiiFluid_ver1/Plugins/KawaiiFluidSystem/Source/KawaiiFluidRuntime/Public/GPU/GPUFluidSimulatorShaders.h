@@ -392,6 +392,44 @@ public:
 };
 
 //=============================================================================
+// Extract Render Data SoA Compute Shader
+// Phase 2: Extract to SoA buffers for memory bandwidth optimization
+// - Position buffer: 12B per particle (SDF hot path)
+// - Velocity buffer: 12B per particle (motion blur)
+// Total: 24B vs 32B (AoS) = 25% reduction, SDF uses only Position = 62% reduction
+//=============================================================================
+
+class FExtractRenderDataSoACS : public FGlobalShader
+{
+public:
+	DECLARE_GLOBAL_SHADER(FExtractRenderDataSoACS);
+	SHADER_USE_PARAMETER_STRUCT(FExtractRenderDataSoACS, FGlobalShader);
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUFluidParticle>, PhysicsParticles)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FVector3f>, RenderPositions)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FVector3f>, RenderVelocities)
+		SHADER_PARAMETER(int32, ParticleCount)
+		SHADER_PARAMETER(float, ParticleRadius)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static constexpr int32 ThreadGroupSize = 256;
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+
+	static void ModifyCompilationEnvironment(
+		const FGlobalShaderPermutationParameters& Parameters,
+		FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
+	}
+};
+
+//=============================================================================
 // Extract Render Data With Bounds Compute Shader (Optimized - Merged Pass)
 // Combines ExtractRenderData + CalculateBounds into single pass
 // Eliminates separate bounds calculation and reduces GPU dispatch overhead
@@ -658,6 +696,15 @@ public:
 		int32 ParticleCount,
 		float ParticleRadius,
 		float BoundsMargin);
+
+	/** Add extract render data SoA pass (Memory bandwidth optimized) */
+	static void AddExtractRenderDataSoAPass(
+		FRDGBuilder& GraphBuilder,
+		FRDGBufferSRVRef PhysicsParticlesSRV,
+		FRDGBufferUAVRef RenderPositionsUAV,
+		FRDGBufferUAVRef RenderVelocitiesUAV,
+		int32 ParticleCount,
+		float ParticleRadius);
 };
 
 //=============================================================================

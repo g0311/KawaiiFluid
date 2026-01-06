@@ -210,3 +210,181 @@ float3 CalculateNormalAnalyticWithSpatialHash(
 
 	return normalize(gradient);
 }
+
+//=============================================================================
+// SoA (Structure of Arrays) 버전 - 메모리 대역폭 최적화
+// - 32B/particle (AoS) → 12B/particle (SoA Position only)
+// - 캐시 적중률 향상: 128B 캐시라인당 4 → 10 파티클
+//=============================================================================
+
+// Evaluate metaball SDF from SoA Position buffer
+float EvaluateMetaballSDFFromPositions_SoA(
+	float3 p,
+	StructuredBuffer<float3> RenderPositions,
+	int ParticleCount,
+	float ParticleRadius,
+	float Smoothness)
+{
+	if (ParticleCount <= 0)
+		return 1e10;
+
+	float sdf = sdSphere(p, RenderPositions[0], ParticleRadius);
+
+	for (int i = 1; i < ParticleCount; ++i)
+	{
+		float d = sdSphere(p, RenderPositions[i], ParticleRadius);
+		sdf = smin(sdf, d, Smoothness);
+	}
+
+	return sdf;
+}
+
+// Calculate normal using 3-tap forward difference (SoA version)
+float3 CalculateSDFNormal3Tap_SoA(
+	float3 p,
+	float centerSDF,
+	StructuredBuffer<float3> RenderPositions,
+	int ParticleCount,
+	float ParticleRadius,
+	float Smoothness)
+{
+	const float eps = 0.001;
+
+	float3 n;
+	n.x = EvaluateMetaballSDFFromPositions_SoA(p + float3(eps, 0, 0), RenderPositions, ParticleCount, ParticleRadius, Smoothness) - centerSDF;
+	n.y = EvaluateMetaballSDFFromPositions_SoA(p + float3(0, eps, 0), RenderPositions, ParticleCount, ParticleRadius, Smoothness) - centerSDF;
+	n.z = EvaluateMetaballSDFFromPositions_SoA(p + float3(0, 0, eps), RenderPositions, ParticleCount, ParticleRadius, Smoothness) - centerSDF;
+
+	return normalize(n);
+}
+
+// Evaluate metaball SDF with Spatial Hash acceleration (SoA version)
+// Uses Position-only buffer for 62% memory bandwidth reduction
+float EvaluateMetaballSDFWithSpatialHash_SoA(
+	float3 p,
+	StructuredBuffer<float3> RenderPositions,
+	StructuredBuffer<uint2> CellData,
+	StructuredBuffer<uint> SpatialHashParticleIndices,
+	int ParticleCount,
+	float ParticleRadius,
+	float Smoothness,
+	float CellSize)
+{
+	if (ParticleCount <= 0)
+		return 1e10;
+
+	int3 CenterCell = WorldToCell(p, CellSize);
+
+	float sdf = 1e10;
+	bool bFoundAny = false;
+
+	[unroll]
+	for (int dz = -1; dz <= 1; ++dz)
+	{
+		[unroll]
+		for (int dy = -1; dy <= 1; ++dy)
+		{
+			[unroll]
+			for (int dx = -1; dx <= 1; ++dx)
+			{
+				int3 NeighborCell = CenterCell + int3(dx, dy, dz);
+				uint Hash = HashCell(NeighborCell);
+
+				uint2 Cell = CellData[Hash];
+				uint StartIndex = Cell.x;
+				uint Count = Cell.y;
+
+				for (uint i = 0; i < Count; ++i)
+				{
+					uint ParticleIdx = SpatialHashParticleIndices[StartIndex + i];
+					if (ParticleIdx >= (uint)ParticleCount)
+						continue;
+
+					float3 ParticlePos = RenderPositions[ParticleIdx];  // 12B vs 32B
+					float d = length(p - ParticlePos) - ParticleRadius;
+
+					if (!bFoundAny)
+					{
+						sdf = d;
+						bFoundAny = true;
+					}
+					else
+					{
+						float h = max(Smoothness - abs(sdf - d), 0.0) / Smoothness;
+						sdf = min(sdf, d) - h * h * Smoothness * 0.25;
+					}
+				}
+			}
+		}
+	}
+
+	return bFoundAny ? sdf : 1e10;
+}
+
+// Analytic Gradient Normal calculation (SoA version)
+float3 CalculateNormalAnalyticWithSpatialHash_SoA(
+	float3 p,
+	float centerSDF,
+	StructuredBuffer<float3> RenderPositions,
+	StructuredBuffer<uint2> CellData,
+	StructuredBuffer<uint> SpatialHashParticleIndices,
+	int ParticleCount,
+	float ParticleRadius,
+	float Smoothness,
+	float CellSize)
+{
+	if (ParticleCount <= 0)
+		return float3(0, 1, 0);
+
+	float3 gradient = float3(0, 0, 0);
+	float totalWeight = 0.0;
+
+	int3 CenterCell = WorldToCell(p, CellSize);
+
+	[unroll]
+	for (int dz = -1; dz <= 1; ++dz)
+	{
+		[unroll]
+		for (int dy = -1; dy <= 1; ++dy)
+		{
+			[unroll]
+			for (int dx = -1; dx <= 1; ++dx)
+			{
+				int3 NeighborCell = CenterCell + int3(dx, dy, dz);
+				uint Hash = HashCell(NeighborCell);
+
+				uint2 Cell = CellData[Hash];
+				uint StartIndex = Cell.x;
+				uint Count = Cell.y;
+
+				for (uint i = 0; i < Count; ++i)
+				{
+					uint ParticleIdx = SpatialHashParticleIndices[StartIndex + i];
+					if (ParticleIdx >= (uint)ParticleCount)
+						continue;
+
+					float3 ParticlePos = RenderPositions[ParticleIdx];  // 12B vs 32B
+					float3 r = p - ParticlePos;
+					float dist = length(r);
+
+					if (dist < 0.0001)
+						continue;
+
+					float d = dist - ParticleRadius;
+
+					// smin blend weight
+					float h = max(Smoothness - abs(centerSDF - d), 0.0) / Smoothness;
+					float weight = h * h;
+
+					gradient += weight * (r / dist);
+					totalWeight += weight;
+				}
+			}
+		}
+	}
+
+	if (totalWeight < 0.0001)
+		return float3(0, 1, 0);
+
+	return normalize(gradient);
+}

@@ -35,10 +35,16 @@ void FKawaiiFluidRenderResource::InitRHI(FRHICommandListBase& RHICmdList)
 
 void FKawaiiFluidRenderResource::ReleaseRHI()
 {
+	// Legacy AoS 버퍼 해제
 	ParticleBuffer.SafeRelease();
 	ParticleSRV.SafeRelease();
 	ParticleUAV.SafeRelease();
 	PooledParticleBuffer.SafeRelease();
+
+	// SoA 버퍼 해제
+	PooledPositionBuffer.SafeRelease();
+	PooledVelocityBuffer.SafeRelease();
+
 	ParticleCount = 0;
 	BufferCapacity = 0;
 	bBufferReadyForRendering.store(false);
@@ -105,6 +111,42 @@ void FKawaiiFluidRenderResource::UpdateParticleData(const TArray<FKawaiiRenderPa
 				));
 			}
 
+			// ========== SoA Position 버퍼 업로드 (12B per particle) ==========
+			if (RenderResource->PooledPositionBuffer.IsValid())
+			{
+				FBufferRHIRef PosBuffer = RenderResource->PooledPositionBuffer->GetRHI();
+				if (PosBuffer.IsValid())
+				{
+					RHICmdList.Transition(FRHITransitionInfo(
+						PosBuffer,
+						ERHIAccess::SRVMask,
+						ERHIAccess::CopyDest
+					));
+
+					void* PosData = RHICmdList.LockBuffer(
+						PosBuffer,
+						0,
+						NewCount * sizeof(FVector3f),
+						RLM_WriteOnly
+					);
+
+					// Position만 추출해서 복사
+					FVector3f* PosPtr = static_cast<FVector3f*>(PosData);
+					for (int32 i = 0; i < NewCount; ++i)
+					{
+						PosPtr[i] = ParticlesCopy[i].Position;
+					}
+
+					RHICmdList.UnlockBuffer(PosBuffer);
+
+					RHICmdList.Transition(FRHITransitionInfo(
+						PosBuffer,
+						ERHIAccess::CopyDest,
+						ERHIAccess::SRVMask
+					));
+				}
+			}
+
 			RenderResource->ParticleCount = NewCount;
 		}
 	);
@@ -128,11 +170,15 @@ bool FKawaiiFluidRenderResource::NeedsResize(int32 NewCount) const
 
 void FKawaiiFluidRenderResource::ResizeBuffer(FRHICommandListBase& RHICmdList, int32 NewCapacity)
 {
-	// 기존 버퍼 해제
+	// 기존 버퍼 해제 (Legacy AoS)
 	ParticleBuffer.SafeRelease();
 	ParticleSRV.SafeRelease();
 	ParticleUAV.SafeRelease();
 	PooledParticleBuffer.SafeRelease();
+
+	// SoA 버퍼 해제
+	PooledPositionBuffer.SafeRelease();
+	PooledVelocityBuffer.SafeRelease();
 
 	BufferCapacity = NewCapacity;
 
@@ -147,19 +193,42 @@ void FKawaiiFluidRenderResource::ResizeBuffer(FRHICommandListBase& RHICmdList, i
 	FRHICommandListImmediate& ImmediateCmdList = static_cast<FRHICommandListImmediate&>(RHICmdList);
 	FRDGBuilder GraphBuilder(ImmediateCmdList);
 
+	//========================================
+	// Legacy AoS 버퍼 생성 (호환성 유지)
+	//========================================
 	FRDGBufferDesc RDGBufferDesc = FRDGBufferDesc::CreateStructuredDesc(ElementSize, NewCapacity);
 	RDGBufferDesc.Usage |= EBufferUsageFlags::UnorderedAccess;
 	FRDGBufferRef RDGBuffer = GraphBuilder.CreateBuffer(RDGBufferDesc, TEXT("RenderParticlesPooled"));
 
-	// Must have a pass that produces the buffer before extraction
 	FRDGBufferUAVRef BufferUAV = GraphBuilder.CreateUAV(RDGBuffer);
 	AddClearUAVPass(GraphBuilder, BufferUAV, 0u);
-
-	// Extract to pooled buffer
 	GraphBuilder.QueueBufferExtraction(RDGBuffer, &PooledParticleBuffer, ERHIAccess::SRVMask);
+
+	//========================================
+	// SoA 버퍼 생성 (메모리 대역폭 최적화)
+	//========================================
+
+	// Position 버퍼 (float3 = 12 bytes)
+	FRDGBufferDesc PositionBufferDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector3f), NewCapacity);
+	PositionBufferDesc.Usage |= EBufferUsageFlags::UnorderedAccess;
+	FRDGBufferRef PositionRDGBuffer = GraphBuilder.CreateBuffer(PositionBufferDesc, TEXT("RenderPositionsSoA"));
+
+	FRDGBufferUAVRef PositionUAV = GraphBuilder.CreateUAV(PositionRDGBuffer);
+	AddClearUAVPass(GraphBuilder, PositionUAV, 0u);
+	GraphBuilder.QueueBufferExtraction(PositionRDGBuffer, &PooledPositionBuffer, ERHIAccess::SRVMask);
+
+	// Velocity 버퍼 (float3 = 12 bytes)
+	FRDGBufferDesc VelocityBufferDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector3f), NewCapacity);
+	VelocityBufferDesc.Usage |= EBufferUsageFlags::UnorderedAccess;
+	FRDGBufferRef VelocityRDGBuffer = GraphBuilder.CreateBuffer(VelocityBufferDesc, TEXT("RenderVelocitiesSoA"));
+
+	FRDGBufferUAVRef VelocityUAV = GraphBuilder.CreateUAV(VelocityRDGBuffer);
+	AddClearUAVPass(GraphBuilder, VelocityUAV, 0u);
+	GraphBuilder.QueueBufferExtraction(VelocityRDGBuffer, &PooledVelocityBuffer, ERHIAccess::SRVMask);
+
 	GraphBuilder.Execute();
 
-	// Get RHI buffer from pooled buffer
+	// Get RHI buffer from pooled buffer (Legacy AoS)
 	if (PooledParticleBuffer.IsValid())
 	{
 		ParticleBuffer = PooledParticleBuffer->GetRHI();
@@ -247,14 +316,14 @@ void FKawaiiFluidRenderResource::UpdateFromGPUBuffer(
 			);
 			FRDGBufferSRVRef PhysicsParticlesSRV = GraphBuilder.CreateSRV(PhysicsBufferRDG);
 
-			// Register our render pooled buffer (destination)
+			// Register our render pooled buffer (destination) - Legacy AoS
 			FRDGBufferRef RenderBufferRDG = GraphBuilder.RegisterExternalBuffer(
 				RenderResource->PooledParticleBuffer,
 				TEXT("RenderParticlesBuffer")
 			);
 			FRDGBufferUAVRef RenderParticlesUAV = GraphBuilder.CreateUAV(RenderBufferRDG);
 
-			// Use existing AddExtractRenderDataPass
+			// Use existing AddExtractRenderDataPass (Legacy AoS)
 			FGPUFluidSimulatorPassBuilder::AddExtractRenderDataPass(
 				GraphBuilder,
 				PhysicsParticlesSRV,
@@ -262,6 +331,31 @@ void FKawaiiFluidRenderResource::UpdateFromGPUBuffer(
 				NewCount,
 				Radius
 			);
+
+			// SoA 버퍼도 추출 (메모리 대역폭 최적화)
+			if (RenderResource->PooledPositionBuffer.IsValid() && RenderResource->PooledVelocityBuffer.IsValid())
+			{
+				FRDGBufferRef PositionBufferRDG = GraphBuilder.RegisterExternalBuffer(
+					RenderResource->PooledPositionBuffer,
+					TEXT("RenderPositionsSoA")
+				);
+				FRDGBufferUAVRef PositionsUAV = GraphBuilder.CreateUAV(PositionBufferRDG);
+
+				FRDGBufferRef VelocityBufferRDG = GraphBuilder.RegisterExternalBuffer(
+					RenderResource->PooledVelocityBuffer,
+					TEXT("RenderVelocitiesSoA")
+				);
+				FRDGBufferUAVRef VelocitiesUAV = GraphBuilder.CreateUAV(VelocityBufferRDG);
+
+				FGPUFluidSimulatorPassBuilder::AddExtractRenderDataSoAPass(
+					GraphBuilder,
+					PhysicsParticlesSRV,
+					PositionsUAV,
+					VelocitiesUAV,
+					NewCount,
+					Radius
+				);
+			}
 
 			GraphBuilder.Execute();
 

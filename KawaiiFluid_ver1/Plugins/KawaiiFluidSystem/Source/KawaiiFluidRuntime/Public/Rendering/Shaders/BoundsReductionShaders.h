@@ -18,9 +18,10 @@
  */
 BEGIN_SHADER_PARAMETER_STRUCT(FBoundsReductionParameters, )
 	//========================================
-	// Input: Particle Buffer
+	// Input: Particle Buffer (SoA or AoS based on permutation)
 	//========================================
-	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FKawaiiRenderParticle>, RenderParticles)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FVector3f>, RenderPositions)  // SoA: 12B per particle
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FKawaiiRenderParticle>, RenderParticles)  // AoS: 32B per particle (legacy)
 	SHADER_PARAMETER(uint32, ParticleCount)
 	SHADER_PARAMETER(float, ParticleRadius)
 	SHADER_PARAMETER(float, BoundsMargin)
@@ -32,11 +33,20 @@ BEGIN_SHADER_PARAMETER_STRUCT(FBoundsReductionParameters, )
 END_SHADER_PARAMETER_STRUCT()
 
 /**
+ * @brief Shader permutation for SoA buffer layout
+ */
+class FBoundsReductionUseSoADim : SHADER_PERMUTATION_BOOL("USE_SOA_BUFFERS");
+
+/**
  * @brief Compute shader for calculating particle bounds via parallel reduction
  *
  * Dispatches a single group of 256 threads.
  * Each thread processes multiple particles using grid-stride loop.
  * Uses shared memory for parallel reduction within the group.
+ *
+ * Permutations:
+ * - USE_SOA_BUFFERS=0: AoS (32B per particle, legacy)
+ * - USE_SOA_BUFFERS=1: SoA (12B per particle, 62% bandwidth reduction)
  */
 class FBoundsReductionCS : public FGlobalShader
 {
@@ -45,6 +55,7 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FBoundsReductionCS, FGlobalShader);
 
 	using FParameters = FBoundsReductionParameters;
+	using FPermutationDomain = TShaderPermutationDomain<FBoundsReductionUseSoADim>;
 
 	static constexpr int32 ThreadGroupSize = 256;
 
