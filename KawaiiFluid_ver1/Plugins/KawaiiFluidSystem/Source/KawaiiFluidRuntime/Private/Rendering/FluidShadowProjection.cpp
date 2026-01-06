@@ -57,6 +57,7 @@ class FFluidProjectShadowCS : public FGlobalShader
 		SHADER_PARAMETER(FMatrix44f, LightViewProjectionMatrix)
 		SHADER_PARAMETER(FVector2f, HistoryTextureSize)
 		SHADER_PARAMETER(FVector2f, VSMTextureSize)
+		SHADER_PARAMETER(float, NearPlane)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<uint>, DepthAtomicBuffer)
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -203,12 +204,15 @@ void RenderFluidShadowProjection(
 	{
 		TShaderMapRef<FFluidProjectShadowCS> ComputeShader(GlobalShaderMap);
 
+		const float NearPlaneValue = View.NearClippingDistance;
+
 		auto* PassParameters = GraphBuilder.AllocParameters<FFluidProjectShadowCS::FParameters>();
 		PassParameters->HistoryDepthTexture = HistoryDepthTexture;
 		PassParameters->HistoryInvViewProjectionMatrix = HistoryBuffer.InvViewProjectionMatrix;
 		PassParameters->LightViewProjectionMatrix = Params.LightViewProjectionMatrix;
 		PassParameters->HistoryTextureSize = FVector2f(HistorySize.X, HistorySize.Y);
 		PassParameters->VSMTextureSize = FVector2f(VSMSize.X, VSMSize.Y);
+		PassParameters->NearPlane = NearPlaneValue;
 		PassParameters->DepthAtomicBuffer = GraphBuilder.CreateUAV(DepthAtomicBuffer);
 
 		FComputeShaderUtils::AddPass(

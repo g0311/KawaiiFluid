@@ -2,8 +2,12 @@
 //
 // Fluid Shadow Projection Compute Shader
 //
-// Projects previous frame's SSFR depth into light space for VSM shadow generation.
-// Pipeline: History Depth -> World Position -> Light Clip Space -> VSM
+// Projects previous frame's fluid depth into light space for VSM shadow generation.
+// All pipelines output Device-Z (0-1, reversed-Z) for unified processing:
+// - RayMarching: Device-Z directly
+// - ScreenSpace: Linear depth converted via FluidLinearToDeviceDepth pass
+//
+// Pipeline: History Depth (Device-Z) -> World Position -> Light Clip Space -> VSM
 
 #include "/Engine/Private/Common.ush"
 
@@ -26,8 +30,16 @@ float4x4 LightViewProjectionMatrix;
 float2 HistoryTextureSize;
 float2 VSMTextureSize;
 
-// Background depth threshold (matches FluidSmoothing.usf)
-#define BACKGROUND_DEPTH_THRESH 3.0e30f
+// Near plane for Linear Depth → Device-Z conversion
+float NearPlane;
+
+// Background depth thresholds
+// Device-Z (reversed-Z): Near=1.0, Far=0.0, Background=0.0
+#define BACKGROUND_DEVICEZ_THRESH 0.0001f
+// Linear Depth: View-space Z distance, Background=3.0e30f
+#define BACKGROUND_LINEAR_THRESH 3.0e30f
+// Threshold to detect Linear vs Device-Z: Device-Z is always in [0,1], Linear is always > 1
+#define LINEAR_DEPTH_DETECTION_THRESH 1.5f
 
 // Encode float depth to uint for atomic comparison (reversed Z: 0=far, 1=near)
 // We want to find the CLOSEST depth (largest value in reversed-Z)
@@ -44,13 +56,17 @@ float DecodeUintToDepth(uint EncodedDepth)
 }
 
 /**
- * Reconstruct world position from screen UV and depth.
+ * Reconstruct world position from screen UV and Device-Z depth.
+ *
+ * All pipelines now output Device-Z (0-1, reversed-Z) for unified shadow processing:
+ * - RayMarching: Outputs Device-Z directly
+ * - ScreenSpace: Linear depth converted to Device-Z via FluidLinearToDeviceDepth pass
  *
  * @param ScreenUV Normalized screen coordinates (0-1)
- * @param Depth Linear depth value from SSFR
+ * @param DeviceZ Device depth value (0=far, 1=near in reversed-Z)
  * @return World space position
  */
-float3 ReconstructWorldPosition(float2 ScreenUV, float Depth)
+float3 ReconstructWorldPosition(float2 ScreenUV, float DeviceZ)
 {
     // Convert UV to NDC (-1 to 1)
     // Note: Y is flipped (UV is top-down, NDC is bottom-up)
@@ -58,19 +74,10 @@ float3 ReconstructWorldPosition(float2 ScreenUV, float Depth)
     NDC.x = ScreenUV.x * 2.0f - 1.0f;
     NDC.y = -(ScreenUV.y * 2.0f - 1.0f);
 
-    // Create clip space position
-    // For SSFR, depth is stored as linear view-space depth
-    // We need to convert back to clip space depth first
-    // However, since we have InvViewProjectionMatrix, we can work with NDC + depth
-    //
-    // Actually, SSFR stores linear depth (view space Z)
-    // For proper reconstruction, we need to use the projection matrix properly
-    //
-    // Simplified approach: treat depth as clip.z/clip.w (device depth)
-    // This works if SSFR outputs device depth (0-1 range)
-    float4 ClipPos = float4(NDC.x, NDC.y, Depth, 1.0f);
+    // Create clip space position using Device-Z
+    float4 ClipPos = float4(NDC.x, NDC.y, DeviceZ, 1.0f);
 
-    // Transform to world space
+    // Transform to world space using InvViewProjectionMatrix
     float4 WorldPos4 = mul(ClipPos, HistoryInvViewProjectionMatrix);
 
     // Perspective divide
@@ -117,6 +124,9 @@ bool ProjectToLightSpace(float3 WorldPos, out float2 OutLightUV, out float OutLi
  *
  * Each thread processes one pixel from the history depth texture.
  * Valid depths are projected to light space and written to VSM.
+ *
+ * Supports both Device-Z (0-1) and Linear Depth (view-space Z) formats.
+ * Auto-detection: Device-Z is always in [0,1], Linear Depth is always > 1
  */
 [numthreads(THREADGROUP_SIZE_X, THREADGROUP_SIZE_Y, 1)]
 void ProjectFluidShadowCS(uint3 DispatchThreadId : SV_DispatchThreadID)
@@ -129,20 +139,57 @@ void ProjectFluidShadowCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
     int2 PixelCoord = int2(DispatchThreadId.xy);
 
-    // Read history depth
-    float Depth = HistoryDepthTexture.Load(int3(PixelCoord, 0));
+    // Read history depth (could be Device-Z or Linear Depth)
+    float RawDepth = HistoryDepthTexture.Load(int3(PixelCoord, 0));
 
-    // Skip background pixels
-    if (Depth > BACKGROUND_DEPTH_THRESH || Depth <= 0.0f)
+    // Auto-detect depth format and convert to Device-Z
+    float DeviceZ;
+
+    if (RawDepth > LINEAR_DEPTH_DETECTION_THRESH)
     {
-        return;
+        // Linear Depth format (positive values, view-space Z distance)
+        // Skip background pixels (Linear Depth background is very large, e.g., MAX_flt)
+        if (RawDepth > BACKGROUND_LINEAR_THRESH)
+        {
+            return;
+        }
+
+        // Convert Linear Depth to Device-Z
+        // FluidDepth.usf calculates: DeviceZ = ClipPos.z / ClipPos.w
+        // where ClipPos.w = ViewPos.z = -LinearDepth (if -Z is forward)
+        // So: DeviceZ = NearPlane / (-LinearDepth) = -NearPlane / LinearDepth
+        // But if LinearDepth > 0, we need: DeviceZ = NearPlane / LinearDepth
+        DeviceZ = saturate(NearPlane / RawDepth);
+    }
+    else if (RawDepth < -LINEAR_DEPTH_DETECTION_THRESH)
+    {
+        // Linear Depth format with NEGATIVE values (if +Z is forward in view space)
+        // UE5 View Space: +Z forward means IntersectionPoint.z > 0
+        // LinearDepth = -IntersectionPoint.z < 0 (negative)
+        // Skip background: background is cleared to MAX_flt (positive), so negatives are always fluid
+
+        // Convert negative Linear Depth to Device-Z
+        // DeviceZ = NearPlane / IntersectionPoint.z = NearPlane / (-LinearDepth) = -NearPlane / LinearDepth
+        // Since LinearDepth < 0: -NearPlane / LinearDepth = NearPlane / |LinearDepth|
+        DeviceZ = saturate(-NearPlane / RawDepth);
+    }
+    else
+    {
+        // Device-Z format (0=far, 1=near in reversed-Z)
+        // Skip background pixels (Device-Z near 0.0 means far/background)
+        if (RawDepth <= BACKGROUND_DEVICEZ_THRESH)
+        {
+            return;
+        }
+
+        DeviceZ = RawDepth;
     }
 
     // Calculate screen UV
     float2 ScreenUV = (float2(PixelCoord) + 0.5f) / HistoryTextureSize;
 
-    // Reconstruct world position
-    float3 WorldPos = ReconstructWorldPosition(ScreenUV, Depth);
+    // Reconstruct world position using Device-Z
+    float3 WorldPos = ReconstructWorldPosition(ScreenUV, DeviceZ);
 
     // Project to light space
     float2 LightUV;
