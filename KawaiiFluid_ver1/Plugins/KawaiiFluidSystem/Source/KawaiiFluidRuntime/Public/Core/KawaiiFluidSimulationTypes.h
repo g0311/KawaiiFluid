@@ -75,7 +75,7 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidSimulationParams
 
 	/** World collision detection method */
 	UPROPERTY(BlueprintReadWrite, Category = "Simulation")
-	EWorldCollisionMethod WorldCollisionMethod = EWorldCollisionMethod::Sweep;
+	EWorldCollisionMethod WorldCollisionMethod = EWorldCollisionMethod::SDF;
 
 	/** Collision channel for world collision */
 	UPROPERTY(BlueprintReadWrite, Category = "Simulation")
