@@ -26,8 +26,7 @@ FGPUFluidSimulator::FGPUFluidSimulator()
 	, MaxParticleCount(0)
 	, CurrentParticleCount(0)
 	, ExternalForce(FVector3f::ZeroVector)
-	, VelocityDamping(0.99f)
-	, MaxVelocity(1000.0f)
+	, MaxVelocity(50000.0f)  // Safety clamp: 50000 cm/s = 500 m/s
 {
 }
 
@@ -1100,12 +1099,17 @@ void FGPUFluidSimulator::SimulateSubstep_RDG(FRDGBuilder& GraphBuilder, const FG
 
 	if (bShouldLog) UE_LOG(LogGPUFluidSimulator, Log, TEXT(">>> SPATIAL HASH: GPU clear+build completed"));
 
-	// Pass 4: Compute Density and Lambda
-	AddComputeDensityPass(GraphBuilder, ParticlesUAVLocal, CellCountsSRVLocal, ParticleIndicesSRVLocal, Params);
-
-	// Pass 5: Solve Pressure (multiple iterations if needed)
-	for (int32 i = 0; i < Params.PressureIterations; ++i)
+	// Pass 4-5: XPBD Density Constraint Solver (Density + Position correction per iteration)
+	// Each iteration:
+	//   1. Compute Density and Lambda (based on current predicted positions)
+	//   2. Apply position corrections (modifies predicted positions)
+	// Lambda accumulates across iterations via XPBD formulation
+	for (int32 i = 0; i < Params.SolverIterations; ++i)
 	{
+		// Compute Density and Lambda (XPBD: Δλ = (-C - α̃·λ_prev) / (|∇C|² + α̃))
+		AddComputeDensityPass(GraphBuilder, ParticlesUAVLocal, CellCountsSRVLocal, ParticleIndicesSRVLocal, Params);
+
+		// Apply position corrections: Δx = (λ_i + λ_j + s_corr) · ∇W / ρ₀
 		AddSolvePressurePass(GraphBuilder, ParticlesUAVLocal, CellCountsSRVLocal, ParticleIndicesSRVLocal, Params);
 	}
 
@@ -1630,8 +1634,7 @@ void FGPUFluidSimulator::AddFinalizePositionsPass(
 	PassParameters->Particles = ParticlesUAV;
 	PassParameters->ParticleCount = CurrentParticleCount;
 	PassParameters->DeltaTime = Params.DeltaTime;
-	PassParameters->VelocityDamping = VelocityDamping;
-	PassParameters->MaxVelocity = MaxVelocity;
+	PassParameters->MaxVelocity = MaxVelocity;  // Safety clamp (50000 cm/s = 500 m/s)
 
 	const uint32 NumGroups = FMath::DivideAndRoundUp(CurrentParticleCount, FFinalizePositionsCS::ThreadGroupSize);
 
@@ -1728,7 +1731,7 @@ void FGPUFluidSimulator::AddSpawnParticlesPass(
 	PassParameters->MaxParticleCount = MaxParticleCount;
 	PassParameters->NextParticleID = NextParticleID.load();
 	PassParameters->DefaultRadius = DefaultSpawnRadius;
-	PassParameters->DefaultMass = 1.0f;
+	PassParameters->DefaultMass = DefaultSpawnMass;
 
 	const uint32 NumGroups = FMath::DivideAndRoundUp(SpawnRequests.Num(), FSpawnParticlesCS::ThreadGroupSize);
 

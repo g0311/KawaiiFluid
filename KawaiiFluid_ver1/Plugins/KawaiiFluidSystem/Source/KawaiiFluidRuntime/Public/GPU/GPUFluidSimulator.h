@@ -133,10 +133,7 @@ public:
 	/** Set external force to apply (e.g., wind, explosions) */
 	void SetExternalForce(const FVector3f& Force) { ExternalForce = Force; }
 
-	/** Set velocity damping factor (0-1) */
-	void SetVelocityDamping(float Damping) { VelocityDamping = FMath::Clamp(Damping, 0.0f, 1.0f); }
-
-	/** Set maximum velocity cap */
+	/** Set maximum velocity safety clamp (to prevent divergence) */
 	void SetMaxVelocity(float MaxVel) { MaxVelocity = FMath::Max(MaxVel, 0.0f); }
 
 	//=============================================================================
@@ -305,6 +302,11 @@ public:
 	 * Set default particle radius for spawning
 	 */
 	void SetDefaultSpawnRadius(float Radius) { DefaultSpawnRadius = Radius; }
+
+	/**
+	 * Set default particle mass for spawning (used when spawn request Mass = 0)
+	 */
+	void SetDefaultSpawnMass(float Mass) { DefaultSpawnMass = Mass; }
 
 	/**
 	 * Get next particle ID to assign
@@ -517,8 +519,7 @@ private:
 	//=============================================================================
 
 	FVector3f ExternalForce;
-	float VelocityDamping;
-	float MaxVelocity;
+	float MaxVelocity;  // Safety clamp to prevent divergence (default: 50000 cm/s = 500 m/s)
 
 	// Distance Field Collision
 	FGPUDistanceFieldCollisionParams DFCollisionParams;
@@ -586,6 +587,9 @@ private:
 
 	// Default spawn radius
 	float DefaultSpawnRadius = 5.0f;
+
+	// Default spawn mass (used when spawn request Mass = 0)
+	float DefaultSpawnMass = 1.0f;
 
 	// Flag: spawn requests are pending
 	std::atomic<bool> bHasPendingSpawnRequests{false};

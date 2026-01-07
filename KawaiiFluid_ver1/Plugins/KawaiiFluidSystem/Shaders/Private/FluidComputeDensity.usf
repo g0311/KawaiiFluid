@@ -140,14 +140,29 @@ void ComputeDensityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	// Store neighbor count (for statistics)
 	particle.NeighborCount = neighborCount;
 
-	// Calculate Lambda (XPBD constraint multiplier)
+	// Calculate Lambda using XPBD formulation
 	// C = (density / restDensity) - 1
 	float C = (density / RestDensity) - 1.0f;
 
-	// Lambda = -C / (sum|gradC|^2 + epsilon)
-	// epsilon = compliance / dt^2 for numerical stability
-	float epsilon = Compliance / max(DeltaTimeSq, 0.00001f);
-	particle.Lambda = (C > 0.0f) ? -C / (sumGradC2 + epsilon) : 0.0f;
+	// XPBD: α̃ = compliance / dt² (regularization parameter)
+	float alphaTilde = Compliance / max(DeltaTimeSq, 0.00001f);
+
+	// XPBD Lambda update with accumulation:
+	// Δλ = (-C - α̃·λ_prev) / (|∇C|² + α̃)
+	// λ = λ_prev + Δλ
+	//
+	// This formulation:
+	// 1. Uses previous Lambda (λ_prev) for proper constraint accumulation
+	// 2. Includes compliance term (α̃·λ_prev) for XPBD regularization
+	// 3. Accumulates Lambda across iterations for better convergence
+	if (C > 0.0f)
+	{
+		float lambda_prev = particle.Lambda;
+		float deltaLambda = (-C - alphaTilde * lambda_prev) / (sumGradC2 + alphaTilde);
+		particle.Lambda = lambda_prev + deltaLambda;
+	}
+	// If C <= 0 (under-compressed or exactly at rest density), keep previous Lambda
+	// This matches CPU behavior and prevents oscillation
 
 	Particles[idx] = particle;
 }

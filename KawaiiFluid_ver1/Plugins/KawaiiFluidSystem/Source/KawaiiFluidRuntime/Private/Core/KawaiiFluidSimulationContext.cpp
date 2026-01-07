@@ -181,8 +181,8 @@ FGPUFluidSimulationParams UKawaiiFluidSimulationContext::BuildGPUSimParams(
 		GPUParams.BoundsFriction = Preset->Friction;
 	}
 
-	// Pressure iterations (typically 1-4)
-	GPUParams.PressureIterations = 1;
+	// Solver iterations (typically 1-4 for density constraint)
+	GPUParams.SolverIterations = Preset->SolverIterations;
 
 	// Tensile Instability Correction (PBF Eq.13-14)
 	// Must be set before PrecomputeKernelCoefficients() to compute InvW_DeltaQ
@@ -305,6 +305,13 @@ void UKawaiiFluidSimulationContext::SimulateGPU(
 			return;
 		}
 	}
+
+	// Set default spawn parameters from Preset (for fallback when spawn request values are 0)
+	GPUSimulator->SetDefaultSpawnRadius(Preset->ParticleRadius);
+	GPUSimulator->SetDefaultSpawnMass(Preset->ParticleMass);
+
+	// Set external force from simulation params (wind, player force, etc.)
+	GPUSimulator->SetExternalForce(FVector3f(Params.ExternalForce));
 
 	// =====================================================
 	// GPU-Only Mode: No CPU Particles array dependency
@@ -1897,7 +1904,7 @@ void UKawaiiFluidSimulationContext::CollectSimulationStats(
 	if (Preset)
 	{
 		Stats.SetRestDensity(Preset->RestDensity);
-		Stats.SetPressureIterations(Preset->SolverIterations);
+		Stats.SetSolverIterations(Preset->SolverIterations);
 	}
 
 	// Count particle types
@@ -1962,7 +1969,7 @@ void UKawaiiFluidSimulationContext::CollectGPUSimulationStats(
 	if (Preset)
 	{
 		Stats.SetRestDensity(Preset->RestDensity);
-		Stats.SetPressureIterations(Preset->SolverIterations);
+		Stats.SetSolverIterations(Preset->SolverIterations);
 
 		// Calculate estimated substep count based on preset
 		constexpr int32 MaxSubstepsPerFrame = 4;

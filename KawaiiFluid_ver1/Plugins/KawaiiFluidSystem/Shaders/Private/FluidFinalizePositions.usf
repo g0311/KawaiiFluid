@@ -13,8 +13,7 @@
 RWStructuredBuffer<FGPUFluidParticle> Particles;
 int ParticleCount;
 float DeltaTime;
-float VelocityDamping;
-float MaxVelocity;
+float MaxVelocity;  // Safety clamp to prevent divergence (high value, e.g., 50000 cm/s)
 
 //=============================================================================
 // Main Compute Shader
@@ -46,19 +45,13 @@ void FinalizePositionsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	// Finalize position
 	particle.Position = particle.PredictedPosition;
 
-	// Recalculate velocity from position change
+	// Recalculate velocity from position change (matches CPU behavior)
 	// v = (x_new - x_old) / dt
 	float invDt = 1.0f / max(DeltaTime, 0.0001f);
-	float3 newVelocity = (particle.Position - oldPosition) * invDt;
+	particle.Velocity = (particle.Position - oldPosition) * invDt;
 
-	// Blend with existing velocity for stability
-	// This helps smooth out sudden changes from constraint solving
-	particle.Velocity = lerp(particle.Velocity, newVelocity, 0.8f);
-
-	// Apply velocity damping
-	particle.Velocity *= VelocityDamping;
-
-	// Clamp velocity magnitude
+	// Safety clamp: prevent extreme velocities that could cause divergence
+	// This is a high threshold (50000 cm/s = 500 m/s) that shouldn't affect normal simulation
 	float velocityMag = length(particle.Velocity);
 	if (velocityMag > MaxVelocity)
 	{

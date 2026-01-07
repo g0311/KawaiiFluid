@@ -100,7 +100,7 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidSimulationStats
 	//========================================
 
 	int32 SubstepCount = 0;
-	int32 PressureIterations = 0;
+	int32 SolverIterations = 0;
 
 	//========================================
 	// Performance (milliseconds)
@@ -222,8 +222,8 @@ public:
 	/** Set substep count */
 	void SetSubstepCount(int32 Count) { CurrentStats.SubstepCount = Count; }
 
-	/** Set pressure iterations */
-	void SetPressureIterations(int32 Iterations) { CurrentStats.PressureIterations = Iterations; }
+	/** Set solver iterations */
+	void SetSolverIterations(int32 Iterations) { CurrentStats.SolverIterations = Iterations; }
 
 	/** Set GPU simulation mode */
 	void SetGPUSimulation(bool bGPU) { CurrentStats.bIsGPUSimulation = bGPU; }

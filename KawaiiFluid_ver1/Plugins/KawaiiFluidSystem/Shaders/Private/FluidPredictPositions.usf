@@ -51,6 +51,11 @@ void PredictPositionsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	// Predict position: x_pred = x + v * dt
 	particle.PredictedPosition = particle.Position + particle.Velocity * DeltaTime;
 
+	// XPBD: Reset Lambda at the start of each substep
+	// Lambda accumulates across pressure solver iterations within a substep,
+	// but must be reset between substeps for correct constraint solving
+	particle.Lambda = 0.0f;
+
 	// Store back
 	Particles[idx] = particle;
 }

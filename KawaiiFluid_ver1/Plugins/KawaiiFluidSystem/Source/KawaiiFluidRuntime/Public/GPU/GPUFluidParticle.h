@@ -106,7 +106,7 @@ struct FGPUFluidSimulationParams
 	// Iteration
 	int32 SubstepIndex;           // Current substep index
 	int32 TotalSubsteps;          // Total substeps per frame
-	int32 PressureIterations;     // Number of pressure solve iterations
+	int32 SolverIterations;       // Number of XPBD constraint solver iterations
 	float CurrentTime;            // Current game time (seconds)
 
 	// Tensile Instability Correction (PBF paper Eq.13-14)
@@ -147,7 +147,7 @@ struct FGPUFluidSimulationParams
 		, bUseOBB(0)
 		, SubstepIndex(0)
 		, TotalSubsteps(1)
-		, PressureIterations(1)
+		, SolverIterations(1)
 		, CurrentTime(0.0f)
 		, bEnableTensileInstability(1)
 		, TensileK(0.1f)

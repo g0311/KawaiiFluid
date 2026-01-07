@@ -67,8 +67,8 @@ void FKawaiiFluidSimulationStats::LogStats(const FString& Label) const
 		BoundsCollisionCount, PrimitiveCollisionCount, GroundContactCount);
 
 	// Solver
-	UE_LOG(LogTemp, Log, TEXT("Solver: Substeps=%d, PressureIter=%d"),
-		SubstepCount, PressureIterations);
+	UE_LOG(LogTemp, Log, TEXT("Solver: Substeps=%d, SolverIter=%d"),
+		SubstepCount, SolverIterations);
 
 	// Performance
 	UE_LOG(LogTemp, Log, TEXT("Performance (ms): Total=%.3f, Hash=%.3f, Density=%.3f"),
