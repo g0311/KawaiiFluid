@@ -81,6 +81,39 @@ IMPLEMENT_GLOBAL_SHADER(FFluidNarrowRangeFilterCS,
                         SF_Compute);
 
 //=============================================================================
+// Thickness Gaussian Blur Compute Shader
+//=============================================================================
+
+class FFluidThicknessGaussianBlurCS : public FGlobalShader
+{
+	DECLARE_GLOBAL_SHADER(FFluidThicknessGaussianBlurCS);
+	SHADER_USE_PARAMETER_STRUCT(FFluidThicknessGaussianBlurCS, FGlobalShader);
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters,)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, InputTexture)
+		SHADER_PARAMETER(FVector2f, TextureSize)
+		SHADER_PARAMETER(float, BlurRadius)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float>, OutputTexture)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters,
+	                                         FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("THREADGROUP_SIZE"), 8);
+	}
+};
+
+IMPLEMENT_GLOBAL_SHADER(FFluidThicknessGaussianBlurCS,
+                        "/Plugin/KawaiiFluidSystem/Private/FluidSmoothing.usf", "ThicknessGaussianBlurCS",
+                        SF_Compute);
+
+//=============================================================================
 // Smoothing Pass Implementation
 //=============================================================================
 
@@ -206,4 +239,60 @@ void RenderFluidNarrowRangeSmoothingPass(
 	}
 
 	OutSmoothedDepthTexture = CurrentInput;
+}
+
+//=============================================================================
+// Thickness Smoothing Pass (Simple Gaussian Blur)
+//=============================================================================
+
+void RenderFluidThicknessSmoothingPass(
+	FRDGBuilder& GraphBuilder,
+	const FSceneView& View,
+	FRDGTextureRef InputThicknessTexture,
+	FRDGTextureRef& OutSmoothedThicknessTexture,
+	float BlurRadius,
+	int32 NumIterations)
+{
+	RDG_EVENT_SCOPE(GraphBuilder, "FluidThicknessSmoothing");
+	check(InputThicknessTexture);
+
+	NumIterations = FMath::Clamp(NumIterations, 1, 5);
+
+	FIntPoint TextureSize = InputThicknessTexture->Desc.Extent;
+
+	// Use R16F format to match the input thickness texture
+	FRDGTextureDesc IntermediateDesc = FRDGTextureDesc::Create2D(
+		TextureSize,
+		PF_R16F,
+		FClearValueBinding::None,
+		TexCreate_ShaderResource | TexCreate_UAV);
+
+	FGlobalShaderMap* GlobalShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
+	TShaderMapRef<FFluidThicknessGaussianBlurCS> ComputeShader(GlobalShaderMap);
+
+	FRDGTextureRef CurrentInput = InputThicknessTexture;
+
+	for (int32 Iteration = 0; Iteration < NumIterations; ++Iteration)
+	{
+		FRDGTextureRef IterationOutput = GraphBuilder.CreateTexture(
+			IntermediateDesc, TEXT("FluidThicknessBlur"));
+
+		auto* PassParameters = GraphBuilder.AllocParameters<FFluidThicknessGaussianBlurCS::FParameters>();
+
+		PassParameters->InputTexture = CurrentInput;
+		PassParameters->TextureSize = FVector2f(TextureSize.X, TextureSize.Y);
+		PassParameters->BlurRadius = BlurRadius;
+		PassParameters->OutputTexture = GraphBuilder.CreateUAV(IterationOutput);
+
+		FComputeShaderUtils::AddPass(
+			GraphBuilder,
+			RDG_EVENT_NAME("ThicknessBlur_Iteration%d", Iteration),
+			ComputeShader,
+			PassParameters,
+			FComputeShaderUtils::GetGroupCount(TextureSize, 8));
+
+		CurrentInput = IterationOutput;
+	}
+
+	OutSmoothedThicknessTexture = CurrentInput;
 }

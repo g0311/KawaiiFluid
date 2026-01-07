@@ -204,3 +204,61 @@ void NarrowRangeFilterCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	OutputTexture[CenterCoord] = FinalDepth;
 }
+
+//=============================================================================
+// Simple Gaussian Blur for Thickness (no bilateral/range weighting)
+//
+// Unlike depth smoothing, thickness uses simple Gaussian blur because:
+// 1. Thickness values are additive (no sharp edges to preserve)
+// 2. Background is 0.0, not a large value
+// 3. We want to smooth out individual particle profiles
+//=============================================================================
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void ThicknessGaussianBlurCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	// Bounds check
+	if (any(DispatchThreadId.xy >= uint2(TextureSize)))
+	{
+		return;
+	}
+
+	int2 CenterCoord = int2(DispatchThreadId.xy);
+	float CenterThickness = InputTexture.Load(int3(CenterCoord, 0));
+
+	// If center has no thickness, check if we should expand from neighbors
+	// (This helps fill small gaps at particle edges)
+
+	const int KernelRadius = int(BlurRadius);
+	const float Sigma = BlurRadius / 2.0f;
+
+	float TotalWeight = 0.0f;
+	float TotalWeightedThickness = 0.0f;
+
+	// 2D Gaussian blur
+	for (int OffsetY = -KernelRadius; OffsetY <= KernelRadius; ++OffsetY)
+	{
+		for (int OffsetX = -KernelRadius; OffsetX <= KernelRadius; ++OffsetX)
+		{
+			int2 SampleCoord = CenterCoord + int2(OffsetX, OffsetY);
+			SampleCoord = clamp(SampleCoord, int2(0, 0), int2(TextureSize) - 1);
+
+			float SampleThickness = InputTexture.Load(int3(SampleCoord, 0));
+
+			// Spatial Gaussian weight
+			float SpatialDist = length(float2(OffsetX, OffsetY));
+			float Weight = GetGaussianWeight(SpatialDist, Sigma);
+
+			TotalWeightedThickness += SampleThickness * Weight;
+			TotalWeight += Weight;
+		}
+	}
+
+	float FinalThickness = 0.0f;
+	if (TotalWeight > 0.0f)
+	{
+		FinalThickness = TotalWeightedThickness / TotalWeight;
+	}
+
+	OutputTexture[CenterCoord] = FinalThickness;
+}

@@ -117,10 +117,21 @@ static bool GenerateIntermediateTextures(
 		return false;
 	}
 
+	// 5. Thickness Smoothing Pass - smooth out individual particle profiles
+	FRDGTextureRef SmoothedThicknessTexture = nullptr;
+	RenderFluidThicknessSmoothingPass(GraphBuilder, View, ThicknessTexture, SmoothedThicknessTexture,
+	                                  BlurRadius, 2);  // 2 iterations for thickness
+
+	if (!SmoothedThicknessTexture)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("FKawaiiMetaballScreenSpacePipeline: Thickness smoothing pass failed"));
+		SmoothedThicknessTexture = ThicknessTexture;  // Fallback to unsmoothed
+	}
+
 	// Build output
 	OutIntermediateTextures.SmoothedDepthTexture = SmoothedDepthTexture;
 	OutIntermediateTextures.NormalTexture = NormalTexture;
-	OutIntermediateTextures.ThicknessTexture = ThicknessTexture;
+	OutIntermediateTextures.ThicknessTexture = SmoothedThicknessTexture;
 
 	return true;
 }
