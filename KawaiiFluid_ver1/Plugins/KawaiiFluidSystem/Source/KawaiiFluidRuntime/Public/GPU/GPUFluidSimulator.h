@@ -172,6 +172,16 @@ public:
 	/** Check if anisotropy is enabled */
 	bool IsAnisotropyEnabled() const { return CachedAnisotropyParams.bEnabled; }
 
+	/** Get persistent anisotropy axis buffers (for rendering) */
+	TRefCountPtr<FRDGPooledBuffer> GetPersistentAnisotropyAxis1Buffer() const { return PersistentAnisotropyAxis1Buffer; }
+	TRefCountPtr<FRDGPooledBuffer> GetPersistentAnisotropyAxis2Buffer() const { return PersistentAnisotropyAxis2Buffer; }
+	TRefCountPtr<FRDGPooledBuffer> GetPersistentAnisotropyAxis3Buffer() const { return PersistentAnisotropyAxis3Buffer; }
+
+	/** Access anisotropy buffers for writing (compute shader output) */
+	TRefCountPtr<FRDGPooledBuffer>& AccessPersistentAnisotropyAxis1Buffer() { return PersistentAnisotropyAxis1Buffer; }
+	TRefCountPtr<FRDGPooledBuffer>& AccessPersistentAnisotropyAxis2Buffer() { return PersistentAnisotropyAxis2Buffer; }
+	TRefCountPtr<FRDGPooledBuffer>& AccessPersistentAnisotropyAxis3Buffer() { return PersistentAnisotropyAxis3Buffer; }
+
 	//=============================================================================
 	// Distance Field Collision
 	//=============================================================================
@@ -559,6 +569,11 @@ private:
 
 	// Anisotropy parameters
 	FFluidAnisotropyParams CachedAnisotropyParams;
+
+	// Anisotropy buffers (computed by FluidAnisotropyCS, used by FluidDepthPass)
+	TRefCountPtr<FRDGPooledBuffer> PersistentAnisotropyAxis1Buffer;
+	TRefCountPtr<FRDGPooledBuffer> PersistentAnisotropyAxis2Buffer;
+	TRefCountPtr<FRDGPooledBuffer> PersistentAnisotropyAxis3Buffer;
 
 	// Distance Field Collision
 	FGPUDistanceFieldCollisionParams DFCollisionParams;
