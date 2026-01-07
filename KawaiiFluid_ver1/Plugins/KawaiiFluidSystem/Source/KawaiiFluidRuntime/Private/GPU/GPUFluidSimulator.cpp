@@ -1635,6 +1635,7 @@ void FGPUFluidSimulator::AddFinalizePositionsPass(
 	PassParameters->ParticleCount = CurrentParticleCount;
 	PassParameters->DeltaTime = Params.DeltaTime;
 	PassParameters->MaxVelocity = MaxVelocity;  // Safety clamp (50000 cm/s = 500 m/s)
+	PassParameters->GlobalDamping = Params.GlobalDamping;
 
 	const uint32 NumGroups = FMath::DivideAndRoundUp(CurrentParticleCount, FFinalizePositionsCS::ThreadGroupSize);
 

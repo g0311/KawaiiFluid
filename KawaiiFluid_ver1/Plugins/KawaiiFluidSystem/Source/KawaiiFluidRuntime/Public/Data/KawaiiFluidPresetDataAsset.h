@@ -103,6 +103,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Physics", meta = (ClampMin = "1", ClampMax = "10"))
 	int32 SolverIterations = 3;
 
+	/**
+	 * Global velocity damping per substep
+	 * Applied after FinalizePositions to dissipate energy
+	 * 1.0 = no damping, 0.99 = 1% damping per substep, 0.95 = 5% damping
+	 * Useful for stabilizing simulation and preventing perpetual motion
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Physics", meta = (ClampMin = "0.9", ClampMax = "1.0"))
+	float GlobalDamping = 0.995f;
+
 	//========================================
 	// Tensile Instability Correction (PBF Eq.13-14)
 	//========================================

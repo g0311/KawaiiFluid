@@ -381,6 +381,7 @@ public:
 		SHADER_PARAMETER(int32, ParticleCount)
 		SHADER_PARAMETER(float, DeltaTime)
 		SHADER_PARAMETER(float, MaxVelocity)      // Safety clamp (high value, e.g., 50000 cm/s)
+		SHADER_PARAMETER(float, GlobalDamping)    // Velocity damping per substep (1.0 = no damping)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 256;
