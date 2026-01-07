@@ -122,6 +122,11 @@ float EvaluateMetaballSDFWithSpatialHash(
 						continue;
 
 					float3 ParticlePos = RenderParticles[ParticleIdx].Position;
+					
+					// [FIX] Distance Culling: Skip particles that are too far to influence the surface
+					if (length(p - ParticlePos) > ParticleRadius + Smoothness * 2.0f)
+						continue;
+
 					float d = length(p - ParticlePos) - ParticleRadius;
 
 					if (!bFoundAny)
@@ -301,6 +306,11 @@ float EvaluateMetaballSDFWithSpatialHash_SoA(
 						continue;
 
 					float3 ParticlePos = RenderPositions[ParticleIdx];  // 12B vs 32B
+
+					// [FIX] Distance Culling: Skip particles that are too far to influence the surface
+					if (length(p - ParticlePos) > ParticleRadius + Smoothness * 2.0f)
+						continue;
+
 					float d = length(p - ParticlePos) - ParticleRadius;
 
 					if (!bFoundAny)
