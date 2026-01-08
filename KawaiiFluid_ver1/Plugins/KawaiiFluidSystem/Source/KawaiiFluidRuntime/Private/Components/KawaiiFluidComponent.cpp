@@ -325,24 +325,27 @@ void UKawaiiFluidComponent::ProcessContinuousSpawn(float DeltaTime)
 	// Hexagonal Stream 모드: Hexagonal Packing 레이어 기반 스폰
 	if (SpawnSettings.EmitterType == EFluidEmitterType::HexagonalStream)
 	{
+		float Spacing = SpawnSettings.StreamParticleSpacing;
+		if (Spacing <= 0.0f && SimulationModule && SimulationModule->Preset)
+		{
+			Spacing = SimulationModule->Preset->SmoothingRadius * 0.5f;
+		}
+		if (Spacing <= 0.0f)
+		{
+			Spacing = 10.0f;  // fallback
+		}
+
+		const float Speed = FMath::Max(SpawnSettings.SpawnSpeed, 1.0f);
 		float LayerInterval;
 
 		if (SpawnSettings.StreamLayerMode == EStreamLayerMode::VelocityBased)
 		{
-			// Velocity-based: LayerInterval = Spacing / Speed
-			// 파티클이 Spacing만큼 이동하는 시간에 맞춰 새 레이어 생성
-			float Spacing = SpawnSettings.StreamParticleSpacing;
-			if (Spacing <= 0.0f && SimulationModule && SimulationModule->Preset)
-			{
-				Spacing = SimulationModule->Preset->SmoothingRadius * 0.5f;
-			}
-			if (Spacing <= 0.0f)
-			{
-				Spacing = 10.0f;  // fallback
-			}
-
-			const float Speed = FMath::Max(SpawnSettings.SpawnSpeed, 1.0f);
-			LayerInterval = Spacing / Speed;
+			// Velocity-based: LayerInterval = (Spacing * LayerSpacingRatio) / Speed
+			// LayerSpacingRatio가 작을수록 레이어가 촘촘하게 스폰되어 연속적인 스트림 형성
+			// 1.0 = 레이어 간격이 파티클 간격과 동일 (끊겨 보일 수 있음)
+			// 0.5 = 레이어가 2배 촘촘하게 (연속적인 모양)
+			const float LayerSpacingRatio = FMath::Clamp(SpawnSettings.StreamLayerSpacingRatio, 0.2f, 1.0f);
+			LayerInterval = (Spacing * LayerSpacingRatio) / Speed;
 		}
 		else  // FixedRate
 		{
@@ -352,9 +355,49 @@ void UKawaiiFluidComponent::ProcessContinuousSpawn(float DeltaTime)
 
 		SpawnAccumulatedTime += DeltaTime;
 
-		while (SpawnAccumulatedTime >= LayerInterval)
+		// 연속적인 스트림을 위해 여러 레이어 스폰 시 위치 오프셋 적용
+		// 각 레이어는 스폰 시점 차이만큼 유체 진행 방향으로 오프셋
+		const FQuat Rotation = GetComponentQuat();
+		const FVector BaseLocation = GetComponentLocation() + Rotation.RotateVector(SpawnSettings.SpawnOffset);
+		const FVector WorldDirection = Rotation.RotateVector(SpawnSettings.SpawnDirection.GetSafeNormal());
+
+		// 스폰해야 할 레이어 수 계산
+		int32 LayersToSpawn = 0;
+		float TempAccumulatedTime = SpawnAccumulatedTime;
+		while (TempAccumulatedTime >= LayerInterval)
 		{
-			SpawnHexagonalLayer();
+			++LayersToSpawn;
+			TempAccumulatedTime -= LayerInterval;
+		}
+
+		// 잔여 시간: 이전 프레임의 마지막 스폰 이후 경과한 추가 시간
+		// 이 시간만큼 이전 레이어가 더 이동했으므로, 새 레이어들도 그만큼 오프셋 필요
+		const float ResidualTime = TempAccumulatedTime;
+
+		// 각 레이어를 시간 오프셋에 맞는 위치에 스폰
+		// 가장 먼저 스폰됐어야 할 레이어(가장 멀리 이동한)부터 순서대로
+		for (int32 i = LayersToSpawn - 1; i >= 0; --i)
+		{
+			// i번째 레이어는 i * LayerInterval 전에 스폰됐어야 함
+			// 그동안 Speed * time만큼 이동했을 것
+			// i = LayersToSpawn-1 (oldest): 가장 멀리 이동
+			// i = 0 (newest, now): 이동 없음
+			// 추가로 잔여 시간만큼 모든 레이어를 오프셋하여 프레임 간 연속성 보장
+			float TimeOffset = static_cast<float>(i) * LayerInterval + ResidualTime;
+			float PositionOffset = Speed * TimeOffset;
+
+			// 유체 진행 방향으로 오프셋된 위치에서 스폰
+			FVector OffsetLocation = BaseLocation + WorldDirection * PositionOffset;
+
+			SimulationModule->SpawnParticleDirectionalHexLayer(
+				OffsetLocation,
+				WorldDirection,
+				Speed,
+				SpawnSettings.StreamRadius,
+				Spacing,
+				SpawnSettings.StreamJitter
+			);
+
 			SpawnAccumulatedTime -= LayerInterval;
 
 			// 최대 파티클 수 체크
@@ -522,28 +565,6 @@ void UKawaiiFluidComponent::SpawnDirectionalParticle()
 		SpawnSettings.SpawnSpeed,
 		SpawnSettings.StreamRadius,
 		ConeAngle
-	);
-}
-
-void UKawaiiFluidComponent::SpawnHexagonalLayer()
-{
-	if (!SimulationModule)
-	{
-		return;
-	}
-
-	// Transform offset and direction by component rotation
-	const FQuat Rotation = GetComponentQuat();
-	const FVector Location = GetComponentLocation() + Rotation.RotateVector(SpawnSettings.SpawnOffset);
-	const FVector WorldDirection = Rotation.RotateVector(SpawnSettings.SpawnDirection.GetSafeNormal());
-
-	SimulationModule->SpawnParticleDirectionalHexLayer(
-		Location,
-		WorldDirection,
-		SpawnSettings.SpawnSpeed,
-		SpawnSettings.StreamRadius,
-		SpawnSettings.StreamParticleSpacing,
-		SpawnSettings.StreamJitter
 	);
 }
 

@@ -173,6 +173,18 @@ struct FFluidSpawnSettings
 	          meta = (EditCondition = "SpawnType == EFluidSpawnType::Emitter && EmitterType == EFluidEmitterType::HexagonalStream", EditConditionHides, ClampMin = "0.0", ClampMax = "0.5"))
 	float StreamJitter = 0.15f;
 
+	/**
+	 * Layer-to-layer spacing ratio relative to particle spacing - Hexagonal Stream only
+	 * Controls how tightly packed layers are along the flow direction.
+	 * 1.0 = layers are particle-spacing apart (may look disconnected)
+	 * 0.816 = ideal 3D hexagonal close packing (HCP) - default
+	 * 0.5 = layers overlap significantly (very dense stream)
+	 * Lower values = denser, more continuous stream
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Particle Spawn|Flow",
+	          meta = (EditCondition = "SpawnType == EFluidSpawnType::Emitter && EmitterType == EFluidEmitterType::HexagonalStream", EditConditionHides, ClampMin = "0.2", ClampMax = "1.0"))
+	float StreamLayerSpacingRatio = 0.816f;
+
 	/** Particles spawned per second - Stream and Spray modes */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Particle Spawn|Flow",
 	          meta = (EditCondition = "SpawnType == EFluidSpawnType::Emitter && (EmitterType == EFluidEmitterType::Stream || EmitterType == EFluidEmitterType::Spray)", EditConditionHides, ClampMin = "1.0", ClampMax = "1000.0"))
@@ -417,9 +429,6 @@ private:
 
 	/** Spawn single particle for Stream/Jet mode (Spray mode) */
 	void SpawnDirectionalParticle();
-
-	/** Spawn hexagonal-packed layer of particles (Stream mode) */
-	void SpawnHexagonalLayer();
 
 	//========================================
 	// Editor Visualization
