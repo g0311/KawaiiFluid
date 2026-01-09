@@ -42,9 +42,19 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
     SHADER_PARAMETER(float, FresnelStrength)
     SHADER_PARAMETER(float, RefractiveIndex)
     SHADER_PARAMETER(float, AbsorptionCoefficient)
+    SHADER_PARAMETER(FLinearColor, AbsorptionColorCoefficients)  // RGB별 흡수 계수 (Beer's Law)
     SHADER_PARAMETER(float, SpecularStrength)
     SHADER_PARAMETER(float, SpecularRoughness)
     SHADER_PARAMETER(FLinearColor, EnvironmentLightColor)
+
+    // ------------------------------------------------------
+    // Reflection Cubemap
+    // ------------------------------------------------------
+    SHADER_PARAMETER_TEXTURE(TextureCube, ReflectionCubemap)
+    SHADER_PARAMETER_SAMPLER(SamplerState, ReflectionCubemapSampler)
+    SHADER_PARAMETER(float, ReflectionIntensity)
+    SHADER_PARAMETER(float, ReflectionMipLevel)
+    SHADER_PARAMETER(int, bUseReflectionCubemap)  // 1 = Cubemap 사용, 0 = fallback 색상
 
     // ------------------------------------------------------
     // Render Targets (Output)

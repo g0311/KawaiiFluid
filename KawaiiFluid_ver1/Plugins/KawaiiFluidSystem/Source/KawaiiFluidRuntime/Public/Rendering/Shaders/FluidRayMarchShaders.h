@@ -45,9 +45,19 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidRayMarchParameters, )
 	SHADER_PARAMETER(float, FresnelStrength)
 	SHADER_PARAMETER(float, RefractiveIndex)
 	SHADER_PARAMETER(float, AbsorptionCoefficient)
+	SHADER_PARAMETER(FLinearColor, AbsorptionColorCoefficients)
 	SHADER_PARAMETER(float, SpecularStrength)
 	SHADER_PARAMETER(float, SpecularRoughness)
 	SHADER_PARAMETER(FLinearColor, EnvironmentLightColor)
+
+	//========================================
+	// Reflection Cubemap
+	//========================================
+	SHADER_PARAMETER_TEXTURE(TextureCube, ReflectionCubemap)
+	SHADER_PARAMETER_SAMPLER(SamplerState, ReflectionCubemapSampler)
+	SHADER_PARAMETER(float, ReflectionIntensity)
+	SHADER_PARAMETER(float, ReflectionMipLevel)
+	SHADER_PARAMETER(int, bUseReflectionCubemap)
 
 	//========================================
 	// SSS Parameters

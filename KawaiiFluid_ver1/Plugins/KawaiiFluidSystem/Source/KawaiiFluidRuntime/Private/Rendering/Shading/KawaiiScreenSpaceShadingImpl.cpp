@@ -171,9 +171,27 @@ void KawaiiScreenSpaceShading::RenderPostProcessShading(
 	PassParameters->FresnelStrength = RenderParams.FresnelStrength;
 	PassParameters->RefractiveIndex = RenderParams.RefractiveIndex;
 	PassParameters->AbsorptionCoefficient = RenderParams.AbsorptionCoefficient;
+	PassParameters->AbsorptionColorCoefficients = RenderParams.AbsorptionColorCoefficients;
 	PassParameters->SpecularStrength = RenderParams.SpecularStrength;
 	PassParameters->SpecularRoughness = RenderParams.SpecularRoughness;
 	PassParameters->EnvironmentLightColor = RenderParams.EnvironmentLightColor;
+
+	// Reflection Cubemap
+	if (RenderParams.ReflectionCubemap && RenderParams.ReflectionCubemap->GetResource())
+	{
+		PassParameters->ReflectionCubemap = RenderParams.ReflectionCubemap->GetResource()->TextureRHI;
+		PassParameters->ReflectionCubemapSampler = TStaticSamplerState<SF_Trilinear>::GetRHI();
+		PassParameters->bUseReflectionCubemap = 1;
+	}
+	else
+	{
+		// Fallback: 검정 텍스처 (사용 안 함 플래그로 무시됨)
+		PassParameters->ReflectionCubemap = GBlackTextureCube->TextureRHI;
+		PassParameters->ReflectionCubemapSampler = TStaticSamplerState<SF_Trilinear>::GetRHI();
+		PassParameters->bUseReflectionCubemap = 0;
+	}
+	PassParameters->ReflectionIntensity = RenderParams.ReflectionIntensity;
+	PassParameters->ReflectionMipLevel = RenderParams.ReflectionMipLevel;
 
 	// Render target (blend over existing scene)
 	PassParameters->RenderTargets[0] = FRenderTargetBinding(

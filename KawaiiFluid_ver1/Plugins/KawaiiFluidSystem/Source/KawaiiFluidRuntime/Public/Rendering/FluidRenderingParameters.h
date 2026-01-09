@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Core/FluidAnisotropy.h"
+#include "Engine/TextureCube.h"
 #include "FluidRenderingParameters.generated.h"
 
 /**
@@ -154,17 +155,30 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance")
 	FLinearColor FluidColor = FLinearColor(0.2f, 0.5f, 0.8f, 1.0f);
 
-	/** Fresnel 강도 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float FresnelStrength = 0.02f;
+	/**
+	 * Fresnel 강도 배율 (IOR에서 F0 자동 계산 후 적용)
+	 * 1.0 = 물리적으로 정확한 반사, 2.0 = 과장된 반사, 0.5 = 약한 반사
+	 * F0 = ((1-IOR)/(1+IOR))^2 * FresnelStrength
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.0", ClampMax = "5.0"))
+	float FresnelStrength = 1.0f;
 
 	/** 굴절률 (IOR) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "1.0", ClampMax = "2.0"))
 	float RefractiveIndex = 1.33f;
 
-	/** 흡수 계수 (thickness 기반 색상 감쇠) */
+	/** 흡수 계수 (thickness 기반 색상 감쇠) - 전체 스케일 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.0", ClampMax = "10.0"))
 	float AbsorptionCoefficient = 2.0f;
+
+	/**
+	 * RGB별 흡수 계수 (Beer's Law)
+	 * 물: R=0.4, G=0.1, B=0.05 (빨강을 많이 흡수하여 파랗게 보임)
+	 * 슬라임: R=0.1, G=0.3, B=0.4 (파랑을 많이 흡수하여 녹색/노란색 계열)
+	 * 높은 값 = 해당 색상이 더 빨리 흡수됨 (두꺼운 부분에서 안 보임)
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance")
+	FLinearColor AbsorptionColorCoefficients = FLinearColor(0.4f, 0.1f, 0.05f, 1.0f);
 
 	/** 스펙큘러 강도 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.0", ClampMax = "2.0"))
@@ -174,9 +188,25 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.01", ClampMax = "1.0"))
 	float SpecularRoughness = 0.2f;
 
-	/** 환경광 색상 (Sky Light - 얇은 부분 반사색) */
+	/** 환경광 색상 (Cubemap 없을 때 fallback 색상) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance")
 	FLinearColor EnvironmentLightColor = FLinearColor(0.8f, 0.9f, 1.0f, 1.0f);
+
+	/**
+	 * 환경 반사용 Cubemap (Reflection Capture)
+	 * 설정하지 않으면 EnvironmentLightColor를 사용
+	 * Scene의 Reflection Capture나 HDRI Cubemap 할당 가능
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance")
+	TObjectPtr<UTextureCube> ReflectionCubemap = nullptr;
+
+	/** Cubemap 반사 강도 (0 = 반사 없음, 1 = 풀 반사) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.0", ClampMax = "2.0"))
+	float ReflectionIntensity = 1.0f;
+
+	/** Cubemap Mip 레벨 (높을수록 블러리한 반사, Roughness 연동) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.0", ClampMax = "10.0"))
+	float ReflectionMipLevel = 2.0f;
 
 	/** Thickness 렌더링 스케일 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Thickness", meta = (ClampMin = "0.1", ClampMax = "10.0"))
@@ -335,9 +365,14 @@ FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
 	Hash = HashCombine(Hash, GetTypeHash(Params.FresnelStrength));
 	Hash = HashCombine(Hash, GetTypeHash(Params.RefractiveIndex));
 	Hash = HashCombine(Hash, GetTypeHash(Params.AbsorptionCoefficient));
+	Hash = HashCombine(Hash, GetTypeHash(Params.AbsorptionColorCoefficients.ToString()));
 	Hash = HashCombine(Hash, GetTypeHash(Params.SpecularStrength));
 	Hash = HashCombine(Hash, GetTypeHash(Params.SpecularRoughness));
 	Hash = HashCombine(Hash, GetTypeHash(Params.EnvironmentLightColor.ToString()));
+	// Reflection Cubemap parameters
+	Hash = HashCombine(Hash, GetTypeHash(Params.ReflectionCubemap.Get()));
+	Hash = HashCombine(Hash, GetTypeHash(Params.ReflectionIntensity));
+	Hash = HashCombine(Hash, GetTypeHash(Params.ReflectionMipLevel));
 	Hash = HashCombine(Hash, GetTypeHash(Params.ParticleRenderRadius));
 	Hash = HashCombine(Hash, GetTypeHash(static_cast<uint8>(Params.SmoothingFilter)));
 	Hash = HashCombine(Hash, GetTypeHash(Params.SmoothingStrength));
@@ -382,9 +417,14 @@ FORCEINLINE bool operator==(const FFluidRenderingParameters& A, const FFluidRend
 	       FMath::IsNearlyEqual(A.FresnelStrength, B.FresnelStrength, 0.001f) &&
 	       FMath::IsNearlyEqual(A.RefractiveIndex, B.RefractiveIndex, 0.001f) &&
 	       FMath::IsNearlyEqual(A.AbsorptionCoefficient, B.AbsorptionCoefficient, 0.001f) &&
+	       A.AbsorptionColorCoefficients.Equals(B.AbsorptionColorCoefficients, 0.001f) &&
 	       FMath::IsNearlyEqual(A.SpecularStrength, B.SpecularStrength, 0.001f) &&
 	       FMath::IsNearlyEqual(A.SpecularRoughness, B.SpecularRoughness, 0.001f) &&
 	       A.EnvironmentLightColor.Equals(B.EnvironmentLightColor, 0.001f) &&
+	       // Reflection Cubemap parameters
+	       A.ReflectionCubemap == B.ReflectionCubemap &&
+	       FMath::IsNearlyEqual(A.ReflectionIntensity, B.ReflectionIntensity, 0.001f) &&
+	       FMath::IsNearlyEqual(A.ReflectionMipLevel, B.ReflectionMipLevel, 0.001f) &&
 	       FMath::IsNearlyEqual(A.ParticleRenderRadius, B.ParticleRenderRadius, 0.001f) &&
 	       A.SmoothingFilter == B.SmoothingFilter &&
 	       FMath::IsNearlyEqual(A.SmoothingStrength, B.SmoothingStrength, 0.001f) &&
