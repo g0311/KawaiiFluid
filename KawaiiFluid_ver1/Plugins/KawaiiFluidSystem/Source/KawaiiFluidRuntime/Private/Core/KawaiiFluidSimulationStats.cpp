@@ -28,6 +28,13 @@ DEFINE_STAT(STAT_FluidAvgDensity);
 DEFINE_STAT(STAT_FluidDensityError);
 DEFINE_STAT(STAT_FluidAvgNeighbors);
 
+// Stability metrics
+DEFINE_STAT(STAT_FluidDensityStdDev);
+DEFINE_STAT(STAT_FluidVelocityStdDev);
+DEFINE_STAT(STAT_FluidPerParticleError);
+DEFINE_STAT(STAT_FluidKineticEnergy);
+DEFINE_STAT(STAT_FluidStabilityScore);
+
 //=============================================================================
 // FFluidSimulationStats Implementation
 //=============================================================================
@@ -53,6 +60,17 @@ void FKawaiiFluidSimulationStats::LogStats(const FString& Label) const
 	UE_LOG(LogTemp, Log, TEXT("Density: Avg=%.2f, Min=%.2f, Max=%.2f, Rest=%.2f"),
 		AvgDensity, MinDensity, MaxDensity, RestDensity);
 	UE_LOG(LogTemp, Log, TEXT("Density Error: %.2f%%"), DensityError);
+
+	// Stability Metrics (GPU detailed mode)
+	if (DensityStdDev > 0.0f || VelocityStdDev > 0.0f)
+	{
+		UE_LOG(LogTemp, Log, TEXT("--- Stability Metrics ---"));
+		UE_LOG(LogTemp, Log, TEXT("  Density StdDev: %.2f"), DensityStdDev);
+		UE_LOG(LogTemp, Log, TEXT("  Velocity StdDev: %.2f cm/s"), VelocityStdDev);
+		UE_LOG(LogTemp, Log, TEXT("  Per-Particle Error: %.2f%%"), PerParticleDensityError);
+		UE_LOG(LogTemp, Log, TEXT("  Kinetic Energy: %.2f"), KineticEnergy);
+		UE_LOG(LogTemp, Log, TEXT("  Stability Score: %.1f / 100"), StabilityScore);
+	}
 
 	// Neighbors
 	UE_LOG(LogTemp, Log, TEXT("Neighbors: Avg=%.2f, Min=%d, Max=%d"),
@@ -96,6 +114,14 @@ FString FKawaiiFluidSimulationStats::ToString() const
 		AvgVelocity, MaxVelocity);
 	Result += FString::Printf(TEXT("Density: Avg=%.1f, Error=%.2f%%\n"),
 		AvgDensity, DensityError);
+
+	// Stability metrics (show if available)
+	if (DensityStdDev > 0.0f || VelocityStdDev > 0.0f)
+	{
+		Result += FString::Printf(TEXT("Stability: Score=%.1f/100, DenStd=%.1f, VelStd=%.1f, PPErr=%.1f%%\n"),
+			StabilityScore, DensityStdDev, VelocityStdDev, PerParticleDensityError);
+	}
+
 	Result += FString::Printf(TEXT("Neighbors: Avg=%.1f (Min=%d, Max=%d)\n"),
 		AvgNeighborCount, MinNeighborCount, MaxNeighborCount);
 	Result += FString::Printf(TEXT("Forces: P=%.4f, V=%.4f, C=%.4f\n"),
@@ -361,6 +387,91 @@ void FKawaiiFluidSimulationStatsCollector::AddCohesionForceSample(float ForceMag
 	CohesionForceSampleCount++;
 }
 
+void FKawaiiFluidSimulationStatsCollector::CalculateStabilityMetrics(
+	const float* Densities,
+	const float* Velocities,
+	const float* Masses,
+	int32 Count,
+	float RestDensity)
+{
+	if (!bEnabled || Count <= 0 || !Densities || !Velocities)
+	{
+		return;
+	}
+
+	// Pass 1: Calculate means
+	double DensityMean = 0.0;
+	double VelocityMean = 0.0;
+	double KineticEnergySum = 0.0;
+	double PerParticleErrorSum = 0.0;
+
+	for (int32 i = 0; i < Count; ++i)
+	{
+		const float Density = Densities[i];
+		const float Velocity = Velocities[i];
+		const float Mass = Masses ? Masses[i] : 1.0f;
+
+		DensityMean += Density;
+		VelocityMean += Velocity;
+
+		// Kinetic energy: 0.5 * m * v²
+		KineticEnergySum += 0.5 * Mass * Velocity * Velocity;
+
+		// Per-particle density error: |ρᵢ - ρ₀| / ρ₀ * 100
+		if (RestDensity > 0.001f)
+		{
+			PerParticleErrorSum += FMath::Abs(Density - RestDensity) / RestDensity * 100.0;
+		}
+	}
+
+	DensityMean /= Count;
+	VelocityMean /= Count;
+
+	// Pass 2: Calculate standard deviations
+	double DensityVariance = 0.0;
+	double VelocityVariance = 0.0;
+
+	for (int32 i = 0; i < Count; ++i)
+	{
+		const double DensityDiff = Densities[i] - DensityMean;
+		const double VelocityDiff = Velocities[i] - VelocityMean;
+
+		DensityVariance += DensityDiff * DensityDiff;
+		VelocityVariance += VelocityDiff * VelocityDiff;
+	}
+
+	DensityVariance /= Count;
+	VelocityVariance /= Count;
+
+	// Store results
+	CurrentStats.DensityStdDev = static_cast<float>(FMath::Sqrt(DensityVariance));
+	CurrentStats.VelocityStdDev = static_cast<float>(FMath::Sqrt(VelocityVariance));
+	CurrentStats.PerParticleDensityError = static_cast<float>(PerParticleErrorSum / Count);
+	CurrentStats.KineticEnergy = static_cast<float>(KineticEnergySum / Count);
+
+	// Calculate Stability Score (0-100, higher = more stable)
+	// Factors:
+	//   1. PerParticleDensityError: target < 3% for stable, > 10% is unstable
+	//   2. VelocityStdDev: target < 5 cm/s for stable, > 50 cm/s is chaotic
+	//   3. AvgVelocity: target < 10 cm/s for "resting" fluid
+	//   4. KineticEnergy: lower is better for resting fluid
+
+	// Density error score (0-25): 3% error = 25, 10% error = 0
+	const float DensityErrorScore = FMath::Clamp(25.0f - (CurrentStats.PerParticleDensityError - 3.0f) * (25.0f / 7.0f), 0.0f, 25.0f);
+
+	// Velocity StdDev score (0-25): 5 cm/s = 25, 50 cm/s = 0
+	const float VelocityStdDevScore = FMath::Clamp(25.0f - (CurrentStats.VelocityStdDev - 5.0f) * (25.0f / 45.0f), 0.0f, 25.0f);
+
+	// Average velocity score (0-25): 10 cm/s = 25, 100 cm/s = 0
+	const float AvgVelocity = static_cast<float>(VelocityMean);
+	const float AvgVelocityScore = FMath::Clamp(25.0f - (AvgVelocity - 10.0f) * (25.0f / 90.0f), 0.0f, 25.0f);
+
+	// Max velocity score (0-25): 50 cm/s = 25, 500 cm/s = 0
+	const float MaxVelocityScore = FMath::Clamp(25.0f - (CurrentStats.MaxVelocity - 50.0f) * (25.0f / 450.0f), 0.0f, 25.0f);
+
+	CurrentStats.StabilityScore = DensityErrorScore + VelocityStdDevScore + AvgVelocityScore + MaxVelocityScore;
+}
+
 void FKawaiiFluidSimulationStatsCollector::UpdateEngineStats() const
 {
 	SET_DWORD_STAT(STAT_FluidParticleCount, CurrentStats.ParticleCount);
@@ -373,6 +484,13 @@ void FKawaiiFluidSimulationStatsCollector::UpdateEngineStats() const
 	SET_FLOAT_STAT(STAT_FluidAvgDensity, CurrentStats.AvgDensity);
 	SET_FLOAT_STAT(STAT_FluidDensityError, CurrentStats.DensityError);
 	SET_FLOAT_STAT(STAT_FluidAvgNeighbors, CurrentStats.AvgNeighborCount);
+
+	// Stability metrics (GPU detailed mode)
+	SET_FLOAT_STAT(STAT_FluidDensityStdDev, CurrentStats.DensityStdDev);
+	SET_FLOAT_STAT(STAT_FluidVelocityStdDev, CurrentStats.VelocityStdDev);
+	SET_FLOAT_STAT(STAT_FluidPerParticleError, CurrentStats.PerParticleDensityError);
+	SET_FLOAT_STAT(STAT_FluidKineticEnergy, CurrentStats.KineticEnergy);
+	SET_FLOAT_STAT(STAT_FluidStabilityScore, CurrentStats.StabilityScore);
 }
 
 //=============================================================================

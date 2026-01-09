@@ -2084,6 +2084,32 @@ void UKawaiiFluidSimulationContext::CollectGPUSimulationStats(
 			{
 				Stats.AddGroundContact();
 			}
+
+			// Calculate stability metrics from GPU particle data
+			if (TotalCount > 0 && Preset)
+			{
+				// Extract density and velocity arrays for stability calculation
+				TArray<float> Densities;
+				TArray<float> Velocities;
+				TArray<float> Masses;
+				Densities.Reserve(TotalCount);
+				Velocities.Reserve(TotalCount);
+				Masses.Reserve(TotalCount);
+
+				for (const FFluidParticle& Particle : GPUParticles)
+				{
+					Densities.Add(Particle.Density);
+					Velocities.Add(static_cast<float>(Particle.Velocity.Size()));
+					Masses.Add(Particle.Mass);
+				}
+
+				Stats.CalculateStabilityMetrics(
+					Densities.GetData(),
+					Velocities.GetData(),
+					Masses.GetData(),
+					TotalCount,
+					Preset->RestDensity);
+			}
 		}
 		else
 		{

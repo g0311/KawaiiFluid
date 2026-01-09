@@ -34,6 +34,13 @@ DECLARE_FLOAT_COUNTER_STAT_EXTERN(TEXT("Avg Density"), STAT_FluidAvgDensity, STA
 DECLARE_FLOAT_COUNTER_STAT_EXTERN(TEXT("Density Error %"), STAT_FluidDensityError, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 DECLARE_FLOAT_COUNTER_STAT_EXTERN(TEXT("Avg Neighbors"), STAT_FluidAvgNeighbors, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 
+// Stability metrics (GPU detailed mode only)
+DECLARE_FLOAT_COUNTER_STAT_EXTERN(TEXT("Density StdDev"), STAT_FluidDensityStdDev, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
+DECLARE_FLOAT_COUNTER_STAT_EXTERN(TEXT("Velocity StdDev"), STAT_FluidVelocityStdDev, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
+DECLARE_FLOAT_COUNTER_STAT_EXTERN(TEXT("Per-Particle Error %"), STAT_FluidPerParticleError, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
+DECLARE_FLOAT_COUNTER_STAT_EXTERN(TEXT("Kinetic Energy"), STAT_FluidKineticEnergy, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
+DECLARE_FLOAT_COUNTER_STAT_EXTERN(TEXT("Stability Score"), STAT_FluidStabilityScore, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
+
 //=============================================================================
 // Fluid Simulation Statistics Collector
 // Collects and aggregates statistics during simulation for debugging
@@ -70,6 +77,16 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidSimulationStats
 	float MaxDensity = 0.0f;
 	float DensityError = 0.0f;  // Average |density - restDensity| / restDensity (%)
 	float RestDensity = 1000.0f;  // Reference rest density
+
+	//========================================
+	// Stability Metrics (GPU Detailed Mode)
+	//========================================
+
+	float DensityStdDev = 0.0f;        // Standard deviation of density
+	float VelocityStdDev = 0.0f;       // Standard deviation of velocity magnitude
+	float PerParticleDensityError = 0.0f;  // Mean of |ρᵢ - ρ₀| / ρ₀ * 100 (%)
+	float KineticEnergy = 0.0f;        // Average kinetic energy (0.5 * m * v²)
+	float StabilityScore = 0.0f;       // 0-100 composite stability score (100 = perfectly stable)
 
 	//========================================
 	// Neighbor Statistics
@@ -188,6 +205,22 @@ public:
 
 	/** Set rest density for error calculation */
 	void SetRestDensity(float InRestDensity) { CurrentStats.RestDensity = InRestDensity; }
+
+	/**
+	 * Calculate stability metrics from GPU readback data
+	 * Call this after GPU readback is complete (in detailed mode)
+	 * @param Densities - Array of particle densities
+	 * @param Velocities - Array of particle velocity magnitudes
+	 * @param Masses - Array of particle masses (can be nullptr if all masses are 1.0)
+	 * @param Count - Number of particles
+	 * @param RestDensity - Target rest density for error calculation
+	 */
+	void CalculateStabilityMetrics(
+		const float* Densities,
+		const float* Velocities,
+		const float* Masses,
+		int32 Count,
+		float RestDensity);
 
 	//========================================
 	// Force Data Collection
