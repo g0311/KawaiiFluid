@@ -56,7 +56,7 @@ public:
 	 * Range: 0.3 (dense, ~124 neighbors) to 0.7 (sparse, ~15 neighbors)
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Particle Size",
-		meta = (ClampMin = "0.3", ClampMax = "0.7"))
+		meta = (ClampMin = "0.1", ClampMax = "0.7"))
 	float SpacingRatio = 0.5f;
 
 	/**

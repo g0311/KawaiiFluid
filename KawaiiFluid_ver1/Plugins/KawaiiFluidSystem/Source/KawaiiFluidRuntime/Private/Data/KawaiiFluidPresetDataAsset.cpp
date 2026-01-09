@@ -12,7 +12,7 @@ UKawaiiFluidPresetDataAsset::UKawaiiFluidPresetDataAsset()
 void UKawaiiFluidPresetDataAsset::RecalculateDerivedParameters()
 {
 	// Clamp SpacingRatio to valid range
-	SpacingRatio = FMath::Clamp(SpacingRatio, 0.3f, 0.7f);
+	SpacingRatio = FMath::Clamp(SpacingRatio, 0.1f, 0.7f);
 
 	// ParticleSpacing = SmoothingRadius * SpacingRatio (cm)
 	ParticleSpacing = SmoothingRadius * SpacingRatio;

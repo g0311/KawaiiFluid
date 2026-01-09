@@ -132,7 +132,7 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	EMetaballShadingMode ShadingMode = EMetaballShadingMode::PostProcess;
 
 	/** 파티클 렌더링 반경 (스크린 스페이스, cm) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Depth", meta = (ClampMin = "1.0", ClampMax = "100.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Depth", meta = (ClampMin = "0.5", ClampMax = "100.0"))
 	float ParticleRenderRadius = 15.0f;
 
 	/** Depth smoothing filter type */
