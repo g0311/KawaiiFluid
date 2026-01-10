@@ -141,6 +141,40 @@ float3 SpikyGradientWithCoeff(float3 r, float rLen, float h, float coeff)
 }
 
 /**
+ * Optimized Spiky gradient using rsqrt (faster inverse square root)
+ * Uses rsqrt(r2) instead of sqrt(r2) for better GPU performance
+ *
+ * @param r - Vector from neighbor to particle (particle.pos - neighbor.pos)
+ * @param r2 - Squared length of r (pre-computed)
+ * @param h - Smoothing radius
+ * @param h2 - Squared smoothing radius (pre-computed)
+ * @return Gradient vector (NOT multiplied by coefficient)
+ */
+float3 SpikyGradientFast(float3 r, float r2, float h, float h2)
+{
+	// Early exit for particles too close (avoid div by zero)
+	if (r2 < SMALL_NUMBER * SMALL_NUMBER)
+	{
+		return float3(0.0f, 0.0f, 0.0f);
+	}
+
+	// rsqrt is faster than sqrt on GPU (uses special function unit)
+	// rLenInv = 1 / sqrt(r2)
+	float rLenInv = rsqrt(r2);
+	float rLen = r2 * rLenInv;  // rLen = r2 / sqrt(r2) = sqrt(r2)
+
+	float diff = h - rLen;
+	if (diff <= 0.0f)
+	{
+		return float3(0.0f, 0.0f, 0.0f);
+	}
+
+	// Normalized direction using rsqrt: r * (1/|r|) = r * rsqrt(r2)
+	float3 dir = r * rLenInv;
+	return dir * (diff * diff);
+}
+
+/**
  * Viscosity kernel Laplacian (for viscosity calculation)
  * ∇²W(r, h) = 45 / (PI * h^6) * (h - |r|)
  *
