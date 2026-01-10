@@ -14,13 +14,19 @@ IMPLEMENT_GLOBAL_SHADER(FPredictPositionsCS,
 	"/Plugin/KawaiiFluidSystem/Private/FluidPredictPositions.usf",
 	"PredictPositionsCS", SF_Compute);
 
+// [DEPRECATED] Use FSolveDensityPressureCS instead
 IMPLEMENT_GLOBAL_SHADER(FComputeDensityCS,
 	"/Plugin/KawaiiFluidSystem/Private/FluidComputeDensity.usf",
 	"ComputeDensityCS", SF_Compute);
 
+// [DEPRECATED] Use FSolveDensityPressureCS instead
 IMPLEMENT_GLOBAL_SHADER(FSolvePressureCS,
 	"/Plugin/KawaiiFluidSystem/Private/FluidSolvePressure.usf",
 	"SolvePressureCS", SF_Compute);
+
+IMPLEMENT_GLOBAL_SHADER(FSolveDensityPressureCS,
+	"/Plugin/KawaiiFluidSystem/Private/FluidSolveDensityPressure.usf",
+	"SolveDensityPressureCS", SF_Compute);
 
 IMPLEMENT_GLOBAL_SHADER(FApplyViscosityCS,
 	"/Plugin/KawaiiFluidSystem/Private/FluidApplyViscosity.usf",

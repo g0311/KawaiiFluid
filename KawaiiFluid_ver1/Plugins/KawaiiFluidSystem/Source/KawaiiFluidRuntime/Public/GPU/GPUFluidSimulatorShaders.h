@@ -49,8 +49,12 @@ public:
 };
 
 //=============================================================================
-// Compute Density Compute Shader
+// [DEPRECATED] Compute Density Compute Shader
 // Pass 3: Calculate density and lambda using spatial hash
+//
+// NOTE: This shader is deprecated and will be removed in a future version.
+// Use FSolveDensityPressureCS instead, which combines density and pressure
+// calculation into a single neighbor traversal for better performance.
 //=============================================================================
 
 class FComputeDensityCS : public FGlobalShader
@@ -97,8 +101,12 @@ public:
 };
 
 //=============================================================================
-// Solve Pressure Compute Shader
+// [DEPRECATED] Solve Pressure Compute Shader
 // Pass 4: Apply position corrections based on density constraints
+//
+// NOTE: This shader is deprecated and will be removed in a future version.
+// Use FSolveDensityPressureCS instead, which combines density and pressure
+// calculation into a single neighbor traversal for better performance.
 //=============================================================================
 
 class FSolvePressureCS : public FGlobalShader
@@ -118,6 +126,55 @@ public:
 		SHADER_PARAMETER(float, Poly6Coeff)
 		SHADER_PARAMETER(float, CellSize)
 		// Tensile Instability (PBF Eq.13-14: s_corr = -k * (W(r)/W(Δq))^n)
+		SHADER_PARAMETER(int32, bEnableTensileInstability)
+		SHADER_PARAMETER(float, TensileK)
+		SHADER_PARAMETER(int32, TensileN)
+		SHADER_PARAMETER(float, InvW_DeltaQ)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static constexpr int32 ThreadGroupSize = 256;
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+
+	static void ModifyCompilationEnvironment(
+		const FGlobalShaderPermutationParameters& Parameters,
+		FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
+		OutEnvironment.SetDefine(TEXT("SPATIAL_HASH_SIZE"), GPU_SPATIAL_HASH_SIZE);
+		OutEnvironment.SetDefine(TEXT("MAX_PARTICLES_PER_CELL"), GPU_MAX_PARTICLES_PER_CELL);
+	}
+};
+
+//=============================================================================
+// Combined Density + Pressure Compute Shader (OPTIMIZED)
+// Pass 3+4 Combined: Single neighbor traversal for both density and pressure
+// Reduces neighbor search from 2x to 1x per iteration
+//=============================================================================
+
+class FSolveDensityPressureCS : public FGlobalShader
+{
+public:
+	DECLARE_GLOBAL_SHADER(FSolveDensityPressureCS);
+	SHADER_USE_PARAMETER_STRUCT(FSolveDensityPressureCS, FGlobalShader);
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, Particles)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellCounts)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleIndices)
+		SHADER_PARAMETER(int32, ParticleCount)
+		SHADER_PARAMETER(float, SmoothingRadius)
+		SHADER_PARAMETER(float, RestDensity)
+		SHADER_PARAMETER(float, Poly6Coeff)
+		SHADER_PARAMETER(float, SpikyCoeff)
+		SHADER_PARAMETER(float, CellSize)
+		SHADER_PARAMETER(float, Compliance)
+		SHADER_PARAMETER(float, DeltaTimeSq)
+		// Tensile Instability (PBF Eq.13-14)
 		SHADER_PARAMETER(int32, bEnableTensileInstability)
 		SHADER_PARAMETER(float, TensileK)
 		SHADER_PARAMETER(int32, TensileN)

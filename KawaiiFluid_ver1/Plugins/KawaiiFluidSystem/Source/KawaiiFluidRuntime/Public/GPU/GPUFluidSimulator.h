@@ -465,7 +465,7 @@ private:
 		FRDGBufferUAVRef ParticleIndicesUAV,
 		const FGPUFluidSimulationParams& Params);
 
-	/** Add compute density pass */
+	/** [DEPRECATED] Add compute density pass - Use AddSolveDensityPressurePass instead */
 	void AddComputeDensityPass(
 		FRDGBuilder& GraphBuilder,
 		FRDGBufferUAVRef ParticlesUAV,
@@ -473,8 +473,16 @@ private:
 		FRDGBufferSRVRef ParticleIndicesSRV,
 		const FGPUFluidSimulationParams& Params);
 
-	/** Add solve pressure pass */
+	/** [DEPRECATED] Add solve pressure pass - Use AddSolveDensityPressurePass instead */
 	void AddSolvePressurePass(
+		FRDGBuilder& GraphBuilder,
+		FRDGBufferUAVRef ParticlesUAV,
+		FRDGBufferSRVRef CellCountsSRV,
+		FRDGBufferSRVRef ParticleIndicesSRV,
+		const FGPUFluidSimulationParams& Params);
+
+	/** Add combined density + pressure pass (OPTIMIZED: single neighbor traversal) */
+	void AddSolveDensityPressurePass(
 		FRDGBuilder& GraphBuilder,
 		FRDGBufferUAVRef ParticlesUAV,
 		FRDGBufferSRVRef CellCountsSRV,

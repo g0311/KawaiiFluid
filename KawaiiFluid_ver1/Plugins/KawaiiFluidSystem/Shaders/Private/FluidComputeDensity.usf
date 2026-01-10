@@ -1,6 +1,10 @@
 // Copyright KawaiiFluid Team. All Rights Reserved.
 // GPU Fluid Physics - Compute Density Pass
 // Calculates particle density and XPBD lambda using SPH kernels
+//
+// [DEPRECATED] This shader is deprecated and will be removed in a future version.
+// Use FluidSolveDensityPressure.usf instead, which combines density and pressure
+// calculation into a single neighbor traversal for better performance.
 
 #include "/Engine/Public/Platform.ush"
 #include "/Engine/Private/Common.ush"

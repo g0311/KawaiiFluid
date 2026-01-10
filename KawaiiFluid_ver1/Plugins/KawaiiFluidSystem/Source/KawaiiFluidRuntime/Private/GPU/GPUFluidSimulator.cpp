@@ -1215,18 +1215,15 @@ void FGPUFluidSimulator::SimulateSubstep_RDG(FRDGBuilder& GraphBuilder, const FG
 
 	if (bShouldLog) UE_LOG(LogGPUFluidSimulator, Log, TEXT(">>> SPATIAL HASH: GPU clear+build completed"));
 
-	// Pass 4-5: XPBD Density Constraint Solver (Density + Position correction per iteration)
+	// Pass 4-5: XPBD Density Constraint Solver (OPTIMIZED: Combined Density + Pressure)
 	// Each iteration:
-	//   1. Compute Density and Lambda (based on current predicted positions)
-	//   2. Apply position corrections (modifies predicted positions)
-	// Lambda accumulates across iterations via XPBD formulation
+	//   - Single neighbor traversal computes both Density/Lambda AND Position corrections
+	//   - Uses previous iteration's Lambda for Jacobi-style update (parallel-safe)
+	// Performance: 2x fewer neighbor searches per iteration
 	for (int32 i = 0; i < Params.SolverIterations; ++i)
 	{
-		// Compute Density and Lambda (XPBD: Δλ = (-C - α̃·λ_prev) / (|∇C|² + α̃))
-		AddComputeDensityPass(GraphBuilder, ParticlesUAVLocal, CellCountsSRVLocal, ParticleIndicesSRVLocal, Params);
-
-		// Apply position corrections: Δx = (λ_i + λ_j + s_corr) · ∇W / ρ₀
-		AddSolvePressurePass(GraphBuilder, ParticlesUAVLocal, CellCountsSRVLocal, ParticleIndicesSRVLocal, Params);
+		// Combined pass: Compute Density + Lambda + Apply Position Corrections
+		AddSolveDensityPressurePass(GraphBuilder, ParticlesUAVLocal, CellCountsSRVLocal, ParticleIndicesSRVLocal, Params);
 	}
 
 	// Pass 6: Bounds Collision
@@ -1602,6 +1599,45 @@ void FGPUFluidSimulator::AddSolvePressurePass(
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
 		RDG_EVENT_NAME("GPUFluid::SolvePressure"),
+		ComputeShader,
+		PassParameters,
+		FIntVector(NumGroups, 1, 1)
+	);
+}
+
+void FGPUFluidSimulator::AddSolveDensityPressurePass(
+	FRDGBuilder& GraphBuilder,
+	FRDGBufferUAVRef InParticlesUAV,
+	FRDGBufferSRVRef InCellCountsSRV,
+	FRDGBufferSRVRef InParticleIndicesSRV,
+	const FGPUFluidSimulationParams& Params)
+{
+	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
+	TShaderMapRef<FSolveDensityPressureCS> ComputeShader(ShaderMap);
+
+	FSolveDensityPressureCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FSolveDensityPressureCS::FParameters>();
+	PassParameters->Particles = InParticlesUAV;
+	PassParameters->CellCounts = InCellCountsSRV;
+	PassParameters->ParticleIndices = InParticleIndicesSRV;
+	PassParameters->ParticleCount = CurrentParticleCount;
+	PassParameters->SmoothingRadius = Params.SmoothingRadius;
+	PassParameters->RestDensity = Params.RestDensity;
+	PassParameters->Poly6Coeff = Params.Poly6Coeff;
+	PassParameters->SpikyCoeff = Params.SpikyCoeff;
+	PassParameters->CellSize = Params.CellSize;
+	PassParameters->Compliance = Params.Compliance;
+	PassParameters->DeltaTimeSq = Params.DeltaTimeSq;
+	// Tensile Instability Correction (PBF Eq.13-14)
+	PassParameters->bEnableTensileInstability = Params.bEnableTensileInstability;
+	PassParameters->TensileK = Params.TensileK;
+	PassParameters->TensileN = Params.TensileN;
+	PassParameters->InvW_DeltaQ = Params.InvW_DeltaQ;
+
+	const uint32 NumGroups = FMath::DivideAndRoundUp(CurrentParticleCount, FSolveDensityPressureCS::ThreadGroupSize);
+
+	FComputeShaderUtils::AddPass(
+		GraphBuilder,
+		RDG_EVENT_NAME("GPUFluid::SolveDensityPressure"),
 		ComputeShader,
 		PassParameters,
 		FIntVector(NumGroups, 1, 1)
