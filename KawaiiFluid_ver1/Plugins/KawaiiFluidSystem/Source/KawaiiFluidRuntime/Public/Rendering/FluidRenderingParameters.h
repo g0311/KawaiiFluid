@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Core/FluidAnisotropy.h"
+#include "FluidSurfaceDecoration.h"
 #include "Engine/TextureCube.h"
 #include "FluidRenderingParameters.generated.h"
 
@@ -113,7 +114,8 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	EMetaballShadingMode ShadingMode = EMetaballShadingMode::PostProcess;
 
 	/** 파티클 렌더링 반경 (스크린 스페이스, cm) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Depth", meta = (ClampMin = "0.5", ClampMax = "100.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Depth",
+		meta = (ClampMin = "0.5", ClampMax = "100.0"))
 	float ParticleRenderRadius = 15.0f;
 
 	/** Depth smoothing filter type */
@@ -121,15 +123,18 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	EDepthSmoothingFilter SmoothingFilter = EDepthSmoothingFilter::NarrowRange;
 
 	/** Depth smoothing 강도 (0=없음, 1=최대) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing",
+		meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float SmoothingStrength = 0.5f;
 
 	/** Bilateral/Narrow-Range filter 반경 (픽셀) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing", meta = (ClampMin = "1", ClampMax = "50"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing",
+		meta = (ClampMin = "1", ClampMax = "50"))
 	int32 BilateralFilterRadius = 20;
 
-	/** Depth threshold (bilateral filter용) - 동적 계산 사용으로 deprecated */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing", meta = (ClampMin = "0.001", ClampMax = "100.0"))
+	/** Depth threshold (bilateral filter용) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing",
+		meta = (ClampMin = "0.001", ClampMax = "100.0"))
 	float DepthThreshold = 10.0f;
 
 	//========================================
@@ -144,7 +149,7 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing",
 		meta = (EditCondition = "SmoothingFilter == EDepthSmoothingFilter::NarrowRange",
-		        ClampMin = "0.5", ClampMax = "20.0"))
+			ClampMin = "0.5", ClampMax = "20.0"))
 	float NarrowRangeThresholdRatio = 3.0f;
 
 	/**
@@ -154,7 +159,7 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing",
 		meta = (EditCondition = "SmoothingFilter == EDepthSmoothingFilter::NarrowRange",
-		        ClampMin = "0.1", ClampMax = "5.0"))
+			ClampMin = "0.1", ClampMax = "5.0"))
 	float NarrowRangeClampRatio = 1.0f;
 
 	/**
@@ -164,7 +169,7 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing",
 		meta = (EditCondition = "SmoothingFilter == EDepthSmoothingFilter::NarrowRange",
-		        ClampMin = "0.0", ClampMax = "2.0"))
+			ClampMin = "0.0", ClampMax = "2.0"))
 	float NarrowRangeGrazingBoost = 1.0f;
 
 	//========================================
@@ -178,7 +183,7 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing",
 		meta = (EditCondition = "SmoothingFilter == EDepthSmoothingFilter::CurvatureFlow",
-		        ClampMin = "0.01", ClampMax = "0.5"))
+			ClampMin = "0.01", ClampMax = "0.5"))
 	float CurvatureFlowDt = 0.1f;
 
 	/**
@@ -188,7 +193,7 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing",
 		meta = (EditCondition = "SmoothingFilter == EDepthSmoothingFilter::CurvatureFlow",
-		        ClampMin = "1.0", ClampMax = "500.0"))
+			ClampMin = "1.0", ClampMax = "500.0"))
 	float CurvatureFlowDepthThreshold = 100.0f;
 
 	/**
@@ -198,7 +203,7 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing",
 		meta = (EditCondition = "SmoothingFilter == EDepthSmoothingFilter::CurvatureFlow",
-		        ClampMin = "1", ClampMax = "200"))
+			ClampMin = "1", ClampMax = "200"))
 	int32 CurvatureFlowIterations = 50;
 
 	/**
@@ -208,7 +213,7 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing",
 		meta = (EditCondition = "SmoothingFilter == EDepthSmoothingFilter::CurvatureFlow",
-		        ClampMin = "0.0", ClampMax = "2.0"))
+			ClampMin = "0.0", ClampMax = "2.0"))
 	float CurvatureFlowGrazingBoost = 1.0f;
 
 	/** 유체 색상 */
@@ -220,15 +225,18 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 * 1.0 = 물리적으로 정확한 반사, 2.0 = 과장된 반사, 0.5 = 약한 반사
 	 * F0 = ((1-IOR)/(1+IOR))^2 * FresnelStrength
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.0", ClampMax = "5.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "0.0", ClampMax = "5.0"))
 	float FresnelStrength = 1.0f;
 
 	/** 굴절률 (IOR) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "1.0", ClampMax = "2.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "1.0", ClampMax = "2.0"))
 	float RefractiveIndex = 1.33f;
 
 	/** 흡수 계수 (thickness 기반 색상 감쇠) - 전체 스케일 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.0", ClampMax = "10.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "0.0", ClampMax = "10.0"))
 	float AbsorptionCoefficient = 2.0f;
 
 	/**
@@ -241,11 +249,13 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	FLinearColor AbsorptionColorCoefficients = FLinearColor(0.4f, 0.1f, 0.05f, 1.0f);
 
 	/** 스펙큘러 강도 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.0", ClampMax = "2.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "0.0", ClampMax = "2.0"))
 	float SpecularStrength = 1.0f;
 
 	/** 스펙큘러 거칠기 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.01", ClampMax = "1.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "0.01", ClampMax = "1.0"))
 	float SpecularRoughness = 0.2f;
 
 	/** 환경광 색상 (Cubemap 없을 때 fallback 색상, Ambient 기본색) */
@@ -261,7 +271,8 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 * EnvironmentLightColor에 곱해지는 배율
 	 * 0 = Ambient 없음 (완전히 어두운 면 가능), 1 = 강한 Ambient
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float AmbientScale = 0.15f;
 
 	/**
@@ -269,7 +280,8 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 * 두께에 따른 빛 흡수 속도 조절
 	 * 낮을수록 투명, 높을수록 두꺼운 부분이 불투명
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.001", ClampMax = "0.5"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "0.001", ClampMax = "0.5"))
 	float TransmittanceScale = 0.05f;
 
 	/**
@@ -277,7 +289,8 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 * 두께가 Alpha에 영향을 미치는 정도
 	 * 낮을수록 투명, 높을수록 불투명
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.001", ClampMax = "0.2"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "0.001", ClampMax = "0.2"))
 	float AlphaThicknessScale = 0.02f;
 
 	/**
@@ -285,7 +298,8 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 * 굴절에 의한 UV 오프셋 강도
 	 * 0 = 굴절 없음, 높을수록 강한 왜곡
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.0", ClampMax = "0.2"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "0.0", ClampMax = "0.2"))
 	float RefractionScale = 0.05f;
 
 	/**
@@ -294,7 +308,8 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 * 0 = 반사 없음, 1 = 강한 반사
 	 * 0.8+ 권장: grazing angle에서 반사가 강해져 표면 디테일이 자연스럽게 가려짐
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float FresnelReflectionBlend = 0.8f;
 
 	/**
@@ -302,7 +317,8 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 * BaseColor 혼합 시 흡수 기여도에 추가되는 값
 	 * 높을수록 FluidColor가 더 강하게 보임
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float AbsorptionBias = 0.7f;
 
 	/**
@@ -314,27 +330,40 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	TObjectPtr<UTextureCube> ReflectionCubemap = nullptr;
 
 	/** Cubemap 반사 강도 (0 = 반사 없음, 1 = 풀 반사) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.0", ClampMax = "2.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "0.0", ClampMax = "2.0"))
 	float ReflectionIntensity = 1.0f;
 
 	/** Cubemap Mip 레벨 (높을수록 블러리한 반사, Roughness 연동) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.0", ClampMax = "10.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "0.0", ClampMax = "10.0"))
 	float ReflectionMipLevel = 2.0f;
 
 	/** Thickness 렌더링 스케일 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Thickness", meta = (ClampMin = "0.1", ClampMax = "10.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Thickness",
+		meta = (ClampMin = "0.1", ClampMax = "10.0"))
 	float ThicknessScale = 1.0f;
 
 	/** Render target 해상도 스케일 (1.0 = 화면 해상도) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Performance", meta = (ClampMin = "0.25", ClampMax = "1.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Performance",
+		meta = (ClampMin = "0.25", ClampMax = "1.0"))
 	float RenderTargetScale = 1.0f;
 
 	/** Anisotropy parameters for ellipsoid rendering */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Anisotropy")
 	FFluidAnisotropyParams AnisotropyParams;
 
+	//========================================
+	// Surface Decoration (Foam, Lava, etc.)
+	//========================================
+
+	/** Surface decoration parameters (foam, emissive, texture overlays) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration")
+	FSurfaceDecorationParams SurfaceDecoration;
+
 	/** Subsurface scattering intensity (jelly effect) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance", meta = (ClampMin = "0.0", ClampMax = "2.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "0.0", ClampMax = "2.0"))
 	float SSSIntensity = 1.0f;
 
 	/** Subsurface scattering color */
@@ -376,17 +405,20 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 
 	/** Metallic value for GBuffer (G-Buffer mode only) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|GBuffer",
-		meta = (EditCondition = "ShadingMode == EMetaballShadingMode::GBuffer", ClampMin = "0.0", ClampMax = "1.0"))
+		meta = (EditCondition = "ShadingMode == EMetaballShadingMode::GBuffer", ClampMin = "0.0",
+			ClampMax = "1.0"))
 	float Metallic = 0.1f;
 
 	/** Roughness value for GBuffer (G-Buffer mode only) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|GBuffer",
-		meta = (EditCondition = "ShadingMode == EMetaballShadingMode::GBuffer", ClampMin = "0.0", ClampMax = "1.0"))
+		meta = (EditCondition = "ShadingMode == EMetaballShadingMode::GBuffer", ClampMin = "0.0",
+			ClampMax = "1.0"))
 	float Roughness = 0.3f;
 
 	/** Subsurface scattering opacity (G-Buffer mode only) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|GBuffer",
-		meta = (EditCondition = "ShadingMode == EMetaballShadingMode::GBuffer", ClampMin = "0.0", ClampMax = "1.0"))
+		meta = (EditCondition = "ShadingMode == EMetaballShadingMode::GBuffer", ClampMin = "0.0",
+			ClampMax = "1.0"))
 	float SubsurfaceOpacity = 0.5f;
 
 	FFluidRenderingParameters() = default;
@@ -436,6 +468,10 @@ FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
 	Hash = HashCombine(Hash, GetTypeHash(Params.AnisotropyParams.AnisotropyScale));
 	Hash = HashCombine(Hash, GetTypeHash(Params.AnisotropyParams.AnisotropyMin));
 	Hash = HashCombine(Hash, GetTypeHash(Params.AnisotropyParams.AnisotropyMax));
+	// Surface Decoration parameters
+	Hash = HashCombine(Hash, GetTypeHash(Params.SurfaceDecoration.bEnabled));
+	Hash = HashCombine(Hash, GetTypeHash(Params.SurfaceDecoration.Foam.bEnabled));
+	Hash = HashCombine(Hash, GetTypeHash(Params.SurfaceDecoration.Emissive.bEnabled));
 	Hash = HashCombine(Hash, GetTypeHash(Params.RenderTargetScale));
 	Hash = HashCombine(Hash, GetTypeHash(Params.ThicknessScale));
 	Hash = HashCombine(Hash, GetTypeHash(Params.Metallic));
@@ -457,58 +493,65 @@ FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
 FORCEINLINE bool operator==(const FFluidRenderingParameters& A, const FFluidRenderingParameters& B)
 {
 	return A.bEnableRendering == B.bEnableRendering &&
-	       A.PipelineType == B.PipelineType &&
-	       A.ShadingMode == B.ShadingMode &&
-	       A.FluidColor.Equals(B.FluidColor, 0.001f) &&
-	       FMath::IsNearlyEqual(A.FresnelStrength, B.FresnelStrength, 0.001f) &&
-	       FMath::IsNearlyEqual(A.RefractiveIndex, B.RefractiveIndex, 0.001f) &&
-	       FMath::IsNearlyEqual(A.AbsorptionCoefficient, B.AbsorptionCoefficient, 0.001f) &&
-	       A.AbsorptionColorCoefficients.Equals(B.AbsorptionColorCoefficients, 0.001f) &&
-	       FMath::IsNearlyEqual(A.SpecularStrength, B.SpecularStrength, 0.001f) &&
-	       FMath::IsNearlyEqual(A.SpecularRoughness, B.SpecularRoughness, 0.001f) &&
-	       A.EnvironmentLightColor.Equals(B.EnvironmentLightColor, 0.001f) &&
-	       // Lighting scale parameters
-	       FMath::IsNearlyEqual(A.AmbientScale, B.AmbientScale, 0.001f) &&
-	       FMath::IsNearlyEqual(A.TransmittanceScale, B.TransmittanceScale, 0.0001f) &&
-	       FMath::IsNearlyEqual(A.AlphaThicknessScale, B.AlphaThicknessScale, 0.0001f) &&
-	       FMath::IsNearlyEqual(A.RefractionScale, B.RefractionScale, 0.001f) &&
-	       FMath::IsNearlyEqual(A.FresnelReflectionBlend, B.FresnelReflectionBlend, 0.001f) &&
-	       FMath::IsNearlyEqual(A.AbsorptionBias, B.AbsorptionBias, 0.001f) &&
-	       // Reflection Cubemap parameters
-	       A.ReflectionCubemap == B.ReflectionCubemap &&
-	       FMath::IsNearlyEqual(A.ReflectionIntensity, B.ReflectionIntensity, 0.001f) &&
-	       FMath::IsNearlyEqual(A.ReflectionMipLevel, B.ReflectionMipLevel, 0.001f) &&
-	       FMath::IsNearlyEqual(A.ParticleRenderRadius, B.ParticleRenderRadius, 0.001f) &&
-	       A.SmoothingFilter == B.SmoothingFilter &&
-	       FMath::IsNearlyEqual(A.SmoothingStrength, B.SmoothingStrength, 0.001f) &&
-	       A.BilateralFilterRadius == B.BilateralFilterRadius &&
-	       // Narrow-Range parameters
-	       FMath::IsNearlyEqual(A.NarrowRangeThresholdRatio, B.NarrowRangeThresholdRatio, 0.01f) &&
-	       FMath::IsNearlyEqual(A.NarrowRangeClampRatio, B.NarrowRangeClampRatio, 0.01f) &&
-	       FMath::IsNearlyEqual(A.NarrowRangeGrazingBoost, B.NarrowRangeGrazingBoost, 0.01f) &&
-	       // Curvature Flow parameters
-	       FMath::IsNearlyEqual(A.CurvatureFlowDt, B.CurvatureFlowDt, 0.001f) &&
-	       FMath::IsNearlyEqual(A.CurvatureFlowDepthThreshold, B.CurvatureFlowDepthThreshold, 0.1f) &&
-	       A.CurvatureFlowIterations == B.CurvatureFlowIterations &&
-	       FMath::IsNearlyEqual(A.CurvatureFlowGrazingBoost, B.CurvatureFlowGrazingBoost, 0.01f) &&
-	       // Anisotropy parameters
-	       A.AnisotropyParams.bEnabled == B.AnisotropyParams.bEnabled &&
-	       A.AnisotropyParams.Mode == B.AnisotropyParams.Mode &&
-	       FMath::IsNearlyEqual(A.AnisotropyParams.AnisotropyScale, B.AnisotropyParams.AnisotropyScale, 0.001f) &&
-	       FMath::IsNearlyEqual(A.AnisotropyParams.AnisotropyMin, B.AnisotropyParams.AnisotropyMin, 0.001f) &&
-	       FMath::IsNearlyEqual(A.AnisotropyParams.AnisotropyMax, B.AnisotropyParams.AnisotropyMax, 0.001f) &&
-	       FMath::IsNearlyEqual(A.RenderTargetScale, B.RenderTargetScale, 0.001f) &&
-	       FMath::IsNearlyEqual(A.ThicknessScale, B.ThicknessScale, 0.001f) &&
-	       FMath::IsNearlyEqual(A.Metallic, B.Metallic, 0.001f) &&
-	       FMath::IsNearlyEqual(A.Roughness, B.Roughness, 0.001f) &&
-	       FMath::IsNearlyEqual(A.SubsurfaceOpacity, B.SubsurfaceOpacity, 0.001f) &&
-	       // SSS parameters
-	       FMath::IsNearlyEqual(A.SSSIntensity, B.SSSIntensity, 0.001f) &&
-	       A.SSSColor.Equals(B.SSSColor, 0.001f) &&
-	       // Shadow parameters
-	       A.bEnableShadowCasting == B.bEnableShadowCasting &&
-	       A.VSMResolution == B.VSMResolution &&
-	       FMath::IsNearlyEqual(A.VSMBlurRadius, B.VSMBlurRadius, 0.001f) &&
-	       A.VSMBlurIterations == B.VSMBlurIterations &&
-	       FMath::IsNearlyEqual(A.ShadowIntensity, B.ShadowIntensity, 0.001f);
+		A.PipelineType == B.PipelineType &&
+		A.ShadingMode == B.ShadingMode &&
+		A.FluidColor.Equals(B.FluidColor, 0.001f) &&
+		FMath::IsNearlyEqual(A.FresnelStrength, B.FresnelStrength, 0.001f) &&
+		FMath::IsNearlyEqual(A.RefractiveIndex, B.RefractiveIndex, 0.001f) &&
+		FMath::IsNearlyEqual(A.AbsorptionCoefficient, B.AbsorptionCoefficient, 0.001f) &&
+		A.AbsorptionColorCoefficients.Equals(B.AbsorptionColorCoefficients, 0.001f) &&
+		FMath::IsNearlyEqual(A.SpecularStrength, B.SpecularStrength, 0.001f) &&
+		FMath::IsNearlyEqual(A.SpecularRoughness, B.SpecularRoughness, 0.001f) &&
+		A.EnvironmentLightColor.Equals(B.EnvironmentLightColor, 0.001f) &&
+		// Lighting scale parameters
+		FMath::IsNearlyEqual(A.AmbientScale, B.AmbientScale, 0.001f) &&
+		FMath::IsNearlyEqual(A.TransmittanceScale, B.TransmittanceScale, 0.0001f) &&
+		FMath::IsNearlyEqual(A.AlphaThicknessScale, B.AlphaThicknessScale, 0.0001f) &&
+		FMath::IsNearlyEqual(A.RefractionScale, B.RefractionScale, 0.001f) &&
+		FMath::IsNearlyEqual(A.FresnelReflectionBlend, B.FresnelReflectionBlend, 0.001f) &&
+		FMath::IsNearlyEqual(A.AbsorptionBias, B.AbsorptionBias, 0.001f) &&
+		// Reflection Cubemap parameters
+		A.ReflectionCubemap == B.ReflectionCubemap &&
+		FMath::IsNearlyEqual(A.ReflectionIntensity, B.ReflectionIntensity, 0.001f) &&
+		FMath::IsNearlyEqual(A.ReflectionMipLevel, B.ReflectionMipLevel, 0.001f) &&
+		FMath::IsNearlyEqual(A.ParticleRenderRadius, B.ParticleRenderRadius, 0.001f) &&
+		A.SmoothingFilter == B.SmoothingFilter &&
+		FMath::IsNearlyEqual(A.SmoothingStrength, B.SmoothingStrength, 0.001f) &&
+		A.BilateralFilterRadius == B.BilateralFilterRadius &&
+		// Narrow-Range parameters
+		FMath::IsNearlyEqual(A.NarrowRangeThresholdRatio, B.NarrowRangeThresholdRatio, 0.01f) &&
+		FMath::IsNearlyEqual(A.NarrowRangeClampRatio, B.NarrowRangeClampRatio, 0.01f) &&
+		FMath::IsNearlyEqual(A.NarrowRangeGrazingBoost, B.NarrowRangeGrazingBoost, 0.01f) &&
+		// Curvature Flow parameters
+		FMath::IsNearlyEqual(A.CurvatureFlowDt, B.CurvatureFlowDt, 0.001f) &&
+		FMath::IsNearlyEqual(A.CurvatureFlowDepthThreshold, B.CurvatureFlowDepthThreshold, 0.1f) &&
+		A.CurvatureFlowIterations == B.CurvatureFlowIterations &&
+		FMath::IsNearlyEqual(A.CurvatureFlowGrazingBoost, B.CurvatureFlowGrazingBoost, 0.01f) &&
+		// Anisotropy parameters
+		A.AnisotropyParams.bEnabled == B.AnisotropyParams.bEnabled &&
+		A.AnisotropyParams.Mode == B.AnisotropyParams.Mode &&
+		FMath::IsNearlyEqual(A.AnisotropyParams.AnisotropyScale, B.AnisotropyParams.AnisotropyScale,
+		                     0.001f) &&
+		FMath::IsNearlyEqual(A.AnisotropyParams.AnisotropyMin, B.AnisotropyParams.AnisotropyMin,
+		                     0.001f) &&
+		FMath::IsNearlyEqual(A.AnisotropyParams.AnisotropyMax, B.AnisotropyParams.AnisotropyMax,
+		                     0.001f) &&
+		// Surface Decoration parameters
+		A.SurfaceDecoration.bEnabled == B.SurfaceDecoration.bEnabled &&
+		A.SurfaceDecoration.Foam.bEnabled == B.SurfaceDecoration.Foam.bEnabled &&
+		A.SurfaceDecoration.Emissive.bEnabled == B.SurfaceDecoration.Emissive.bEnabled &&
+		FMath::IsNearlyEqual(A.RenderTargetScale, B.RenderTargetScale, 0.001f) &&
+		FMath::IsNearlyEqual(A.ThicknessScale, B.ThicknessScale, 0.001f) &&
+		FMath::IsNearlyEqual(A.Metallic, B.Metallic, 0.001f) &&
+		FMath::IsNearlyEqual(A.Roughness, B.Roughness, 0.001f) &&
+		FMath::IsNearlyEqual(A.SubsurfaceOpacity, B.SubsurfaceOpacity, 0.001f) &&
+		// SSS parameters
+		FMath::IsNearlyEqual(A.SSSIntensity, B.SSSIntensity, 0.001f) &&
+		A.SSSColor.Equals(B.SSSColor, 0.001f) &&
+		// Shadow parameters
+		A.bEnableShadowCasting == B.bEnableShadowCasting &&
+		A.VSMResolution == B.VSMResolution &&
+		FMath::IsNearlyEqual(A.VSMBlurRadius, B.VSMBlurRadius, 0.001f) &&
+		A.VSMBlurIterations == B.VSMBlurIterations &&
+		FMath::IsNearlyEqual(A.ShadowIntensity, B.ShadowIntensity, 0.001f);
 }

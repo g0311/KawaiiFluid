@@ -1,0 +1,420 @@
+// Copyright KawaiiFluid Team. All Rights Reserved.
+//
+// Surface Decoration Shader for Fluid Rendering
+// Applies texture overlays, foam, emissive effects on fluid surfaces.
+
+#include "/Engine/Private/Common.ush"
+
+//=============================================================================
+// Input Textures (from SSFR pipeline)
+//=============================================================================
+
+Texture2D<float> DepthTexture;
+Texture2D<float4> NormalTexture;
+Texture2D<float> ThicknessTexture;
+Texture2D<float4> SceneColorTexture;
+SamplerState PointClampSampler;
+SamplerState BilinearWrapSampler;
+
+//=============================================================================
+// Decoration Textures
+//=============================================================================
+
+Texture2D<float4> FoamTexture;
+Texture2D<float4> EmissiveCrackTexture;
+Texture2D<float4> PrimaryLayerTexture;
+Texture2D<float4> PrimaryLayerNormalMap;
+Texture2D<float4> SecondaryLayerTexture;
+Texture2D<float2> FlowMapTexture;
+Texture2D<float2> VelocityMapTexture;  // Runtime-generated from particles
+
+//=============================================================================
+// Parameters
+//=============================================================================
+
+float2 TextureSize;
+float2 SSFRTextureSize;  // Size of SSFR intermediate textures (may differ from TextureSize)
+float4 ViewRect;  // xy = Min, zw = Max
+float Time;
+
+// View reconstruction
+float4x4 InvViewProjectionMatrix;
+float4x4 ViewMatrix;
+float4x4 InvViewMatrix;
+float4x4 InvProjectionMatrix;
+float3 CameraPosition;
+
+// Global
+float GlobalOpacity;
+float BlendWithFluidColor;
+
+// Foam
+int bFoamEnabled;
+float4 FoamColor;
+float FoamVelocityThreshold;
+float FoamIntensity;
+float FoamTilingScale;
+int bWaveCrestFoam;
+
+// Emissive
+int bEmissiveEnabled;
+float4 EmissiveColor;
+float EmissiveIntensity;
+float CrackTilingScale;
+int bTemperatureMode;
+float MaxTemperatureVelocity;
+float MinEmissive;
+float PulseFrequency;
+float PulseAmplitude;
+
+// Flow
+int bFlowEnabled;
+float FlowSpeed;
+float FlowDistortionStrength;
+
+// Primary Layer
+int bPrimaryLayerEnabled;
+float PrimaryTilingScale;
+float PrimaryOpacity;
+float PrimaryNormalZThreshold;
+float PrimaryFlowInfluence;
+float2 PrimaryScrollSpeed;
+
+// Secondary Layer
+int bSecondaryLayerEnabled;
+float SecondaryTilingScale;
+float SecondaryOpacity;
+float SecondaryNormalZThreshold;
+
+// Output
+RWTexture2D<float4> OutputTexture;
+
+//=============================================================================
+// Helper Functions
+//=============================================================================
+
+// Background depth threshold (matches FluidSmoothing.usf)
+#define BACKGROUND_DEPTH_THRESH 3.0e30f
+
+// Reconstruct view-space position from linear depth
+float3 ReconstructViewPosition(float2 ScreenUV, float LinearDepth)
+{
+	// Convert texture UV to NDC (Clip Space)
+	// Texture UV: (0,0) = top-left, (1,1) = bottom-right
+	// NDC: (-1,-1) = bottom-left, (1,1) = top-right
+	// Therefore Y must be flipped: ClipY = 1 - UV.y * 2
+	float2 ClipXY = float2(ScreenUV.x * 2.0 - 1.0, 1.0 - ScreenUV.y * 2.0);
+	float4 ClipPosition = float4(ClipXY, 0.5, 1.0);
+
+	// Unproject to View Space
+	float4 ViewPosition = mul(ClipPosition, InvProjectionMatrix);
+	ViewPosition /= ViewPosition.w;
+
+	// Extract ray direction (normalize so Z = 1)
+	float3 ViewRay = ViewPosition.xyz / ViewPosition.z;
+
+	// Scale by depth: LinearDepth is positive, ViewSpace Z is negative for in-front objects
+	return ViewRay * (-LinearDepth);
+}
+
+// Reconstruct world position from view-space linear depth
+float3 ReconstructWorldPosition(float2 UV, float LinearDepth)
+{
+	// First get view-space position
+	float3 ViewPos = ReconstructViewPosition(UV, LinearDepth);
+
+	// Transform to world space
+	float4 WorldPos = mul(float4(ViewPos, 1.0), InvViewMatrix);
+
+	return WorldPos.xyz;
+}
+
+// Sample flow direction (from velocity map or static flow map)
+float2 SampleFlowDirection(float2 UV)
+{
+	if (bFlowEnabled > 0)
+	{
+		// Try velocity map first (runtime generated)
+		float2 Velocity = VelocityMapTexture.SampleLevel(BilinearWrapSampler, UV, 0).xy;
+		if (length(Velocity) > 0.001)
+		{
+			return normalize(Velocity);
+		}
+
+		// Fallback to static flow map
+		return FlowMapTexture.SampleLevel(BilinearWrapSampler, UV, 0).xy * 2.0 - 1.0;
+	}
+	return float2(0, 0);
+}
+
+// Flow-based UV animation (two-phase blend to avoid seams)
+float2 FlowUV(float2 BaseUV, float2 FlowDir, float Phase)
+{
+	float Progress = frac(Time * FlowSpeed + Phase);
+	return BaseUV + FlowDir * Progress * FlowDistortionStrength;
+}
+
+// Compute foam intensity based on various factors
+float ComputeFoamIntensity(float2 UV, float3 WorldNormal, float Depth, float2 DepthGradient, float VelocityMag)
+{
+	float Foam = 0.0;
+
+	// Velocity-based foam
+	float VelocityFoam = saturate((VelocityMag - FoamVelocityThreshold) / FoamVelocityThreshold);
+	Foam += VelocityFoam;
+
+	// Wave crest foam (high depth gradient = wave breaking)
+	if (bWaveCrestFoam > 0)
+	{
+		float GradientMag = length(DepthGradient);
+		float CrestFoam = saturate(GradientMag * 10.0);  // Tune multiplier
+
+		// Only on top surfaces
+		CrestFoam *= saturate(WorldNormal.z);
+		Foam += CrestFoam * 0.5;
+	}
+
+	return saturate(Foam * FoamIntensity);
+}
+
+// Compute emissive intensity (for lava, magic, etc.)
+float ComputeEmissiveIntensity(float VelocityMag, float3 WorldNormal)
+{
+	float Emissive = MinEmissive;
+
+	if (bTemperatureMode > 0)
+	{
+		// Higher velocity = higher temperature = more emissive
+		float Temperature = saturate(VelocityMag / MaxTemperatureVelocity);
+		Emissive = lerp(MinEmissive, 1.0, Temperature);
+	}
+
+	// Pulsation effect
+	if (PulseFrequency > 0.0)
+	{
+		float Pulse = sin(Time * PulseFrequency * 6.28318) * 0.5 + 0.5;
+		Emissive *= 1.0 + Pulse * PulseAmplitude;
+	}
+
+	return Emissive;
+}
+
+//=============================================================================
+// Main Compute Shader
+//=============================================================================
+
+[numthreads(8, 8, 1)]
+void SurfaceDecorationCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	// Output texture size (SceneColorTexture / OutputTexture size)
+	int2 OutputSize = int2(TextureSize);
+
+	// Bounds check against output size
+	if (any(DispatchThreadId.xy >= uint2(OutputSize)))
+	{
+		return;
+	}
+
+	// Output pixel coordinate
+	int2 PixelCoord = int2(DispatchThreadId.xy);
+
+	// Sample SceneColor using output coordinates (same size as output)
+	float4 SceneColor = SceneColorTexture.Load(int3(PixelCoord, 0));
+
+	// ViewRect defines where SSFR textures are mapped in output space
+	// SSFR(0,0) = ViewRect.Min, SSFR(SSFRSize) = ViewRect.Max
+	int2 ViewRectMin = int2(ViewRect.xy);
+	int2 ViewRectMax = int2(ViewRect.zw);
+	int2 ViewRectSize = ViewRectMax - ViewRectMin;
+
+	// Check if pixel is within ViewRect (where fluid is rendered)
+	if (PixelCoord.x < ViewRectMin.x || PixelCoord.x >= ViewRectMax.x ||
+	    PixelCoord.y < ViewRectMin.y || PixelCoord.y >= ViewRectMax.y)
+	{
+		// Outside ViewRect - pass through scene color (no fluid here)
+		OutputTexture[PixelCoord] = SceneColor;
+		return;
+	}
+
+	// Map output pixel to SSFR texture coordinate
+	// OutputPixel in ViewRect -> SSFR coordinate
+	int2 SSFRSize = int2(SSFRTextureSize);
+	float2 ViewRectUV = float2(PixelCoord - ViewRectMin) / float2(ViewRectSize);
+	int2 SSFRPixelCoord = int2(ViewRectUV * float2(SSFRSize));
+	// Clamp to valid range
+	SSFRPixelCoord = clamp(SSFRPixelCoord, int2(0, 0), SSFRSize - int2(1, 1));
+
+	// UV normalized to 0-1 range within ViewRect (for decoration textures)
+	float2 UV = ViewRectUV;
+
+	// Sample SSFR outputs using SSFR coordinates
+	float Depth = DepthTexture.Load(int3(SSFRPixelCoord, 0));
+	float4 NormalData = NormalTexture.Load(int3(SSFRPixelCoord, 0));
+	float Thickness = ThicknessTexture.Load(int3(SSFRPixelCoord, 0));
+
+	// Background check - pass through
+	if (Depth > BACKGROUND_DEPTH_THRESH || Thickness < 0.001)
+	{
+		OutputTexture[PixelCoord] = SceneColor;
+		return;
+	}
+
+	// Extract world normal (assuming NormalTexture stores view-space normal)
+	float3 ViewNormal = NormalData.xyz * 2.0 - 1.0;
+	float3x3 ViewToWorld = transpose((float3x3)ViewMatrix);
+	float3 WorldNormal = normalize(mul(ViewNormal, ViewToWorld));
+
+	// For now, use screen UV directly to verify texture renders correctly on fluid
+	// TODO: World position reconstruction for camera-independent texturing
+	float2 WorldUV = UV * 1000.0;  // Scale up for visible tiling
+
+	// Sample velocity for flow and foam
+	float2 Velocity = VelocityMapTexture.SampleLevel(BilinearWrapSampler, UV, 0).xy;
+	float VelocityMag = length(Velocity);
+	float2 FlowDir = SampleFlowDirection(UV);
+
+	// Compute depth gradient for wave crest detection (using SSFR coordinates)
+	float DepthL = DepthTexture.Load(int3(max(SSFRPixelCoord.x - 1, 0), SSFRPixelCoord.y, 0));
+	float DepthR = DepthTexture.Load(int3(min(SSFRPixelCoord.x + 1, SSFRSize.x - 1), SSFRPixelCoord.y, 0));
+	float DepthT = DepthTexture.Load(int3(SSFRPixelCoord.x, max(SSFRPixelCoord.y - 1, 0), 0));
+	float DepthB = DepthTexture.Load(int3(SSFRPixelCoord.x, min(SSFRPixelCoord.y + 1, SSFRSize.y - 1), 0));
+	float2 DepthGradient = float2(DepthR - DepthL, DepthB - DepthT) * 0.5;
+
+	//=========================================================================
+	// Accumulate decoration effects
+	//=========================================================================
+
+	float3 DecorationColor = float3(0, 0, 0);
+	float DecorationAlpha = 0.0;
+	float3 EmissiveAccum = float3(0, 0, 0);
+
+	//-------------------------------------------------------------------------
+	// Foam Effect
+	//-------------------------------------------------------------------------
+	if (bFoamEnabled > 0)
+	{
+		float FoamAmount = ComputeFoamIntensity(UV, WorldNormal, Depth, DepthGradient, VelocityMag);
+
+		if (FoamAmount > 0.01)
+		{
+			// Flow-animated foam UV
+			float2 FoamUV1 = FlowUV(WorldUV * FoamTilingScale, FlowDir, 0.0);
+			float2 FoamUV2 = FlowUV(WorldUV * FoamTilingScale, FlowDir, 0.5);
+
+			// Two-phase blend for seamless flow
+			float Phase = frac(Time * FlowSpeed);
+			float BlendPhase = abs(Phase * 2.0 - 1.0);
+
+			float4 FoamSample1 = FoamTexture.SampleLevel(BilinearWrapSampler, FoamUV1, 0);
+			float4 FoamSample2 = FoamTexture.SampleLevel(BilinearWrapSampler, FoamUV2, 0);
+			float4 FoamSample = lerp(FoamSample1, FoamSample2, BlendPhase);
+
+			// Use texture RGB as color, grayscale (R) as mask
+			// FoamColor acts as tint multiplier
+			float3 FoamRGB = FoamSample.rgb * FoamColor.rgb;
+			float FoamMask = FoamSample.r * FoamAmount;
+
+			DecorationColor += FoamRGB * FoamMask;
+			DecorationAlpha = max(DecorationAlpha, FoamMask * FoamColor.a);
+		}
+	}
+
+	//-------------------------------------------------------------------------
+	// Emissive Effect (Lava cracks, magic glow)
+	//-------------------------------------------------------------------------
+	if (bEmissiveEnabled > 0)
+	{
+		float EmissiveAmount = ComputeEmissiveIntensity(VelocityMag, WorldNormal);
+
+		// Sample crack texture to mask where emissive shows through
+		float2 CrackUV = WorldUV * CrackTilingScale;
+
+		// Animate cracks slowly
+		CrackUV += FlowDir * Time * FlowSpeed * 0.1;
+
+		float4 CrackSample = EmissiveCrackTexture.SampleLevel(BilinearWrapSampler, CrackUV, 0);
+
+		// Crack texture: dark areas = cracks = emissive visible
+		// Invert so black areas glow
+		float CrackMask = 1.0 - CrackSample.r;
+
+		// Combine with temperature/emissive amount
+		float FinalEmissive = CrackMask * EmissiveAmount * EmissiveIntensity;
+
+		EmissiveAccum += EmissiveColor.rgb * FinalEmissive;
+	}
+
+	//-------------------------------------------------------------------------
+	// Primary Layer (custom texture overlay)
+	//-------------------------------------------------------------------------
+	if (bPrimaryLayerEnabled > 0)
+	{
+		// Check normal threshold (e.g., only top surfaces)
+		if (WorldNormal.z >= PrimaryNormalZThreshold)
+		{
+			float2 LayerUV = WorldUV * PrimaryTilingScale;
+
+			// Apply flow influence
+			if (PrimaryFlowInfluence > 0.0)
+			{
+				LayerUV += FlowDir * Time * FlowSpeed * PrimaryFlowInfluence;
+			}
+
+			// Apply scroll
+			LayerUV += PrimaryScrollSpeed * Time;
+
+			float4 LayerSample = PrimaryLayerTexture.SampleLevel(BilinearWrapSampler, LayerUV, 0);
+
+			// Smooth blend based on normal
+			float NormalBlend = smoothstep(PrimaryNormalZThreshold, PrimaryNormalZThreshold + 0.2, WorldNormal.z);
+			// Use texture alpha if available (> 0), otherwise use full opacity
+			float TextureAlpha = LayerSample.a > 0.001 ? LayerSample.a : 1.0;
+			float LayerAlpha = TextureAlpha * PrimaryOpacity * NormalBlend;
+
+			DecorationColor = lerp(DecorationColor, LayerSample.rgb, LayerAlpha);
+			DecorationAlpha = max(DecorationAlpha, LayerAlpha);
+		}
+	}
+
+	//-------------------------------------------------------------------------
+	// Secondary Layer (detail overlay)
+	//-------------------------------------------------------------------------
+	if (bSecondaryLayerEnabled > 0)
+	{
+		if (WorldNormal.z >= SecondaryNormalZThreshold)
+		{
+			float2 LayerUV = WorldUV * SecondaryTilingScale;
+			float4 LayerSample = SecondaryLayerTexture.SampleLevel(BilinearWrapSampler, LayerUV, 0);
+
+			float NormalBlend = smoothstep(SecondaryNormalZThreshold, SecondaryNormalZThreshold + 0.2, WorldNormal.z);
+			// Use texture alpha if available (> 0), otherwise use full opacity
+			float TextureAlpha = LayerSample.a > 0.001 ? LayerSample.a : 1.0;
+			float LayerAlpha = TextureAlpha * SecondaryOpacity * NormalBlend;
+
+			DecorationColor = lerp(DecorationColor, LayerSample.rgb, LayerAlpha);
+			DecorationAlpha = max(DecorationAlpha, LayerAlpha);
+		}
+	}
+
+	//=========================================================================
+	// Final Composite
+	//=========================================================================
+
+	float3 FinalColor = SceneColor.rgb;
+
+	// Blend decoration with scene
+	float EffectiveAlpha = DecorationAlpha * GlobalOpacity;
+
+	// Option to blend with fluid color instead of replacing
+	if (BlendWithFluidColor > 0.0)
+	{
+		DecorationColor = lerp(DecorationColor, DecorationColor * SceneColor.rgb, BlendWithFluidColor);
+	}
+
+	FinalColor = lerp(FinalColor, DecorationColor, EffectiveAlpha);
+
+	// Add emissive (additive)
+	FinalColor += EmissiveAccum;
+
+	OutputTexture[PixelCoord] = float4(FinalColor, SceneColor.a);
+}

@@ -9,6 +9,7 @@
 
 // Separated shading implementation
 #include "Rendering/Shading/KawaiiScreenSpaceShadingImpl.h"
+#include "Rendering/FluidSurfaceDecorationPass.h"
 
 #include "RenderGraphBuilder.h"
 #include "RenderGraphEvent.h"
@@ -279,13 +280,70 @@ void FKawaiiMetaballScreenSpacePipeline::ExecuteRender(
 
 	RDG_EVENT_SCOPE(GraphBuilder, "MetaballPipeline_ScreenSpace_Tonemap");
 
-	// Delegate to separated shading implementation
-	KawaiiScreenSpaceShading::RenderPostProcessShading(
-		GraphBuilder,
-		View,
-		RenderParams,
-		CachedIntermediateTextures,
-		SceneDepthTexture,
-		SceneColorTexture,
-		Output);
+	// Check if Surface Decoration is enabled
+	const bool bUseSurfaceDecoration = RenderParams.SurfaceDecoration.bEnabled;
+
+	if (bUseSurfaceDecoration)
+	{
+		// Surface Decoration enabled: render to intermediate texture first
+		// Use same size as Output.Texture to avoid copy issues
+		FIntPoint OutputTextureSize = Output.Texture->Desc.Extent;
+
+		// Create intermediate composite result texture (same size as output)
+		FRDGTextureDesc CompositeDesc = FRDGTextureDesc::Create2D(
+			OutputTextureSize,
+			PF_FloatRGBA,
+			FClearValueBinding::Black,
+			TexCreate_ShaderResource | TexCreate_RenderTargetable | TexCreate_UAV);
+		FRDGTextureRef CompositeResultTexture = GraphBuilder.CreateTexture(
+			CompositeDesc, TEXT("FluidCompositeResult"));
+
+		// Create intermediate render target for composite pass (use Output's ViewRect)
+		FScreenPassRenderTarget IntermediateOutput;
+		IntermediateOutput.Texture = CompositeResultTexture;
+		IntermediateOutput.ViewRect = Output.ViewRect;  // Same ViewRect as final output
+		IntermediateOutput.LoadAction = ERenderTargetLoadAction::EClear;
+
+		// Copy scene color to intermediate (same size, safe to use CopyTexture)
+		AddCopyTexturePass(GraphBuilder, SceneColorTexture, CompositeResultTexture);
+
+		// Render fluid composite to intermediate texture
+		KawaiiScreenSpaceShading::RenderPostProcessShading(
+			GraphBuilder,
+			View,
+			RenderParams,
+			CachedIntermediateTextures,
+			SceneDepthTexture,
+			SceneColorTexture,
+			IntermediateOutput);
+
+		// Apply Surface Decoration and output to final target
+		FRDGTextureRef DecoratedTexture = nullptr;
+		RenderFluidSurfaceDecorationPass(
+			GraphBuilder,
+			View,
+			RenderParams.SurfaceDecoration,
+			CachedIntermediateTextures.SmoothedDepthTexture,
+			CachedIntermediateTextures.NormalTexture,
+			CachedIntermediateTextures.ThicknessTexture,
+			CompositeResultTexture,
+			nullptr,  // VelocityMapTexture - TODO: generate from particle velocities
+			Output.ViewRect,  // Pass the actual ViewRect where fluid was rendered
+			DecoratedTexture);
+
+		// Copy decorated result to final output (same size now)
+		AddCopyTexturePass(GraphBuilder, DecoratedTexture, Output.Texture);
+	}
+	else
+	{
+		// Surface Decoration disabled: render directly to output (no overhead)
+		KawaiiScreenSpaceShading::RenderPostProcessShading(
+			GraphBuilder,
+			View,
+			RenderParams,
+			CachedIntermediateTextures,
+			SceneDepthTexture,
+			SceneColorTexture,
+			Output);
+	}
 }

@@ -4,7 +4,7 @@
 #include "UObject/ConstructorHelpers.h"
 
 FKawaiiFluidISMRendererSettings::FKawaiiFluidISMRendererSettings()
-	: bEnabled(true)
+	: bEnabled(false)
 	, ParticleScale(1.0f)
 {
 	// Set default mesh
