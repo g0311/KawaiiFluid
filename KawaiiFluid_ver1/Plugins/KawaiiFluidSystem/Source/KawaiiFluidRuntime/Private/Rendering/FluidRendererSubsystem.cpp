@@ -310,8 +310,20 @@ void UFluidRendererSubsystem::UpdateShadowInstances(const FVector* ParticlePosit
 			bEnableVSMIntegration, NumParticles, ShadowProxyActor, ShadowInstanceComponent);
 	}
 
-	if (!bEnableVSMIntegration || NumParticles <= 0 || !ParticlePositions)
+	// VSM 비활성화 시 early return
+	if (!bEnableVSMIntegration)
 	{
+		return;
+	}
+
+	// 파티클이 없으면 HISM 클리어
+	if (NumParticles <= 0 || !ParticlePositions)
+	{
+		if (IsValid(ShadowInstanceComponent))
+		{
+			ShadowInstanceComponent->ClearInstances();
+			ShadowInstanceComponent->MarkRenderStateDirty();
+		}
 		return;
 	}
 
@@ -377,7 +389,8 @@ void UFluidRendererSubsystem::UpdateShadowInstances(const FVector* ParticlePosit
 			ShadowInstanceComponent->bAffectDynamicIndirectLighting = false;
 			ShadowInstanceComponent->bAffectDistanceFieldLighting = false;
 
-			// Hidden in game but casts shadow
+			// Hidden but casts shadow (both editor and game)
+			ShadowInstanceComponent->SetVisibility(false);
 			ShadowInstanceComponent->SetHiddenInGame(true);
 			ShadowInstanceComponent->bCastHiddenShadow = true;
 

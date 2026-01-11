@@ -932,6 +932,12 @@ void UKawaiiFluidSimulationModule::ClearAllParticles()
 {
 	Particles.Empty();
 	NextParticleID = 0;
+
+	// GPU 파티클도 클리어
+	if (bGPUSimulationActive && CachedGPUSimulator)
+	{
+		CachedGPUSimulator->ClearAllParticles();
+	}
 }
 
 TArray<FVector> UKawaiiFluidSimulationModule::GetParticlePositions() const

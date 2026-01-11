@@ -32,6 +32,43 @@ UFluidInteractionComponent::UFluidInteractionComponent()
 	AutoCollider = nullptr;
 }
 
+void UFluidInteractionComponent::OnRegister()
+{
+	Super::OnRegister();
+
+#if WITH_EDITOR
+	// 에디터 모드에서 Subsystem에 등록 (브러시 모드용)
+	UWorld* World = GetWorld();
+	if (World && !World->IsGameWorld())
+	{
+		if (!TargetSubsystem)
+		{
+			TargetSubsystem = World->GetSubsystem<UKawaiiFluidSimulatorSubsystem>();
+		}
+
+		if (bAutoCreateCollider && !AutoCollider)
+		{
+			CreateAutoCollider();
+		}
+
+		RegisterWithSimulator();
+	}
+#endif
+}
+
+void UFluidInteractionComponent::OnUnregister()
+{
+#if WITH_EDITOR
+	UWorld* World = GetWorld();
+	if (World && !World->IsGameWorld())
+	{
+		UnregisterFromSimulator();
+	}
+#endif
+
+	Super::OnUnregister();
+}
+
 void UFluidInteractionComponent::BeginPlay()
 {
 	Super::BeginPlay();
@@ -177,7 +214,7 @@ void UFluidInteractionComponent::CreateAutoCollider()
 		AutoCollider->AdhesionMultiplier = AdhesionMultiplier;
 
 		// TargetMeshComponent 자동 설정
-		// 우선순위: SkeletalMeshComponent > CapsuleComponent
+		// 우선순위: SkeletalMeshComponent > CapsuleComponent > StaticMeshComponent
 		USkeletalMeshComponent* SkelMesh = Owner->FindComponentByClass<USkeletalMeshComponent>();
 		if (SkelMesh)
 		{
@@ -185,11 +222,18 @@ void UFluidInteractionComponent::CreateAutoCollider()
 		}
 		else
 		{
-			// SkeletalMesh가 없으면 CapsuleComponent 사용 (캐릭터의 경우)
 			UCapsuleComponent* Capsule = Owner->FindComponentByClass<UCapsuleComponent>();
 			if (Capsule)
 			{
 				AutoCollider->TargetMeshComponent = Capsule;
+			}
+			else
+			{
+				UStaticMeshComponent* StaticMesh = Owner->FindComponentByClass<UStaticMeshComponent>();
+				if (StaticMesh)
+				{
+					AutoCollider->TargetMeshComponent = StaticMesh;
+				}
 			}
 		}
 	}

@@ -88,6 +88,17 @@ public:
 	 */
 	int32 GetMaxParticleCount() const { return MaxParticleCount; }
 
+	/**
+	 * Clear all particles on GPU (resets CurrentParticleCount and PersistentParticleCount)
+	 */
+	void ClearAllParticles()
+	{
+		CurrentParticleCount = 0;
+		PersistentParticleCount.store(0);
+		bNeedsFullUpload = true;
+		InvalidatePreviousPositions();
+	}
+
 	//=============================================================================
 	// Simulation Execution
 	//=============================================================================

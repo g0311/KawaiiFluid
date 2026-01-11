@@ -54,14 +54,8 @@ void UKawaiiFluidComponent::OnRegister()
 		{
 			ISMRenderer->ApplySettings(ISMSettings);
 		}
-
-		// FluidRendererSubsystem에 등록
-		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
-		{
-			RendererSubsystem->RegisterRenderingModule(RenderingModule);
-		}
-
-		UE_LOG(LogTemp, Log, TEXT("KawaiiFluidComponent [%s]: Editor rendering initialized"), *GetName());
+		
+		RegisterToSubsystem();
 	}
 #endif
 }
@@ -70,15 +64,7 @@ void UKawaiiFluidComponent::OnUnregister()
 {
 #if WITH_EDITOR
 	// 에디터 모드에서 정리
-	UWorld* World = GetWorld();
-	if (World && !World->IsGameWorld() && RenderingModule)
-	{
-		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
-		{
-			RendererSubsystem->UnregisterRenderingModule(RenderingModule);
-		}
-		RenderingModule->Cleanup();
-	}
+	UnregisterFromSubsystem();
 #endif
 
 	Super::OnUnregister();
@@ -98,7 +84,6 @@ void UKawaiiFluidComponent::BeginPlay()
 			UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidComponent [%s]: No Preset assigned, using default values"), *GetName());
 		}
 		// Module에 Preset 설정 후 초기화
-		SimulationModule->SetPreset(Preset);
 		SimulationModule->Initialize(Preset);
 
 		// SourceID 설정 - 충돌 피드백에서 파티클 소속 식별용
@@ -127,15 +112,6 @@ void UKawaiiFluidComponent::BeginPlay()
 			if (UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer())
 			{
 				ISMRenderer->ApplySettings(ISMSettings);
-			}
-
-			// 3. FluidRendererSubsystem에 등록
-			if (UWorld* World = GetWorld())
-			{
-				if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
-				{
-					RendererSubsystem->RegisterRenderingModule(RenderingModule);
-				}
 			}
 
 			UE_LOG(LogTemp, Log, TEXT("KawaiiFluidComponent [%s]: Rendering initialized (ISM: %s, Metaball: from Preset)"),
@@ -167,28 +143,18 @@ void UKawaiiFluidComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	// 렌더링 모듈 정리
 	if (RenderingModule)
 	{
-		// FluidRendererSubsystem에서 등록 해제
-		if (UWorld* World = GetWorld())
-		{
-			if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
-			{
-				RendererSubsystem->UnregisterRenderingModule(RenderingModule);
-			}
-		}
-
 		// RenderingModule 정리
 		RenderingModule->Cleanup();
 		RenderingModule = nullptr;
 	}
-
 	// 시뮬레이션 모듈 정리
 	if (SimulationModule)
 	{
 		SimulationModule->Shutdown();
+		SimulationModule = nullptr;
 	}
 
 	Super::EndPlay(EndPlayReason);
-
 	UE_LOG(LogTemp, Log, TEXT("UKawaiiFluidComponent EndPlay: %s"), *GetName());
 }
 
@@ -198,6 +164,36 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 
 	UWorld* World = GetWorld();
 	const bool bIsGameWorld = World && World->IsGameWorld();
+
+#if WITH_EDITOR
+	// 브러시 모드에서 에디터 시뮬레이션 실행
+	if (!bIsGameWorld && bBrushModeActive && SimulationModule && SimulationModule->GetSpatialHash())
+	{
+		if (UKawaiiFluidSimulationContext* Context = SimulationModule->GetSimulationContext())
+		{
+			FKawaiiFluidSimulationParams Params = SimulationModule->BuildSimulationParams();
+			Params.ExternalForce += SimulationModule->GetAccumulatedExternalForce();
+			if (UKawaiiFluidSimulatorSubsystem* Subsystem = World->GetSubsystem<UKawaiiFluidSimulatorSubsystem>())
+			{
+				Params.Colliders.Append(Subsystem->GetGlobalColliders());
+				Params.InteractionComponents.Append(Subsystem->GetGlobalInteractionComponents());
+			}
+
+			float AccumulatedTime = SimulationModule->GetAccumulatedTime();
+			Context->Simulate(
+				SimulationModule->GetParticlesMutable(),
+				Preset,
+				Params,
+				*SimulationModule->GetSpatialHash(),
+				DeltaTime,
+				AccumulatedTime
+			);
+			SimulationModule->SetAccumulatedTime(AccumulatedTime);
+
+			SimulationModule->ResetExternalForce();
+		}
+	}
+#endif
 
 	// Containment 설정 및 충돌 처리 (시뮬레이션 후에 적용)
 	// Containment 프로퍼티는 SimulationModule에 있음
@@ -246,20 +242,10 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 	}
 
 	// VSM Integration: Update shadow proxy with particle data
-	if (SimulationModule && SimulationModule->GetParticleCount() > 0)
+	if (SimulationModule)
 	{
 		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
 		{
-			// Debug log (throttled)
-			// static int32 VSMLogCounter = 0;
-			// if (++VSMLogCounter % 300 == 1)
-			// {
-			// 	UE_LOG(LogTemp, Log, TEXT("KFC VSM Check: bEnable=%d, Particles=%d, Material=%s"),
-			// 		RendererSubsystem->bEnableVSMIntegration,
-			// 		SimulationModule->GetParticleCount(),
-			// 		RendererSubsystem->ShadowMaterial ? *RendererSubsystem->ShadowMaterial->GetName() : TEXT("NULL"));
-			// }
-
 			if (RendererSubsystem->bEnableVSMIntegration)
 			{
 				// Get particle positions
@@ -291,6 +277,11 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 
 					// Legacy: Update density grid (for future use)
 					RendererSubsystem->UpdateDensityGrid(Positions.GetData(), NumParticles, FluidBounds);
+				}
+				else
+				{
+					// 파티클 0개일 때 shadow ISM 클리어
+					RendererSubsystem->UpdateShadowInstances(nullptr, 0);
 				}
 			}
 		}
@@ -758,11 +749,12 @@ void UKawaiiFluidComponent::RegisterToSubsystem()
 	{
 		if (UKawaiiFluidSimulatorSubsystem* Subsystem = World->GetSubsystem<UKawaiiFluidSimulatorSubsystem>())
 		{
-			// Module을 직접 등록!
 			Subsystem->RegisterModule(SimulationModule);
 		}
-
-		// RenderSubSystem , ...
+		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+		{
+			RendererSubsystem->RegisterRenderingModule(RenderingModule);
+		}
 	}
 }
 
@@ -780,8 +772,10 @@ void UKawaiiFluidComponent::UnregisterFromSubsystem()
 			// Module 등록 해제
 			Subsystem->UnregisterModule(SimulationModule);
 		}
-
-		// RenderSubSystem , ...
+		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+		{
+			RendererSubsystem->UnregisterRenderingModule(RenderingModule);
+		}
 	}
 }
 
@@ -869,6 +863,15 @@ void UKawaiiFluidComponent::ClearAllParticles()
 	if (RenderingModule)
 	{
 		RenderingModule->UpdateRenderers();
+	}
+
+	// Shadow ISM 클리어
+	if (UWorld* World = GetWorld())
+	{
+		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+		{
+			RendererSubsystem->UpdateShadowInstances(nullptr, 0);
+		}
 	}
 }
 
