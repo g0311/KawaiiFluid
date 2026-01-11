@@ -143,8 +143,53 @@ float KernelWeight(float Distance, float H)
 }
 
 //-----------------------------------------------------------------------------
-// Helper: 3x3 Symmetric Eigenvalue Decomposition (Jacobi iteration)
+// Helper: 3x3 Symmetric Eigenvalue Decomposition (Analytical - Cardano's formula)
+// OPTIMIZED: No iteration, direct analytical solution
+// Reference: "Eigenvalues of a 3x3 symmetric matrix" - Kopp (2008)
 //-----------------------------------------------------------------------------
+
+// Compute eigenvector for a given eigenvalue using cross product method
+float3 ComputeEigenvector(float3x3 A, float eigenvalue)
+{
+	// (A - λI) should have rank 2, so we find null space
+	float3 row0 = float3(A[0][0] - eigenvalue, A[0][1], A[0][2]);
+	float3 row1 = float3(A[1][0], A[1][1] - eigenvalue, A[1][2]);
+	float3 row2 = float3(A[2][0], A[2][1], A[2][2] - eigenvalue);
+
+	// Cross product of two rows gives eigenvector (perpendicular to both)
+	float3 cross01 = cross(row0, row1);
+	float3 cross12 = cross(row1, row2);
+	float3 cross02 = cross(row0, row2);
+
+	// Pick the cross product with largest magnitude for numerical stability
+	float len01 = dot(cross01, cross01);
+	float len12 = dot(cross12, cross12);
+	float len02 = dot(cross02, cross02);
+
+	float3 eigenvec;
+	if (len01 >= len12 && len01 >= len02)
+	{
+		eigenvec = cross01;
+	}
+	else if (len12 >= len01 && len12 >= len02)
+	{
+		eigenvec = cross12;
+	}
+	else
+	{
+		eigenvec = cross02;
+	}
+
+	float len = length(eigenvec);
+	if (len > 1e-10f)
+	{
+		return eigenvec / len;
+	}
+
+	// Fallback for degenerate case
+	return float3(1, 0, 0);
+}
+
 void SymmetricEigen3x3(
 	float3x3 M,
 	out float3 EigenValues,
@@ -152,112 +197,155 @@ void SymmetricEigen3x3(
 	out float3 EigenVec1,
 	out float3 EigenVec2)
 {
-	// Initialize eigenvectors to identity
-	float3x3 V = float3x3(1, 0, 0, 0, 1, 0, 0, 0, 1);
-	float3x3 A = M;
+	// Diagonal and off-diagonal elements
+	float m00 = M[0][0], m11 = M[1][1], m22 = M[2][2];
+	float m01 = M[0][1], m02 = M[0][2], m12 = M[1][2];
 
-	// Jacobi iteration
-	[unroll]
-	for (int iter = 0; iter < 10; ++iter)
+	// Check if already diagonal (common case for sparse distributions)
+	float offDiagSq = m01*m01 + m02*m02 + m12*m12;
+	if (offDiagSq < 1e-12f)
 	{
-		// Find largest off-diagonal element
-		float maxVal = abs(A[0][1]);
-		int p = 0, q = 1;
-
-		if (abs(A[0][2]) > maxVal)
+		// Already diagonal - eigenvalues are diagonal elements
+		// Sort descending
+		if (m00 >= m11 && m00 >= m22)
 		{
-			maxVal = abs(A[0][2]);
-			p = 0;
-			q = 2;
+			EigenValues.x = m00;
+			EigenVec0 = float3(1, 0, 0);
+			if (m11 >= m22)
+			{
+				EigenValues.y = m11;
+				EigenValues.z = m22;
+				EigenVec1 = float3(0, 1, 0);
+				EigenVec2 = float3(0, 0, 1);
+			}
+			else
+			{
+				EigenValues.y = m22;
+				EigenValues.z = m11;
+				EigenVec1 = float3(0, 0, 1);
+				EigenVec2 = float3(0, 1, 0);
+			}
 		}
-		if (abs(A[1][2]) > maxVal)
+		else if (m11 >= m00 && m11 >= m22)
 		{
-			maxVal = abs(A[1][2]);
-			p = 1;
-			q = 2;
-		}
-
-		if (maxVal < 1e-6f)
-		{
-			break;
-		}
-
-		// Compute rotation
-		float Diff = A[q][q] - A[p][p];
-		float Theta;
-		if (abs(A[p][q]) < abs(Diff) * 1e-36f)
-		{
-			Theta = A[p][q] / Diff;
+			EigenValues.x = m11;
+			EigenVec0 = float3(0, 1, 0);
+			if (m00 >= m22)
+			{
+				EigenValues.y = m00;
+				EigenValues.z = m22;
+				EigenVec1 = float3(1, 0, 0);
+				EigenVec2 = float3(0, 0, 1);
+			}
+			else
+			{
+				EigenValues.y = m22;
+				EigenValues.z = m00;
+				EigenVec1 = float3(0, 0, 1);
+				EigenVec2 = float3(1, 0, 0);
+			}
 		}
 		else
 		{
-			float Phi = Diff / (2.0f * A[p][q]);
-			Theta = 1.0f / (abs(Phi) + sqrt(Phi * Phi + 1.0f));
-			if (Phi < 0.0f)
+			EigenValues.x = m22;
+			EigenVec0 = float3(0, 0, 1);
+			if (m00 >= m11)
 			{
-				Theta = -Theta;
+				EigenValues.y = m00;
+				EigenValues.z = m11;
+				EigenVec1 = float3(1, 0, 0);
+				EigenVec2 = float3(0, 1, 0);
+			}
+			else
+			{
+				EigenValues.y = m11;
+				EigenValues.z = m00;
+				EigenVec1 = float3(0, 1, 0);
+				EigenVec2 = float3(1, 0, 0);
 			}
 		}
-
-		float C = 1.0f / sqrt(Theta * Theta + 1.0f);
-		float S = Theta * C;
-		float Tau = S / (1.0f + C);
-
-		// Update matrix
-		float Apq = A[p][q];
-		A[p][q] = 0.0f;
-		A[q][p] = 0.0f;
-		A[p][p] -= Theta * Apq;
-		A[q][q] += Theta * Apq;
-
-		for (int r = 0; r < 3; ++r)
-		{
-			if (r != p && r != q)
-			{
-				float Arp = A[r][p];
-				float Arq = A[r][q];
-				A[r][p] = A[p][r] = Arp - S * (Arq + Tau * Arp);
-				A[r][q] = A[q][r] = Arq + S * (Arp - Tau * Arq);
-			}
-		}
-
-		// Update eigenvectors
-		for (int r = 0; r < 3; ++r)
-		{
-			float Vrp = V[r][p];
-			float Vrq = V[r][q];
-			V[r][p] = Vrp - S * (Vrq + Tau * Vrp);
-			V[r][q] = Vrq + S * (Vrp - Tau * Vrq);
-		}
+		return;
 	}
 
-	// Extract and sort eigenvalues (descending)
-	float3 EigenVals = float3(A[0][0], A[1][1], A[2][2]);
-	int idx0 = 0, idx1 = 1, idx2 = 2;
+	// =========================================================================
+	// Cardano's formula for eigenvalues of 3x3 symmetric matrix
+	// Characteristic polynomial: λ³ - c2*λ² + c1*λ - c0 = 0
+	// =========================================================================
 
-	if (EigenVals[idx0] < EigenVals[idx1])
+	// Invariants of the matrix
+	float trace = m00 + m11 + m22;
+	float q = trace / 3.0f;
+
+	// Shift matrix by q to make it traceless: B = A - q*I
+	float b00 = m00 - q;
+	float b11 = m11 - q;
+	float b22 = m22 - q;
+
+	// p² = (1/6) * (sum of squares of B elements) * 2
+	// For symmetric: p² = (1/6) * (b00² + b11² + b22² + 2*(m01² + m02² + m12²))
+	float p2 = (b00*b00 + b11*b11 + b22*b22 + 2.0f * offDiagSq) / 6.0f;
+
+	if (p2 < 1e-12f)
 	{
-		int t = idx0;
-		idx0 = idx1;
-		idx1 = t;
-	}
-	if (EigenVals[idx1] < EigenVals[idx2])
-	{
-		int t = idx1;
-		idx1 = idx2;
-		idx2 = t;
-	}
-	if (EigenVals[idx0] < EigenVals[idx1])
-	{
-		int t = idx0;
-		idx0 = idx1;
-		idx1 = t;
+		// Matrix is q*I (all eigenvalues equal)
+		EigenValues = float3(q, q, q);
+		EigenVec0 = float3(1, 0, 0);
+		EigenVec1 = float3(0, 1, 0);
+		EigenVec2 = float3(0, 0, 1);
+		return;
 	}
 
-	EigenValues = float3(EigenVals[idx0], EigenVals[idx1], EigenVals[idx2]);
-	EigenVec0 = float3(V[0][idx0], V[1][idx0], V[2][idx0]);
-	EigenVec1 = float3(V[0][idx1], V[1][idx1], V[2][idx1]);
-	EigenVec2 = float3(V[0][idx2], V[1][idx2], V[2][idx2]);
+	float p = sqrt(p2);
+
+	// Determinant of B/p (scaled shifted matrix)
+	// det(B) = b00*(b11*b22 - m12²) - m01*(m01*b22 - m12*m02) + m02*(m01*m12 - b11*m02)
+	float detB = b00 * (b11*b22 - m12*m12)
+	           - m01 * (m01*b22 - m12*m02)
+	           + m02 * (m01*m12 - b11*m02);
+
+	// r = det(B/p) / 2 = det(B) / (2 * p³)
+	float r = detB / (2.0f * p * p * p);
+
+	// Clamp r to [-1, 1] for numerical stability
+	r = clamp(r, -1.0f, 1.0f);
+
+	// Angle for Cardano's formula
+	float phi = acos(r) / 3.0f;
+
+	// Three eigenvalues (sorted descending)
+	// λk = q + 2*p*cos(φ + 2πk/3) for k = 0, 1, 2
+	const float TWO_PI_OVER_3 = 2.0943951f;  // 2π/3
+
+	float lambda0 = q + 2.0f * p * cos(phi);
+	float lambda2 = q + 2.0f * p * cos(phi + TWO_PI_OVER_3);
+	float lambda1 = 3.0f * q - lambda0 - lambda2;  // trace = sum of eigenvalues
+
+	// Eigenvalues are already sorted: lambda0 >= lambda1 >= lambda2
+	EigenValues = float3(lambda0, lambda1, lambda2);
+
+	// =========================================================================
+	// Compute eigenvectors using cross product method
+	// =========================================================================
+	EigenVec0 = ComputeEigenvector(M, lambda0);
+
+	// For second eigenvector, ensure orthogonality to first
+	EigenVec1 = ComputeEigenvector(M, lambda1);
+	// Gram-Schmidt orthogonalization
+	EigenVec1 = EigenVec1 - dot(EigenVec1, EigenVec0) * EigenVec0;
+	float len1 = length(EigenVec1);
+	if (len1 > 1e-10f)
+	{
+		EigenVec1 /= len1;
+	}
+	else
+	{
+		// Degenerate: build orthogonal vector
+		BuildOrthonormalBasis(EigenVec0, EigenVec1, EigenVec2);
+		return;
+	}
+
+	// Third eigenvector is cross product of first two (guaranteed orthogonal)
+	EigenVec2 = cross(EigenVec0, EigenVec1);
 }
 
 //-----------------------------------------------------------------------------
@@ -314,6 +402,8 @@ void CalculateVelocityBased(
 //-----------------------------------------------------------------------------
 // Density-Based Anisotropy (Covariance Matrix)
 // Yu & Turk 2013: "Reconstructing Surfaces of Particle-Based Fluids"
+// OPTIMIZED: Single-pass using parallel variance formula
+// Cov = E[X*X^T] - E[X]*E[X]^T
 //-----------------------------------------------------------------------------
 void CalculateDensityBased(
 	uint ParticleIndex,
@@ -336,11 +426,14 @@ void CalculateDensityBased(
 	float H2 = SmoothingRadius * SmoothingRadius;
 
 	// =========================================================================
-	// Pass 1: Compute weighted mean position (centroid)
-	// x̄ = Σ wi * xi / Σ wi
+	// Single Pass: Collect all statistics at once
+	// Using parallel variance formula: Var(X) = E[X²] - E[X]²
+	// Cov = Σ(wi*xi*xi^T)/Σwi - (Σwi*xi/Σwi)(Σwi*xi/Σwi)^T
 	// =========================================================================
-	float3 WeightedSum = float3(0, 0, 0);
-	float TotalWeight = 0.0f;
+	float3 SumWX = float3(0, 0, 0);      // Σ(wi * xi)
+	float SumWXX_00 = 0, SumWXX_01 = 0, SumWXX_02 = 0;  // Σ(wi * xi * xi^T)
+	float SumWXX_11 = 0, SumWXX_12 = 0, SumWXX_22 = 0;  // (symmetric, only upper triangle)
+	float TotalWeight = 0.0f;            // Σwi
 	int NeighborCount = 0;
 
 	for (int dz = -CellRadius; dz <= CellRadius; ++dz)
@@ -373,9 +466,19 @@ void CalculateDensityBased(
 
 						if (W > 0.0001f)
 						{
-							WeightedSum += W * NeighborPos;
+							// Accumulate for mean: Σ(wi * xi)
+							SumWX += W * NeighborPos;
 							TotalWeight += W;
 							NeighborCount++;
+
+							// Accumulate for covariance: Σ(wi * xi * xi^T)
+							// Only upper triangle (symmetric matrix)
+							SumWXX_00 += W * NeighborPos.x * NeighborPos.x;
+							SumWXX_01 += W * NeighborPos.x * NeighborPos.y;
+							SumWXX_02 += W * NeighborPos.x * NeighborPos.z;
+							SumWXX_11 += W * NeighborPos.y * NeighborPos.y;
+							SumWXX_12 += W * NeighborPos.y * NeighborPos.z;
+							SumWXX_22 += W * NeighborPos.z * NeighborPos.z;
 						}
 					}
 				}
@@ -391,76 +494,41 @@ void CalculateDensityBased(
 		return;
 	}
 
-	// Weighted mean position
-	float3 WeightedMean = WeightedSum / TotalWeight;
-
 	// =========================================================================
-	// Pass 2: Compute covariance matrix around weighted mean
-	// Σ = Σ wi * (xi - x̄)(xi - x̄)^T / Σ wi
+	// Post-calculation: Derive mean and covariance from accumulated values
 	// =========================================================================
-	float3x3 CovMatrix = (float3x3)0;
-
-	for (int dz2 = -CellRadius; dz2 <= CellRadius; ++dz2)
-	{
-		for (int dy2 = -CellRadius; dy2 <= CellRadius; ++dy2)
-		{
-			for (int dx2 = -CellRadius; dx2 <= CellRadius; ++dx2)
-			{
-				int3 NeighborCell = CenterCell + int3(dx2, dy2, dz2);
-				uint Hash = HashCell(NeighborCell);
-				uint Count = min(CellCounts[Hash], (uint)MAX_PARTICLES_PER_CELL);
-				uint BaseIdx = Hash * MAX_PARTICLES_PER_CELL;
-
-				for (uint i = 0; i < Count; ++i)
-				{
-					uint NeighborIdx = ParticleIndices[BaseIdx + i];
-					if (NeighborIdx >= ParticleCount)
-					{
-						continue;
-					}
-
-					float3 NeighborPos = InPhysicsParticles[NeighborIdx].Position;
-					float3 ToCenter = NeighborPos - CenterPos;
-					float Dist2 = dot(ToCenter, ToCenter);
-
-					if (Dist2 < H2)
-					{
-						float Dist = sqrt(Dist2);
-						float W = KernelWeight(Dist, SmoothingRadius);
-
-						if (W > 0.0001f)
-						{
-							// Deviation from weighted mean (NOT from center particle!)
-							float3 Diff = NeighborPos - WeightedMean;
-
-							// Accumulate weighted outer product
-							CovMatrix[0][0] += W * Diff.x * Diff.x;
-							CovMatrix[0][1] += W * Diff.x * Diff.y;
-							CovMatrix[0][2] += W * Diff.x * Diff.z;
-							CovMatrix[1][0] += W * Diff.y * Diff.x;
-							CovMatrix[1][1] += W * Diff.y * Diff.y;
-							CovMatrix[1][2] += W * Diff.y * Diff.z;
-							CovMatrix[2][0] += W * Diff.z * Diff.x;
-							CovMatrix[2][1] += W * Diff.z * Diff.y;
-							CovMatrix[2][2] += W * Diff.z * Diff.z;
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Normalize covariance
 	float InvW = 1.0f / TotalWeight;
-	CovMatrix[0][0] *= InvW;
-	CovMatrix[0][1] *= InvW;
-	CovMatrix[0][2] *= InvW;
-	CovMatrix[1][0] *= InvW;
-	CovMatrix[1][1] *= InvW;
-	CovMatrix[1][2] *= InvW;
-	CovMatrix[2][0] *= InvW;
-	CovMatrix[2][1] *= InvW;
-	CovMatrix[2][2] *= InvW;
+
+	// Weighted mean: E[X] = Σ(wi*xi) / Σwi
+	float3 WeightedMean = SumWX * InvW;
+
+	// E[X*X^T] = Σ(wi*xi*xi^T) / Σwi
+	float EXX_00 = SumWXX_00 * InvW;
+	float EXX_01 = SumWXX_01 * InvW;
+	float EXX_02 = SumWXX_02 * InvW;
+	float EXX_11 = SumWXX_11 * InvW;
+	float EXX_12 = SumWXX_12 * InvW;
+	float EXX_22 = SumWXX_22 * InvW;
+
+	// E[X]*E[X]^T (outer product of mean with itself)
+	float MeanOuter_00 = WeightedMean.x * WeightedMean.x;
+	float MeanOuter_01 = WeightedMean.x * WeightedMean.y;
+	float MeanOuter_02 = WeightedMean.x * WeightedMean.z;
+	float MeanOuter_11 = WeightedMean.y * WeightedMean.y;
+	float MeanOuter_12 = WeightedMean.y * WeightedMean.z;
+	float MeanOuter_22 = WeightedMean.z * WeightedMean.z;
+
+	// Covariance = E[X*X^T] - E[X]*E[X]^T
+	float3x3 CovMatrix;
+	CovMatrix[0][0] = EXX_00 - MeanOuter_00;
+	CovMatrix[0][1] = EXX_01 - MeanOuter_01;
+	CovMatrix[0][2] = EXX_02 - MeanOuter_02;
+	CovMatrix[1][0] = CovMatrix[0][1];  // Symmetric
+	CovMatrix[1][1] = EXX_11 - MeanOuter_11;
+	CovMatrix[1][2] = EXX_12 - MeanOuter_12;
+	CovMatrix[2][0] = CovMatrix[0][2];  // Symmetric
+	CovMatrix[2][1] = CovMatrix[1][2];  // Symmetric
+	CovMatrix[2][2] = EXX_22 - MeanOuter_22;
 
 	// Eigenvalue decomposition
 	float3 EigenValues;
