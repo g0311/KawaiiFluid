@@ -185,6 +185,74 @@ IMPLEMENT_GLOBAL_SHADER(FFluidThicknessGaussianBlurVerticalCS,
                         SF_Compute);
 
 //=============================================================================
+// Depth Downsample Compute Shader (2x -> 1x)
+//=============================================================================
+
+class FFluidDepthDownsampleCS : public FGlobalShader
+{
+	DECLARE_GLOBAL_SHADER(FFluidDepthDownsampleCS);
+	SHADER_USE_PARAMETER_STRUCT(FFluidDepthDownsampleCS, FGlobalShader);
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters,)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, InputTexture)
+		SHADER_PARAMETER(FVector2f, TextureSize)         // Half-res output size
+		SHADER_PARAMETER(FVector2f, FullResTextureSize)  // Full-res input size for clamping
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float>, OutputTexture)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters,
+	                                         FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("THREADGROUP_SIZE"), 8);
+	}
+};
+
+IMPLEMENT_GLOBAL_SHADER(FFluidDepthDownsampleCS,
+                        "/Plugin/KawaiiFluidSystem/Private/FluidSmoothing.usf", "DepthDownsampleCS",
+                        SF_Compute);
+
+//=============================================================================
+// Depth Upsample Compute Shader (1x -> 2x, Joint Bilateral)
+//=============================================================================
+
+class FFluidDepthUpsampleCS : public FGlobalShader
+{
+	DECLARE_GLOBAL_SHADER(FFluidDepthUpsampleCS);
+	SHADER_USE_PARAMETER_STRUCT(FFluidDepthUpsampleCS, FGlobalShader);
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters,)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, InputTexture)      // Half-res filtered
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, FullResTexture)    // Original full-res (guide)
+		SHADER_PARAMETER(FVector2f, FullResTextureSize)
+		SHADER_PARAMETER(FVector2f, HalfResTextureSize)
+		SHADER_PARAMETER(float, ParticleRadius)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float>, OutputTexture)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters,
+	                                         FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("THREADGROUP_SIZE"), 8);
+	}
+};
+
+IMPLEMENT_GLOBAL_SHADER(FFluidDepthUpsampleCS,
+                        "/Plugin/KawaiiFluidSystem/Private/FluidSmoothing.usf", "DepthUpsampleCS",
+                        SF_Compute);
+
+//=============================================================================
 // Curvature Flow Compute Shader (van der Laan et al.)
 //=============================================================================
 
@@ -294,7 +362,9 @@ void RenderFluidSmoothingPass(
 
 //=============================================================================
 // Narrow-Range Filter Smoothing Pass (Truong & Yuksel 2018)
-// Now uses LDS optimization for ~3-4x performance improvement
+// Uses Half-Resolution filtering for ~4x performance improvement
+//
+// Pipeline: FullRes -> Downsample -> Filter@HalfRes -> Upsample -> FullRes
 //=============================================================================
 
 void RenderFluidNarrowRangeSmoothingPass(
@@ -309,7 +379,7 @@ void RenderFluidNarrowRangeSmoothingPass(
 	int32 NumIterations,
 	float GrazingBoost)
 {
-	RDG_EVENT_SCOPE(GraphBuilder, "FluidNarrowRangeFilter_LDS");
+	RDG_EVENT_SCOPE(GraphBuilder, "FluidNarrowRangeFilter_HalfRes");
 	check(InputDepthTexture);
 
 	NumIterations = FMath::Clamp(NumIterations, 1, 10);
@@ -317,33 +387,71 @@ void RenderFluidNarrowRangeSmoothingPass(
 	// Clamp filter radius to LDS max (16)
 	const float ClampedFilterRadius = FMath::Min(FilterRadius, 16.0f);
 
-	FIntPoint TextureSize = InputDepthTexture->Desc.Extent;
+	FIntPoint FullResSize = InputDepthTexture->Desc.Extent;
+	FIntPoint HalfResSize = FIntPoint(FMath::DivideAndRoundUp(FullResSize.X, 2),
+	                                   FMath::DivideAndRoundUp(FullResSize.Y, 2));
 
-	FRDGTextureDesc IntermediateDesc = FRDGTextureDesc::Create2D(
-		TextureSize,
+	FGlobalShaderMap* GlobalShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
+
+	// Half-res texture descriptor
+	FRDGTextureDesc HalfResDesc = FRDGTextureDesc::Create2D(
+		HalfResSize,
 		PF_R32_FLOAT,
 		FClearValueBinding::None,
 		TexCreate_ShaderResource | TexCreate_UAV);
 
-	FGlobalShaderMap* GlobalShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
-	TShaderMapRef<FFluidNarrowRangeFilterLDS_CS> ComputeShader(GlobalShaderMap);
+	// Full-res texture descriptor
+	FRDGTextureDesc FullResDesc = FRDGTextureDesc::Create2D(
+		FullResSize,
+		PF_R32_FLOAT,
+		FClearValueBinding::None,
+		TexCreate_ShaderResource | TexCreate_UAV);
 
-	// LDS version uses 16x16 thread groups
+	//=========================================================================
+	// Step 1: Downsample to half resolution
+	//=========================================================================
+	FRDGTextureRef HalfResDepth;
+	{
+		TShaderMapRef<FFluidDepthDownsampleCS> DownsampleShader(GlobalShaderMap);
+
+		HalfResDepth = GraphBuilder.CreateTexture(HalfResDesc, TEXT("FluidDepth_HalfRes"));
+
+		auto* PassParameters = GraphBuilder.AllocParameters<FFluidDepthDownsampleCS::FParameters>();
+		PassParameters->InputTexture = InputDepthTexture;
+		PassParameters->TextureSize = FVector2f(HalfResSize.X, HalfResSize.Y);
+		PassParameters->FullResTextureSize = FVector2f(FullResSize.X, FullResSize.Y);
+		PassParameters->OutputTexture = GraphBuilder.CreateUAV(HalfResDepth);
+
+		FComputeShaderUtils::AddPass(
+			GraphBuilder,
+			RDG_EVENT_NAME("Downsample"),
+			DownsampleShader,
+			PassParameters,
+			FComputeShaderUtils::GetGroupCount(HalfResSize, 8));
+	}
+
+	//=========================================================================
+	// Step 2: Apply Narrow-Range Filter at half resolution (4x fewer pixels!)
+	//=========================================================================
+	TShaderMapRef<FFluidNarrowRangeFilterLDS_CS> FilterShader(GlobalShaderMap);
 	const int32 LDS_TILE_SIZE = 16;
 
-	FRDGTextureRef CurrentInput = InputDepthTexture;
+	// Half the filter radius for half resolution (maintains same world-space effect)
+	const float HalfResFilterRadius = FMath::Max(ClampedFilterRadius * 0.5f, 2.0f);
+
+	FRDGTextureRef CurrentInput = HalfResDepth;
 
 	for (int32 Iteration = 0; Iteration < NumIterations; ++Iteration)
 	{
 		FRDGTextureRef IterationOutput = GraphBuilder.CreateTexture(
-			IntermediateDesc, TEXT("FluidDepthNarrowRange_LDS"));
+			HalfResDesc, TEXT("FluidDepthNR_HalfRes"));
 
 		auto* PassParameters = GraphBuilder.AllocParameters<FFluidNarrowRangeFilterLDS_CS::FParameters>();
 
 		PassParameters->InputTexture = CurrentInput;
-		PassParameters->TextureSize = FVector2f(TextureSize.X, TextureSize.Y);
-		PassParameters->BlurRadius = ClampedFilterRadius;
-		PassParameters->BlurDepthFalloff = 0.0f;  // Unused in narrow-range
+		PassParameters->TextureSize = FVector2f(HalfResSize.X, HalfResSize.Y);
+		PassParameters->BlurRadius = HalfResFilterRadius;
+		PassParameters->BlurDepthFalloff = 0.0f;
 		PassParameters->ParticleRadius = ParticleRadius;
 		PassParameters->NarrowRangeThresholdRatio = ThresholdRatio;
 		PassParameters->NarrowRangeClampRatio = ClampRatio;
@@ -352,15 +460,40 @@ void RenderFluidNarrowRangeSmoothingPass(
 
 		FComputeShaderUtils::AddPass(
 			GraphBuilder,
-			RDG_EVENT_NAME("Iteration%d_NarrowRange_LDS", Iteration),
-			ComputeShader,
+			RDG_EVENT_NAME("NR_HalfRes_Iter%d", Iteration),
+			FilterShader,
 			PassParameters,
-			FComputeShaderUtils::GetGroupCount(TextureSize, LDS_TILE_SIZE));
+			FComputeShaderUtils::GetGroupCount(HalfResSize, LDS_TILE_SIZE));
 
 		CurrentInput = IterationOutput;
 	}
 
-	OutSmoothedDepthTexture = CurrentInput;
+	//=========================================================================
+	// Step 3: Upsample back to full resolution with joint bilateral
+	//=========================================================================
+	FRDGTextureRef FinalOutput;
+	{
+		TShaderMapRef<FFluidDepthUpsampleCS> UpsampleShader(GlobalShaderMap);
+
+		FinalOutput = GraphBuilder.CreateTexture(FullResDesc, TEXT("FluidDepth_Upsampled"));
+
+		auto* PassParameters = GraphBuilder.AllocParameters<FFluidDepthUpsampleCS::FParameters>();
+		PassParameters->InputTexture = CurrentInput;           // Half-res filtered
+		PassParameters->FullResTexture = InputDepthTexture;    // Original full-res as guide
+		PassParameters->FullResTextureSize = FVector2f(FullResSize.X, FullResSize.Y);
+		PassParameters->HalfResTextureSize = FVector2f(HalfResSize.X, HalfResSize.Y);
+		PassParameters->ParticleRadius = ParticleRadius;
+		PassParameters->OutputTexture = GraphBuilder.CreateUAV(FinalOutput);
+
+		FComputeShaderUtils::AddPass(
+			GraphBuilder,
+			RDG_EVENT_NAME("Upsample_JointBilateral"),
+			UpsampleShader,
+			PassParameters,
+			FComputeShaderUtils::GetGroupCount(FullResSize, 8));
+	}
+
+	OutSmoothedDepthTexture = FinalOutput;
 }
 
 //=============================================================================

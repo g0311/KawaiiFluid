@@ -15,6 +15,11 @@ float ParticleRadius;  // For Narrow-Range Filter threshold calculation
 // 배경 깊이 임계값 (Depth Pass의 Clear 값에 맞춰 설정해 둠)
 #define BACKGROUND_DEPTH_THRESH 3.0e30f
 
+// Downsample/Upsample용 추가 파라미터
+Texture2D<float> FullResTexture;
+float2 FullResTextureSize;
+float2 HalfResTextureSize;
+
 // Narrow-Range Filter 파라미터 (에디터에서 설정)
 float NarrowRangeThresholdRatio;  // threshold = ParticleRadius * ThresholdRatio
 float NarrowRangeClampRatio;      // clamp = ParticleRadius * ClampRatio
@@ -537,4 +542,139 @@ void CurvatureFlowCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	NewDepth = clamp(NewDepth, CenterDepth - MaxChange, CenterDepth + MaxChange);
 
 	OutputTexture[CenterCoord] = NewDepth;
+}
+
+//=============================================================================
+// Depth-Aware Downsample (2x2 -> 1)
+// Min-Depth selection to preserve silhouettes
+//=============================================================================
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void DepthDownsampleCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	// Half-res output coordinate (TextureSize = half-res output size)
+	if (any(DispatchThreadId.xy >= uint2(TextureSize)))
+	{
+		return;
+	}
+
+	int2 OutCoord = int2(DispatchThreadId.xy);
+	int2 InCoord = OutCoord * 2;
+
+	// Full-res input bounds (FullResTextureSize is passed separately)
+	int2 FullResMax = int2(FullResTextureSize) - 1;
+
+	// Sample 2x2 block from full resolution with clamping
+	int2 C00 = clamp(InCoord + int2(0, 0), int2(0, 0), FullResMax);
+	int2 C10 = clamp(InCoord + int2(1, 0), int2(0, 0), FullResMax);
+	int2 C01 = clamp(InCoord + int2(0, 1), int2(0, 0), FullResMax);
+	int2 C11 = clamp(InCoord + int2(1, 1), int2(0, 0), FullResMax);
+
+	float z00 = InputTexture.Load(int3(C00, 0));
+	float z10 = InputTexture.Load(int3(C10, 0));
+	float z01 = InputTexture.Load(int3(C01, 0));
+	float z11 = InputTexture.Load(int3(C11, 0));
+
+	// Count valid (non-background) samples
+	int ValidCount = 0;
+	float MinDepth = 1e30f;
+	float SumDepth = 0.0f;
+
+	if (z00 < BACKGROUND_DEPTH_THRESH) { ValidCount++; MinDepth = min(MinDepth, z00); SumDepth += z00; }
+	if (z10 < BACKGROUND_DEPTH_THRESH) { ValidCount++; MinDepth = min(MinDepth, z10); SumDepth += z10; }
+	if (z01 < BACKGROUND_DEPTH_THRESH) { ValidCount++; MinDepth = min(MinDepth, z01); SumDepth += z01; }
+	if (z11 < BACKGROUND_DEPTH_THRESH) { ValidCount++; MinDepth = min(MinDepth, z11); SumDepth += z11; }
+
+	float OutDepth;
+	if (ValidCount == 0)
+	{
+		// All background
+		OutDepth = BACKGROUND_DEPTH_THRESH * 2.0f;
+	}
+	else if (ValidCount == 4)
+	{
+		// All valid - use average for smooth surfaces
+		OutDepth = SumDepth / 4.0f;
+	}
+	else
+	{
+		// Mixed - use min depth to preserve silhouette edges
+		OutDepth = MinDepth;
+	}
+
+	OutputTexture[OutCoord] = OutDepth;
+}
+
+//=============================================================================
+// Depth-Aware Upsample (1 -> 2x2)
+// Joint Bilateral Upsample: uses full-res depth as guide
+//=============================================================================
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void DepthUpsampleCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	// Full-res output coordinate
+	if (any(DispatchThreadId.xy >= uint2(FullResTextureSize)))
+	{
+		return;
+	}
+
+	int2 OutCoord = int2(DispatchThreadId.xy);
+
+	// Original full-res depth (guide)
+	float OriginalDepth = FullResTexture.Load(int3(OutCoord, 0));
+
+	// Background: pass through original
+	if (OriginalDepth > BACKGROUND_DEPTH_THRESH)
+	{
+		OutputTexture[OutCoord] = OriginalDepth;
+		return;
+	}
+
+	// Half-res coordinate (bilinear position)
+	float2 HalfCoord = (float2(OutCoord) + 0.5f) * 0.5f - 0.5f;
+	int2 HalfCoord00 = int2(floor(HalfCoord));
+
+	// Bilinear weights
+	float2 Frac = HalfCoord - float2(HalfCoord00);
+
+	// Sample 2x2 from half-res filtered result
+	int2 HC00 = clamp(HalfCoord00, int2(0, 0), int2(HalfResTextureSize) - 1);
+	int2 HC10 = clamp(HalfCoord00 + int2(1, 0), int2(0, 0), int2(HalfResTextureSize) - 1);
+	int2 HC01 = clamp(HalfCoord00 + int2(0, 1), int2(0, 0), int2(HalfResTextureSize) - 1);
+	int2 HC11 = clamp(HalfCoord00 + int2(1, 1), int2(0, 0), int2(HalfResTextureSize) - 1);
+
+	float z00 = InputTexture.Load(int3(HC00, 0));
+	float z10 = InputTexture.Load(int3(HC10, 0));
+	float z01 = InputTexture.Load(int3(HC01, 0));
+	float z11 = InputTexture.Load(int3(HC11, 0));
+
+	// Joint bilateral weights: bilinear * depth similarity
+	float DepthSigma = ParticleRadius * 2.0f;
+
+	float w00 = (1.0f - Frac.x) * (1.0f - Frac.y);
+	float w10 = Frac.x * (1.0f - Frac.y);
+	float w01 = (1.0f - Frac.x) * Frac.y;
+	float w11 = Frac.x * Frac.y;
+
+	// Apply depth-based weights (suppress samples with different depth)
+	if (z00 < BACKGROUND_DEPTH_THRESH) w00 *= exp(-abs(z00 - OriginalDepth) / DepthSigma); else w00 = 0.0f;
+	if (z10 < BACKGROUND_DEPTH_THRESH) w10 *= exp(-abs(z10 - OriginalDepth) / DepthSigma); else w10 = 0.0f;
+	if (z01 < BACKGROUND_DEPTH_THRESH) w01 *= exp(-abs(z01 - OriginalDepth) / DepthSigma); else w01 = 0.0f;
+	if (z11 < BACKGROUND_DEPTH_THRESH) w11 *= exp(-abs(z11 - OriginalDepth) / DepthSigma); else w11 = 0.0f;
+
+	float TotalWeight = w00 + w10 + w01 + w11;
+
+	float OutDepth;
+	if (TotalWeight > 0.001f)
+	{
+		OutDepth = (z00 * w00 + z10 * w10 + z01 * w01 + z11 * w11) / TotalWeight;
+	}
+	else
+	{
+		// Fallback to original if all samples are bad
+		OutDepth = OriginalDepth;
+	}
+
+	OutputTexture[OutCoord] = OutDepth;
 }

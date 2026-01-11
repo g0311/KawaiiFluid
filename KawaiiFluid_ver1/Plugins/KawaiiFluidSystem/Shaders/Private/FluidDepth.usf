@@ -53,10 +53,10 @@ struct FVertexOutput
 	uint InstanceId : TEXCOORD4;
 	float4 ScreenPosition : TEXCOORD5; // Screen space position for depth comparison
 #if USE_ANISOTROPY
-	// Ellipsoid axes in view space (direction.xyz * scale)
-	float3 EllipsoidAxis1 : TEXCOORD6;
-	float3 EllipsoidAxis2 : TEXCOORD7;
-	float3 EllipsoidAxis3 : TEXCOORD8;
+	// Ellipsoid axes in view space (xyz = normalized direction, w = scale)
+	float4 EllipsoidAxis1 : TEXCOORD6;
+	float4 EllipsoidAxis2 : TEXCOORD7;
+	float4 EllipsoidAxis3 : TEXCOORD8;
 #endif
 };
 
@@ -95,30 +95,28 @@ FVertexOutput MainVS(FVertexInput Input)
 	float4 Axis3WS = AnisotropyAxis3[Input.InstanceId];
 
 	// Transform directions to view space (rotation only, no translation)
+	// Directions are already normalized in the buffer
 	float3 Axis1Dir = mul(float4(Axis1WS.xyz, 0.0), ViewMatrix).xyz;
 	float3 Axis2Dir = mul(float4(Axis2WS.xyz, 0.0), ViewMatrix).xyz;
 	float3 Axis3Dir = mul(float4(Axis3WS.xyz, 0.0), ViewMatrix).xyz;
 
-	// Scaled axes in view space
-	float3 EllipsoidAxis1 = Axis1Dir * Axis1WS.w * ParticleRadius;
-	float3 EllipsoidAxis2 = Axis2Dir * Axis2WS.w * ParticleRadius;
-	float3 EllipsoidAxis3 = Axis3Dir * Axis3WS.w * ParticleRadius;
+	// Calculate scales (w component * ParticleRadius)
+	float Scale1 = Axis1WS.w * ParticleRadius;
+	float Scale2 = Axis2WS.w * ParticleRadius;
+	float Scale3 = Axis3WS.w * ParticleRadius;
 
 	// Calculate maximum extent for billboard sizing
-	// Project axes onto view plane (XY in view space) and find max extent
-	float MaxExtent = max(max(
-		length(EllipsoidAxis1),
-		length(EllipsoidAxis2)),
-		length(EllipsoidAxis3));
+	float MaxExtent = max(max(Scale1, Scale2), Scale3);
 
 	// Use maximum scale for billboard size with margin (FleX style)
 	// Extra margin ensures ellipsoid edges aren't clipped
 	float BillboardRadius = MaxExtent * 1.5f;
 
-	// Pass scaled axes to pixel shader
-	Output.EllipsoidAxis1 = EllipsoidAxis1;
-	Output.EllipsoidAxis2 = EllipsoidAxis2;
-	Output.EllipsoidAxis3 = EllipsoidAxis3;
+	// Pass normalized direction (xyz) and scale (w) separately
+	// This avoids expensive length() calls in pixel shader
+	Output.EllipsoidAxis1 = float4(Axis1Dir, Scale1);
+	Output.EllipsoidAxis2 = float4(Axis2Dir, Scale2);
+	Output.EllipsoidAxis3 = float4(Axis3Dir, Scale3);
 #else
 	float BillboardRadius = ParticleRadius;
 #endif
@@ -154,25 +152,29 @@ struct FPixelOutput
 
 #if USE_ANISOTROPY
 //-----------------------------------------------------------------------------
-// Ray-Ellipsoid Intersection using Quadric Form
+// Ray-Ellipsoid Intersection using Quadric Form (Optimized)
 // No matrix inverse needed - directly solve the quadric equation
+// Direction and scale are passed separately to avoid expensive length() calls
 //
 // Ellipsoid defined by: (P·n1/s1)² + (P·n2/s2)² + (P·n3/s3)² = 1
-// where n_i = normalize(axis_i), s_i = length(axis_i)
+// where n_i = axis_i.xyz (normalized direction), s_i = axis_i.w (scale)
 //-----------------------------------------------------------------------------
 bool RayEllipsoidIntersection(
 	float3 RayOrigin,      // Ray origin in view space (relative to ellipsoid center)
 	float3 RayDir,         // Ray direction in view space (normalized)
-	float3 Axis1,          // Ellipsoid axis 1 (direction * scale)
-	float3 Axis2,          // Ellipsoid axis 2 (direction * scale)
-	float3 Axis3,          // Ellipsoid axis 3 (direction * scale)
+	float4 Axis1,          // Ellipsoid axis 1 (xyz = normalized direction, w = scale)
+	float4 Axis2,          // Ellipsoid axis 2 (xyz = normalized direction, w = scale)
+	float4 Axis3,          // Ellipsoid axis 3 (xyz = normalized direction, w = scale)
 	out float t,           // Output: distance along ray
 	out float3 HitPoint)   // Output: hit point in view space
 {
-	// Extract normalized directions and scales from axes
-	float s1 = length(Axis1);
-	float s2 = length(Axis2);
-	float s3 = length(Axis3);
+	// Extract directions and scales directly (no length() needed!)
+	float3 n1 = Axis1.xyz;
+	float3 n2 = Axis2.xyz;
+	float3 n3 = Axis3.xyz;
+	float s1 = Axis1.w;
+	float s2 = Axis2.w;
+	float s3 = Axis3.w;
 
 	// Prevent division by zero for degenerate ellipsoids
 	if (s1 < 1e-6 || s2 < 1e-6 || s3 < 1e-6)
@@ -181,10 +183,6 @@ bool RayEllipsoidIntersection(
 		HitPoint = float3(0, 0, 0);
 		return false;
 	}
-
-	float3 n1 = Axis1 / s1;
-	float3 n2 = Axis2 / s2;
-	float3 n3 = Axis3 / s3;
 
 	// Project ray origin and direction onto each axis (normalized by scale)
 	// o_i = (O · n_i) / s_i,  d_i = (D · n_i) / s_i
