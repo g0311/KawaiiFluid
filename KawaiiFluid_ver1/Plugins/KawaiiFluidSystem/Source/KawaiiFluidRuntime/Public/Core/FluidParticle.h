@@ -69,12 +69,12 @@ struct KAWAIIFLUIDRUNTIME_API FFluidParticle
 	TArray<int32> NeighborIndices;
 
 	//========================================
-	// Slime-specific fields
+	// Source Identification
 	//========================================
 
-	// 클러스터 ID (슬라임 분리/합체용)
-	UPROPERTY(BlueprintReadOnly, Category = "Particle|Slime")
-	int32 ClusterID;
+	// 소스 ID (PresetIndex | ComponentIndex << 16)
+	UPROPERTY(BlueprintReadOnly, Category = "Particle")
+	int32 SourceID;
 
 	// Shape Matching용 초기 오프셋 (중심으로부터의 상대 위치)
 	FVector RestOffset;
@@ -110,7 +110,7 @@ struct KAWAIIFLUIDRUNTIME_API FFluidParticle
 		, bJustDetached(false)
 		, bNearGround(false)
 		, ParticleID(-1)
-		, ClusterID(0)
+		, SourceID(-1)
 		, RestOffset(FVector::ZeroVector)
 		, bIsSurfaceParticle(false)
 		, SurfaceNormal(FVector::ZeroVector)
@@ -134,7 +134,7 @@ struct KAWAIIFLUIDRUNTIME_API FFluidParticle
 		, bJustDetached(false)
 		, bNearGround(false)
 		, ParticleID(InID)
-		, ClusterID(0)
+		, SourceID(-1)
 		, RestOffset(FVector::ZeroVector)
 		, bIsSurfaceParticle(false)
 		, SurfaceNormal(FVector::ZeroVector)

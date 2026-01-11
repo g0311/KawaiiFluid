@@ -1270,10 +1270,17 @@ void UKawaiiFluidSimulationContext::HandleWorldCollision_Sweep(
 							}
 						}
 
+						// SourceID 필터링: Params.SourceID가 설정되어 있으면 일치하는 파티클만 콜백
+						if (Params.SourceID >= 0 && Particle.SourceID != Params.SourceID)
+						{
+							bCanEmitEvent = false;
+						}
+
 						if (bCanEmitEvent)
 						{
 							FKawaiiFluidCollisionEvent Event(
 								Particle.ParticleID,
+								Particle.SourceID,
 								HitResult.GetActor(),
 								HitResult.Location,
 								HitResult.ImpactNormal,
@@ -1644,10 +1651,17 @@ void UKawaiiFluidSimulationContext::HandleWorldCollision_SDF(
 							}
 						}
 
+						// SourceID 필터링: Params.SourceID가 설정되어 있으면 일치하는 파티클만 콜백
+						if (Params.SourceID >= 0 && Particle.SourceID != Params.SourceID)
+						{
+							bCanEmitEvent = false;
+						}
+
 						if (bCanEmitEvent)
 						{
 							FKawaiiFluidCollisionEvent Event(
 								Particle.ParticleID,
+								Particle.SourceID,
 								HitActor,
 								BestClosestPoint,
 								BestNormal,
@@ -1828,7 +1842,7 @@ void UKawaiiFluidSimulationContext::ApplyShapeMatchingConstraint(
 	TMap<int32, TArray<int32>> ClusterParticleMap;
 	for (int32 i = 0; i < Particles.Num(); ++i)
 	{
-		ClusterParticleMap.FindOrAdd(Particles[i].ClusterID).Add(i);
+		ClusterParticleMap.FindOrAdd(Particles[i].SourceID).Add(i);
 	}
 
 	// Apply shape matching per cluster

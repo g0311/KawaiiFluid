@@ -8,14 +8,24 @@
 
 //=============================================================================
 // Spawn Request Structure (must match FGPUSpawnRequest in C++)
+// 48 bytes total for source identification support
 //=============================================================================
 
 struct FSpawnRequest
 {
+	// Row 1: 16 bytes
 	float3 Position;      // 12 bytes - Spawn position
 	float Radius;         // 4 bytes  - Initial particle radius (or 0 for default)
+
+	// Row 2: 16 bytes
 	float3 Velocity;      // 12 bytes - Initial velocity
-	float Mass;           // 4 bytes  - Particle mass (total: 32)
+	float Mass;           // 4 bytes  - Particle mass
+
+	// Row 3: 16 bytes (NEW - Source Identification)
+	int SourceID;         // 4 bytes  - Source identification (PresetIndex | ComponentIndex << 16)
+	int ActorID;          // 4 bytes  - Reserved for actor unique ID
+	int Reserved1;        // 4 bytes  - Reserved for future use
+	int Reserved2;        // 4 bytes  - Reserved for future use
 };
 
 //=============================================================================
@@ -88,7 +98,7 @@ void SpawnParticlesCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	// Set IDs
 	newParticle.ParticleID = NextParticleID + (int)requestIdx;
-	newParticle.ClusterID = 0; // Will be assigned later if needed
+	newParticle.SourceID = request.SourceID; // Propagate source identification from spawn request
 
 	// Initialize flags (no special state)
 	newParticle.Flags = GPU_PARTICLE_FLAG_NONE;
@@ -177,7 +187,7 @@ void SpawnParticlesBatchCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	newParticle.Density = 0.0f;
 	newParticle.Lambda = 0.0f;
 	newParticle.ParticleID = NextParticleID + (int)totalIdx;
-	newParticle.ClusterID = 0;
+	newParticle.SourceID = request.SourceID; // Propagate source identification from spawn request
 	newParticle.Flags = GPU_PARTICLE_FLAG_NONE;
 	newParticle.NeighborCount = 0;
 

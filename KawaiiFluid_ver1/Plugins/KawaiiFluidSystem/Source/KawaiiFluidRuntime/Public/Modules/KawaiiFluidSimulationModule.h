@@ -468,6 +468,11 @@ public:
 	/** 충돌 이벤트 콜백 가져오기 */
 	const FOnModuleCollisionEvent& GetCollisionEventCallback() const { return OnCollisionEventCallback; }
 
+	/** GPU 충돌 피드백을 처리하고 콜백 호출 (GPU 모드 전용)
+	 * SourceID로 필터링하여 자신의 파티클 충돌만 콜백
+	 */
+	void ProcessGPUCollisionFeedback();
+
 	//========================================
 	// Preset (내부 캐시 - Component에서 설정)
 	//========================================
@@ -667,6 +672,16 @@ public:
 	/** Set the simulation context reference (called by SimulatorSubsystem on registration) */
 	void SetSimulationContext(UKawaiiFluidSimulationContext* InContext) { CachedSimulationContext = InContext; }
 
+	//========================================
+	// Source Identification
+	//========================================
+
+	/** Set source ID for spawned particles (Component's unique ID) */
+	void SetSourceID(int32 InSourceID);
+
+	/** Get cached source ID */
+	int32 GetSourceID() const { return CachedSourceID; }
+
 private:
 	/** Cached GPU simulator pointer (owned by SimulationContext) */
 	FGPUFluidSimulator* CachedGPUSimulator = nullptr;
@@ -676,4 +691,7 @@ private:
 
 	/** Cached simulation context pointer (owned by SimulatorSubsystem) */
 	UKawaiiFluidSimulationContext* CachedSimulationContext = nullptr;
+
+	/** Cached source ID for spawned particles (Component's unique ID, -1 = invalid) */
+	int32 CachedSourceID = -1;
 };

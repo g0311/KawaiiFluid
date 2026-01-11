@@ -75,11 +75,13 @@ int MaxColliderCount;
  * @param normal - Collision surface normal
  * @param penetration - Penetration depth (cm)
  * @param velocity - Particle velocity (for drag force calculation)
- * @param ownerID - Unique ID of collider owner (for filtering by actor)
+ * @param colliderOwnerID - Unique ID of collider owner (for filtering by actor)
+ * @param particleSourceID - Particle's SourceID (PresetIndex | ComponentIndex << 16)
  * @param boneIndex - Bone index for per-bone force calculation (-1 = no bone)
  */
 void RecordCollisionFeedback(int particleIdx, int colliderIdx, int colliderType,
-                             float density, float3 normal, float penetration, float3 velocity, int ownerID, int boneIndex)
+                             float density, float3 normal, float penetration, float3 velocity,
+                             int colliderOwnerID, int particleSourceID,  int boneIndex)
 {
 	// 콜라이더별 충돌 카운트 증가 (항상 실행)
 	if (colliderIdx >= 0 && colliderIdx < MaxColliderCount)
@@ -108,11 +110,11 @@ void RecordCollisionFeedback(int particleIdx, int colliderIdx, int colliderType,
 		feedback.ImpactNormal = normal;
 		feedback.Penetration = penetration;
 		feedback.ParticleVelocity = velocity;
-		feedback.OwnerID = ownerID;
+		feedback.ColliderOwnerID = colliderOwnerID;
+		feedback.ParticleSourceID = particleSourceID;
+		feedback.ParticleActorID = 0;  // Reserved for future use
 		feedback.BoneIndex = boneIndex;
 		feedback.Padding1 = 0;
-		feedback.Padding2 = 0;
-		feedback.Padding3 = 0;
 		CollisionFeedback[feedbackIdx] = feedback;
 	}
 }
@@ -158,8 +160,8 @@ void PrimitiveCollisionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			originalPos = pos;  // Update for subsequent collisions
 			bCollided = true;
 
-			// Record feedback for particle -> player interaction (includes velocity for drag calculation, bone index for per-bone force)
-			RecordCollisionFeedback(idx, si, COLLIDER_TYPE_SPHERE, particle.Density, normal, penetration, particle.Velocity, sphere.OwnerID, sphere.BoneIndex);
+			// Record feedback for particle -> player interaction (includes velocity for drag calculation)
+			RecordCollisionFeedback(idx, si, COLLIDER_TYPE_SPHERE, particle.Density, normal, penetration, particle.Velocity, sphere.OwnerID, particle.SourceID,sphere.BoneIndex);
 		}
 	}
 
@@ -178,8 +180,8 @@ void PrimitiveCollisionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			originalPos = pos;
 			bCollided = true;
 
-			// Record feedback for particle -> player interaction (includes velocity for drag calculation, bone index for per-bone force)
-			RecordCollisionFeedback(idx, SphereCount + ci, COLLIDER_TYPE_CAPSULE, particle.Density, normal, penetration, particle.Velocity, capsule.OwnerID, capsule.BoneIndex);
+			// Record feedback for particle -> player interaction (includes velocity for drag calculation)
+			RecordCollisionFeedback(idx, SphereCount + ci, COLLIDER_TYPE_CAPSULE, particle.Density, normal, penetration, particle.Velocity, capsule.OwnerID, particle.SourceID,  capsule.BoneIndex);
 		}
 	}
 
@@ -204,8 +206,8 @@ void PrimitiveCollisionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 				particle.Flags = SetFlag(particle.Flags, GPU_PARTICLE_FLAG_NEAR_GROUND);
 			}
 
-			// Record feedback for particle -> player interaction (includes velocity for drag calculation, bone index for per-bone force)
-			RecordCollisionFeedback(idx, SphereCount + CapsuleCount + bi, COLLIDER_TYPE_BOX, particle.Density, normal, penetration, particle.Velocity, box.OwnerID, box.BoneIndex);
+			// Record feedback for particle -> player interaction (includes velocity for drag calculation)
+			RecordCollisionFeedback(idx, SphereCount + CapsuleCount + bi, COLLIDER_TYPE_BOX, particle.Density, normal, penetration, particle.Velocity, box.OwnerID, particle.SourceID, box.BoneIndex);
 		}
 	}
 
@@ -251,8 +253,8 @@ void PrimitiveCollisionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 				particle.Flags = SetFlag(particle.Flags, GPU_PARTICLE_FLAG_NEAR_GROUND);
 			}
 
-			// Record feedback for particle -> player interaction (includes velocity for drag calculation, bone index for per-bone force)
-			RecordCollisionFeedback(idx, SphereCount + CapsuleCount + BoxCount + cxi, COLLIDER_TYPE_CONVEX, particle.Density, normal, penetration, particle.Velocity, convex.OwnerID, convex.BoneIndex);
+			// Record feedback for particle -> player interaction (includes velocity for drag calculation)
+			RecordCollisionFeedback(idx, SphereCount + CapsuleCount + BoxCount + cxi, COLLIDER_TYPE_CONVEX, particle.Density, normal, penetration, particle.Velocity, convex.OwnerID, particle.SourceID, convex.BoneIndex);
 		}
 	}
 

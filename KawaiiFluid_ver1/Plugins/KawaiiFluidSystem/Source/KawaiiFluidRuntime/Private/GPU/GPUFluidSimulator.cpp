@@ -241,7 +241,7 @@ FGPUFluidParticle FGPUFluidSimulator::ConvertToGPU(const FFluidParticle& CPUPart
 	GPUParticle.Velocity = FVector3f(CPUParticle.Velocity);
 	GPUParticle.Lambda = CPUParticle.Lambda;
 	GPUParticle.ParticleID = CPUParticle.ParticleID;
-	GPUParticle.ClusterID = CPUParticle.ClusterID;
+	GPUParticle.SourceID = CPUParticle.SourceID;
 
 	// Pack flags
 	uint32 Flags = 0;
@@ -496,7 +496,7 @@ bool FGPUFluidSimulator::GetAllGPUParticles(TArray<FFluidParticle>& OutParticles
 		OutParticle.Density = FMath::IsFinite(GPUParticle.Density) ? GPUParticle.Density : 0.0f;
 		OutParticle.Lambda = FMath::IsFinite(GPUParticle.Lambda) ? GPUParticle.Lambda : 0.0f;
 		OutParticle.ParticleID = GPUParticle.ParticleID;
-		OutParticle.ClusterID = GPUParticle.ClusterID;
+		OutParticle.SourceID = GPUParticle.SourceID;
 
 		// Unpack flags
 		OutParticle.bIsAttached = (GPUParticle.Flags & EGPUParticleFlags::IsAttached) != 0;

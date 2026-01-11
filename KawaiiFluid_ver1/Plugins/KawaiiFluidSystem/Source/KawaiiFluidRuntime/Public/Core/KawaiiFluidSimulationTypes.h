@@ -31,14 +31,15 @@ enum class EWorldCollisionMethod : uint8
 struct FKawaiiFluidCollisionEvent
 {
 	int32 ParticleIndex;
+	int32 SourceID;  // Source Component ID (for filtering)
 	TWeakObjectPtr<AActor> HitActor;
 	FVector HitLocation;
 	FVector HitNormal;
 	float HitSpeed;
 
-	FKawaiiFluidCollisionEvent() = default;
-	FKawaiiFluidCollisionEvent(int32 InIndex, AActor* InActor, const FVector& InLocation, const FVector& InNormal, float InSpeed)
-		: ParticleIndex(InIndex), HitActor(InActor), HitLocation(InLocation), HitNormal(InNormal), HitSpeed(InSpeed) {}
+	FKawaiiFluidCollisionEvent() : ParticleIndex(0), SourceID(-1), HitSpeed(0.0f) {}
+	FKawaiiFluidCollisionEvent(int32 InIndex, int32 InSourceID, AActor* InActor, const FVector& InLocation, const FVector& InNormal, float InSpeed)
+		: ParticleIndex(InIndex), SourceID(InSourceID), HitActor(InActor), HitLocation(InLocation), HitNormal(InNormal), HitSpeed(InSpeed) {}
 };
 
 /** Collision event callback signature */
@@ -145,6 +146,9 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidSimulationParams
 
 	/** Collision event callback (non-UPROPERTY, set by component) */
 	FOnFluidCollisionEvent OnCollisionEvent;
+
+	/** Source ID for filtering collision events (only events from this source trigger callback) */
+	int32 SourceID = -1;
 
 	//========================================
 	// Shape Matching (Slime)

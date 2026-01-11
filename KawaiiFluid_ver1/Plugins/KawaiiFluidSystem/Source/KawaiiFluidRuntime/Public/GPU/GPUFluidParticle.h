@@ -23,7 +23,7 @@ struct FGPUFluidParticle
 	float Lambda;                 // 4 bytes  - Lagrange multiplier for density constraint (total: 48)
 
 	int32 ParticleID;             // 4 bytes  - Unique particle ID
-	int32 ClusterID;              // 4 bytes  - Cluster ID for slime grouping
+	int32 SourceID;               // 4 bytes  - Source Component ID (-1 = invalid)
 	uint32 Flags;                 // 4 bytes  - Bitfield flags (see EGPUParticleFlags)
 	uint32 NeighborCount;         // 4 bytes  - Number of neighbors (for stats) (total: 64)
 
@@ -35,7 +35,7 @@ struct FGPUFluidParticle
 		, Velocity(FVector3f::ZeroVector)
 		, Lambda(0.0f)
 		, ParticleID(0)
-		, ClusterID(0)
+		, SourceID(-1)  // InvalidSourceID = 0xFFFFFFFF
 		, Flags(0)
 		, NeighborCount(0)
 	{
@@ -57,6 +57,22 @@ namespace EGPUParticleFlags
 	constexpr uint32 IsCore = 1 << 2;            // Particle is a core particle (slime)
 	constexpr uint32 JustDetached = 1 << 3;      // Particle just detached this frame
 	constexpr uint32 NearGround = 1 << 4;        // Particle is near the ground
+	constexpr uint32 HasCollided = 1 << 5;       // Particle collided this frame
+}
+
+/**
+ * GPU Particle Source Identification
+ * SourceID = Component's unique ID (int32), -1 = invalid
+ */
+namespace EGPUParticleSource
+{
+	constexpr int32 InvalidSourceID = -1;
+}
+
+/** Check if SourceID is valid */
+FORCEINLINE bool HasValidSource(int32 SourceID)
+{
+	return SourceID != EGPUParticleSource::InvalidSourceID;
 }
 
 /**
@@ -548,18 +564,25 @@ static_assert(sizeof(FGPUAdhesionParams) == 56, "FGPUAdhesionParams must be 56 b
  */
 struct FGPUCollisionFeedback
 {
+	// Row 1 (16 bytes)
 	int32 ParticleIndex;          // 4 bytes - Index of the colliding particle
 	int32 ColliderIndex;          // 4 bytes - Index of the collider (in combined primitive list)
 	int32 ColliderType;           // 4 bytes - 0=Sphere, 1=Capsule, 2=Box, 3=Convex
-	float Density;                // 4 bytes - Particle density at collision time (total: 16)
+	float Density;                // 4 bytes - Particle density at collision time
+
+	// Row 2 (16 bytes)
 	FVector3f ImpactNormal;       // 12 bytes - Collision surface normal
-	float Penetration;            // 4 bytes - Penetration depth (cm) (total: 32)
+	float Penetration;            // 4 bytes - Penetration depth (cm)
+
+	// Row 3 (16 bytes)
 	FVector3f ParticleVelocity;   // 12 bytes - Particle velocity at collision (for drag calculation)
-	int32 OwnerID;                // 4 bytes - Unique ID of collider owner (for filtering by actor) (total: 48)
+	int32 ColliderOwnerID;        // 4 bytes - Unique ID of collider owner (for filtering by actor)
+
+	// Row 4 (16 bytes) - NEW: Particle source identification
+	int32 ParticleSourceID;       // 4 bytes - Particle SourceID (ComponentIndex)
+	int32 ParticleActorID;        // 4 bytes - Particle source actor ID (optional)
 	int32 BoneIndex;              // 4 bytes - Bone index for per-bone force calculation (-1 = no bone)
 	int32 Padding1;               // 4 bytes - Alignment padding
-	int32 Padding2;               // 4 bytes - Alignment padding
-	int32 Padding3;               // 4 bytes - Alignment padding (total: 64)
 
 	FGPUCollisionFeedback()
 		: ParticleIndex(0)
@@ -569,13 +592,19 @@ struct FGPUCollisionFeedback
 		, ImpactNormal(FVector3f::UpVector)
 		, Penetration(0.0f)
 		, ParticleVelocity(FVector3f::ZeroVector)
-		, OwnerID(0)
+		, ColliderOwnerID(0)
+		, ParticleSourceID(EGPUParticleSource::InvalidSourceID)
+		, ParticleActorID(0)
 		, BoneIndex(-1)
 		, Padding1(0)
-		, Padding2(0)
-		, Padding3(0)
 	{
 	}
+
+	/** Check if particle source is valid */
+	bool HasValidParticleSource() const { return ::HasValidSource(ParticleSourceID); }
+
+	/** Get source Component ID */
+	int32 GetSourceComponentID() const { return ParticleSourceID; }
 };
 static_assert(sizeof(FGPUCollisionFeedback) == 64, "FGPUCollisionFeedback must be 64 bytes for GPU alignment");
 
@@ -620,26 +649,68 @@ struct FGPUCollisionPrimitives
 //=============================================================================
 
 /**
- * GPU Spawn Request (32 bytes)
+ * GPU Spawn Request (48 bytes)
  * CPU sends position/velocity, GPU creates particles atomically
  * This eliminates race conditions between game thread and render thread
+ *
+ * Memory Layout:
+ *   [0-15]   Position, Radius
+ *   [16-31]  Velocity, Mass
+ *   [32-47]  SourceID, Reserved (NEW)
  */
 struct FGPUSpawnRequest
 {
+	// Row 1 (16 bytes)
 	FVector3f Position;       // 12 bytes - Spawn position
 	float Radius;             // 4 bytes  - Initial particle radius (or 0 for default)
-	FVector3f Velocity;       // 12 bytes - Initial velocity
-	float Mass;               // 4 bytes  - Particle mass (total: 32)
 
-	FGPUSpawnRequest(): Position(FVector3f::ZeroVector), Radius(0.0f), Velocity(FVector3f::ZeroVector), Mass(1.0f)
+	// Row 2 (16 bytes)
+	FVector3f Velocity;       // 12 bytes - Initial velocity
+	float Mass;               // 4 bytes  - Particle mass
+
+	// Row 3 (16 bytes) - NEW: Source identification
+	int32 SourceID;           // 4 bytes  - Source identification (PresetIndex | ComponentIndex << 16)
+	int32 ActorID;            // 4 bytes  - Source actor ID (optional)
+	int32 Reserved1;          // 4 bytes
+	int32 Reserved2;          // 4 bytes
+
+	FGPUSpawnRequest()
+		: Position(FVector3f::ZeroVector)
+		, Radius(0.0f)
+		, Velocity(FVector3f::ZeroVector)
+		, Mass(1.0f)
+		, SourceID(EGPUParticleSource::InvalidSourceID)
+		, ActorID(0)
+		, Reserved1(0)
+		, Reserved2(0)
 	{
 	}
 
-	FGPUSpawnRequest(const FVector3f& InPosition, const FVector3f& InVelocity, float InMass = 1.0f) : Position(InPosition), Radius(0.0f), Velocity(InVelocity), Mass(InMass)
+	FGPUSpawnRequest(const FVector3f& InPosition, const FVector3f& InVelocity, float InMass = 1.0f)
+		: Position(InPosition)
+		, Radius(0.0f)
+		, Velocity(InVelocity)
+		, Mass(InMass)
+		, SourceID(EGPUParticleSource::InvalidSourceID)
+		, ActorID(0)
+		, Reserved1(0)
+		, Reserved2(0)
+	{
+	}
+
+	FGPUSpawnRequest(const FVector3f& InPosition, const FVector3f& InVelocity, int32 InSourceID, float InMass = 1.0f)
+		: Position(InPosition)
+		, Radius(0.0f)
+		, Velocity(InVelocity)
+		, Mass(InMass)
+		, SourceID(InSourceID)
+		, ActorID(0)
+		, Reserved1(0)
+		, Reserved2(0)
 	{
 	}
 };
-static_assert(sizeof(FGPUSpawnRequest) == 32, "FGPUSpawnRequest must be 32 bytes");
+static_assert(sizeof(FGPUSpawnRequest) == 48, "FGPUSpawnRequest must be 48 bytes");
 
 /**
  * GPU Spawn Parameters

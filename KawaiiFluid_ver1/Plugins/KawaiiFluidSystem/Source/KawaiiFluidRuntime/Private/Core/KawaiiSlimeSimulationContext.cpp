@@ -128,17 +128,17 @@ void UKawaiiSlimeSimulationContext::ApplyNucleusAttraction(
 	// TODO: Get these from Params or Preset (currently using defaults)
 	const float NucleusAttractionStrength = 15.0f;
 	const float AttractionFalloff = 0.3f;
-	const int32 MainClusterID = 0;
+	const int32 MainSourceID = 0;
 
 	// Calculate cluster center
-	FVector Center = CalculateClusterCenter(Particles, MainClusterID);
+	FVector Center = CalculateClusterCenter(Particles, MainSourceID);
 	if (Center.IsZero())
 	{
 		return;
 	}
 
 	// Calculate max distance for falloff
-	float MaxDistance = CalculateMaxDistanceFromCenter(Particles, Center, MainClusterID);
+	float MaxDistance = CalculateMaxDistanceFromCenter(Particles, Center, MainSourceID);
 	if (MaxDistance < KINDA_SMALL_NUMBER)
 	{
 		return;
@@ -147,7 +147,7 @@ void UKawaiiSlimeSimulationContext::ApplyNucleusAttraction(
 	// Apply attraction force to each particle
 	for (FFluidParticle& P : Particles)
 	{
-		if (P.ClusterID != MainClusterID)
+		if (P.SourceID != MainSourceID)
 		{
 			continue;
 		}
@@ -251,7 +251,7 @@ void UKawaiiSlimeSimulationContext::ApplyAntiGravity(
 {
 	// TODO: Get anti-gravity strength from Params
 	const float AntiGravityStrength = 0.5f;
-	const int32 MainClusterID = 0;
+	const int32 MainSourceID = 0;
 
 	if (AntiGravityStrength <= 0.0f || !Preset)
 	{
@@ -263,7 +263,7 @@ void UKawaiiSlimeSimulationContext::ApplyAntiGravity(
 
 	for (FFluidParticle& P : Particles)
 	{
-		if (P.ClusterID != MainClusterID)
+		if (P.SourceID != MainSourceID)
 		{
 			continue;
 		}
@@ -389,14 +389,14 @@ void UKawaiiSlimeSimulationContext::SolveDensityConstraints(
 
 FVector UKawaiiSlimeSimulationContext::CalculateClusterCenter(
 	const TArray<FFluidParticle>& Particles,
-	int32 ClusterID) const
+	int32 SourceID) const
 {
 	FVector Center = FVector::ZeroVector;
 	float TotalMass = 0.0f;
 
 	for (const FFluidParticle& P : Particles)
 	{
-		if (P.ClusterID == ClusterID)
+		if (P.SourceID == SourceID)
 		{
 			Center += P.PredictedPosition * P.Mass;
 			TotalMass += P.Mass;
@@ -414,13 +414,13 @@ FVector UKawaiiSlimeSimulationContext::CalculateClusterCenter(
 float UKawaiiSlimeSimulationContext::CalculateMaxDistanceFromCenter(
 	const TArray<FFluidParticle>& Particles,
 	const FVector& Center,
-	int32 ClusterID) const
+	int32 SourceID) const
 {
 	float MaxDist = 0.0f;
 
 	for (const FFluidParticle& P : Particles)
 	{
-		if (P.ClusterID == ClusterID)
+		if (P.SourceID == SourceID)
 		{
 			float Dist = FVector::Dist(P.PredictedPosition, Center);
 			MaxDist = FMath::Max(MaxDist, Dist);

@@ -119,7 +119,7 @@ protected:
 	 */
 	FVector CalculateClusterCenter(
 		const TArray<FFluidParticle>& Particles,
-		int32 ClusterID
+		int32 SourceID
 	) const;
 
 	/**
@@ -128,6 +128,6 @@ protected:
 	float CalculateMaxDistanceFromCenter(
 		const TArray<FFluidParticle>& Particles,
 		const FVector& Center,
-		int32 ClusterID
+		int32 SourceID
 	) const;
 };

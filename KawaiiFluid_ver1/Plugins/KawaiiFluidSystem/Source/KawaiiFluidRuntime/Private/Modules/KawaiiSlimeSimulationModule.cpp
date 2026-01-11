@@ -234,7 +234,7 @@ void UKawaiiSlimeSimulationModule::UpdateCoreParticles()
 
 	for (FFluidParticle& P : ParticleArray)
 	{
-		if (P.ClusterID != MainClusterID)
+		if (P.SourceID != MainSourceID)
 		{
 			P.bIsCoreParticle = false;
 			P.DistanceFromCoreRatio = 1.0f;
@@ -269,7 +269,7 @@ void UKawaiiSlimeSimulationModule::ApplyNucleusAttraction(float DeltaTime)
 	for (FFluidParticle& P : ParticleArray)
 	{
 		// Only affect main cluster
-		if (P.ClusterID != MainClusterID)
+		if (P.SourceID != MainSourceID)
 		{
 			continue;
 		}
@@ -320,7 +320,7 @@ void UKawaiiSlimeSimulationModule::ApplyAntiGravity(float DeltaTime)
 
 	for (FFluidParticle& P : ParticleArray)
 	{
-		if (P.ClusterID != MainClusterID)
+		if (P.SourceID != MainSourceID)
 		{
 			continue;
 		}
@@ -349,7 +349,7 @@ void UKawaiiSlimeSimulationModule::UpdateGroundedState()
 
 	for (const FFluidParticle& P : ParticleArray)
 	{
-		if (P.ClusterID == MainClusterID)
+		if (P.SourceID == MainSourceID)
 		{
 			MainClusterCount++;
 			if (P.bNearGround)
@@ -439,7 +439,7 @@ void UKawaiiSlimeSimulationModule::ApplyMovementInput(FVector Input)
 
 	for (FFluidParticle& P : ParticleArray)
 	{
-		if (P.ClusterID != MainClusterID)
+		if (P.SourceID != MainSourceID)
 		{
 			continue;
 		}
@@ -474,7 +474,7 @@ void UKawaiiSlimeSimulationModule::ApplyJumpImpulse()
 
 	for (FFluidParticle& P : ParticleArray)
 	{
-		if (P.ClusterID != MainClusterID)
+		if (P.SourceID != MainSourceID)
 		{
 			continue;
 		}
@@ -549,42 +549,42 @@ void UKawaiiSlimeSimulationModule::UpdateClusters()
 	}
 
 	// Assign cluster IDs
-	TMap<int32, int32> RootToClusterID;
-	int32 NextClusterID = 0;
+	TMap<int32, int32> RootToSourceID;
+	int32 NextSourceID = 0;
 
 	for (int32 i = 0; i < NumParticles; ++i)
 	{
 		int32 Root = FindRoot(Parent, i);
 
-		if (!RootToClusterID.Contains(Root))
+		if (!RootToSourceID.Contains(Root))
 		{
-			RootToClusterID.Add(Root, NextClusterID++);
+			RootToSourceID.Add(Root, NextSourceID++);
 		}
 
-		ParticleArray[i].ClusterID = RootToClusterID[Root];
+		ParticleArray[i].SourceID = RootToSourceID[Root];
 	}
 
-	ClusterCount = NextClusterID;
+	ClusterCount = NextSourceID;
 
 	// Find main cluster (largest one)
 	TMap<int32, int32> ClusterSizes;
 	for (const FFluidParticle& P : ParticleArray)
 	{
-		ClusterSizes.FindOrAdd(P.ClusterID)++;
+		ClusterSizes.FindOrAdd(P.SourceID)++;
 	}
 
-	int32 LargestClusterID = 0;
+	int32 LargestSourceID = 0;
 	int32 LargestSize = 0;
 	for (const auto& SizePair : ClusterSizes)
 	{
 		if (SizePair.Value > LargestSize)
 		{
 			LargestSize = SizePair.Value;
-			LargestClusterID = SizePair.Key;
+			LargestSourceID = SizePair.Key;
 		}
 	}
 
-	MainClusterID = LargestClusterID;
+	MainSourceID = LargestSourceID;
 }
 
 int32 UKawaiiSlimeSimulationModule::FindRoot(TArray<int32>& Parent, int32 Index)
@@ -774,7 +774,7 @@ FVector UKawaiiSlimeSimulationModule::GetMainClusterCenter() const
 
 	for (const FFluidParticle& P : ParticleArray)
 	{
-		if (P.ClusterID == MainClusterID)
+		if (P.SourceID == MainSourceID)
 		{
 			Center += P.Position;
 			Count++;
@@ -796,7 +796,7 @@ int32 UKawaiiSlimeSimulationModule::GetMainClusterParticleCount() const
 	int32 Count = 0;
 	for (const FFluidParticle& P : ParticleArray)
 	{
-		if (P.ClusterID == MainClusterID)
+		if (P.SourceID == MainSourceID)
 		{
 			Count++;
 		}

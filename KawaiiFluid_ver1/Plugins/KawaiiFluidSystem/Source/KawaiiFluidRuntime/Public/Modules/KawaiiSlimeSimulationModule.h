@@ -125,7 +125,7 @@ public:
 
 	/** Main cluster ID (player controlled) */
 	UPROPERTY(BlueprintReadOnly, Category = "Slime|Cluster")
-	int32 MainClusterID = 0;
+	int32 MainSourceID = 0;
 
 	/** Number of clusters */
 	UPROPERTY(BlueprintReadOnly, Category = "Slime|Cluster")

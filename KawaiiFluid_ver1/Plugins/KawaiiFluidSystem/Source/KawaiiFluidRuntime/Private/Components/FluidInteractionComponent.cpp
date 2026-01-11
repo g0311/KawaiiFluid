@@ -514,8 +514,8 @@ void UFluidInteractionComponent::ProcessCollisionFeedback(float DeltaTime)
 			{
 				const FGPUCollisionFeedback& Feedback = AllFeedback[i];
 
-				// OwnerID 필터링: 이 액터의 콜라이더와 충돌한 피드백만 힘 계산에 사용
-				if (Feedback.OwnerID != 0 && Feedback.OwnerID != MyOwnerID)
+				// ColliderOwnerID 필터링: 이 액터의 콜라이더와 충돌한 피드백만 힘 계산에 사용
+				if (Feedback.ColliderOwnerID != 0 && Feedback.ColliderOwnerID != MyOwnerID)
 				{
 					continue;
 				}
@@ -752,7 +752,7 @@ void UFluidInteractionComponent::ProcessPerBoneForces(float DeltaTime, const TAr
 		const FGPUCollisionFeedback& Feedback = AllFeedback[i];
 
 		// OwnerID 필터링
-		if (Feedback.OwnerID != 0 && Feedback.OwnerID != MyOwnerID)
+		if (Feedback.ColliderOwnerID != 0 && Feedback.ColliderOwnerID != MyOwnerID)
 		{
 			continue;
 		}
@@ -850,7 +850,7 @@ void UFluidInteractionComponent::ProcessPerBoneForces(float DeltaTime, const TAr
 		{
 			const FGPUCollisionFeedback& Feedback = AllFeedback[i];
 
-			if (Feedback.OwnerID == 0 || Feedback.OwnerID == MyOwnerID)
+			if (Feedback.ColliderOwnerID == 0 || Feedback.ColliderOwnerID == MyOwnerID)
 			{
 				MatchedOwner++;
 				if (Feedback.BoneIndex >= 0)
@@ -868,7 +868,7 @@ void UFluidInteractionComponent::ProcessPerBoneForces(float DeltaTime, const TAr
 		TSet<int32> UniqueOwnerIDs;
 		for (int32 i = 0; i < FMath::Min(FeedbackCount, 100); ++i)
 		{
-			UniqueOwnerIDs.Add(AllFeedback[i].OwnerID);
+			UniqueOwnerIDs.Add(AllFeedback[i].ColliderOwnerID);
 		}
 		FString OwnerIDSamples;
 		for (int32 ID : UniqueOwnerIDs)

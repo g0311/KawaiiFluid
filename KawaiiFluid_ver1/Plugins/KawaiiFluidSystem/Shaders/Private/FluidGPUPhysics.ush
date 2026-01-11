@@ -21,10 +21,21 @@ struct FGPUFluidParticle
 	float Lambda;              // 4 bytes
 
 	int ParticleID;            // 4 bytes
-	int ClusterID;             // 4 bytes
+	int SourceID;              // 4 bytes - Source Component ID (-1 = invalid)
 	uint Flags;                // 4 bytes
 	uint NeighborCount;        // 4 bytes - Number of neighbors (for stats)
 };
+
+//=============================================================================
+// Source ID Helper (SourceID = Component's unique ID, -1 = invalid)
+//=============================================================================
+
+#define SOURCE_INVALID_SOURCE_ID -1
+
+bool HasValidSource(int sourceID)
+{
+	return sourceID != SOURCE_INVALID_SOURCE_ID;
+}
 
 //=============================================================================
 // GPU Particle Flags
@@ -348,23 +359,31 @@ uint ClearFlag(uint flags, uint flag)
 //=============================================================================
 // GPU Collision Feedback Structure (must match FGPUCollisionFeedback in C++)
 // Used for particle -> player interaction readback
-// 64 bytes total for drag-based force calculation + per-bone tracking
+// 64 bytes total for drag-based force calculation
 //=============================================================================
 
 struct FGPUCollisionFeedback
 {
+	// Row 1: 16 bytes
 	int ParticleIndex;       // 4 bytes - Index of the colliding particle
 	int ColliderIndex;       // 4 bytes - Index of the collider
 	int ColliderType;        // 4 bytes - 0=Sphere, 1=Capsule, 2=Box, 3=Convex
-	float Density;           // 4 bytes - Particle density at collision time (total: 16)
+	float Density;           // 4 bytes - Particle density at collision time
+
+	// Row 2: 16 bytes
 	float3 ImpactNormal;     // 12 bytes - Collision surface normal
-	float Penetration;       // 4 bytes - Penetration depth (cm) (total: 32)
+	float Penetration;       // 4 bytes - Penetration depth (cm)
+
+	// Row 3: 16 bytes
 	float3 ParticleVelocity; // 12 bytes - Particle velocity (for drag calculation)
-	int OwnerID;             // 4 bytes - Unique ID of collider owner (total: 48)
+	int ColliderOwnerID;     // 4 bytes - Unique ID of collider owner (actor/component)
+
+	// Row 4: 16 bytes 
+	int ParticleSourceID;    // 4 bytes - Particle's SourceID (PresetIndex | ComponentIndex << 16)
+	int ParticleActorID;     // 4 bytes - Unique ID of particle's owner actor (reserved)
 	int BoneIndex;           // 4 bytes - Bone index for per-bone force calculation (-1 = no bone)
 	int Padding1;            // 4 bytes - Alignment padding
-	int Padding2;            // 4 bytes - Alignment padding
-	int Padding3;            // 4 bytes - Alignment padding (total: 64)
+
 };
 
 // Collision primitive type constants

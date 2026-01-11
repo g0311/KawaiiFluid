@@ -42,6 +42,9 @@ void UKawaiiFluidComponent::OnRegister()
 		// Module에 Preset 설정 후 초기화
 		SimulationModule->Initialize(Preset);
 
+		// SourceID 설정 (에디터 모드) - 충돌 피드백에서 파티클 소속 식별용
+		SimulationModule->SetSourceID(GetUniqueID());
+
 		// RenderingModule 초기화 (Preset 포함)
 		RenderingModule->Initialize(World, this, SimulationModule, Preset);
 
@@ -96,6 +99,9 @@ void UKawaiiFluidComponent::BeginPlay()
 		// Module에 Preset 설정 후 초기화
 		SimulationModule->SetPreset(Preset);
 		SimulationModule->Initialize(Preset);
+
+		// SourceID 설정 - 충돌 피드백에서 파티클 소속 식별용
+		SimulationModule->SetSourceID(GetUniqueID());
 
 		// 이벤트 콜백 항상 연결 (Module에서 bEnableCollisionEvents 체크)
 		SimulationModule->SetCollisionEventCallback(
@@ -206,6 +212,12 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 			SimulationModule->ContainmentFriction
 		);
 		SimulationModule->ResolveContainmentCollisions();
+	}
+
+	// GPU 충돌 피드백 처리 (GPU 모드에서 OnParticleHit 이벤트 발생)
+	if (bIsGameWorld && SimulationModule)
+	{
+		SimulationModule->ProcessGPUCollisionFeedback();
 	}
 
 	// Containment Wireframe 시각화

@@ -22,7 +22,7 @@ struct FGPUFluidParticle
 	float Lambda;              // 4 bytes
 
 	int ParticleID;            // 4 bytes
-	int ClusterID;             // 4 bytes
+	int SourceID;              // 4 bytes - Source identification (PresetIndex | ComponentIndex << 16)
 	uint Flags;                // 4 bytes
 	uint NeighborCount;        // 4 bytes
 };
@@ -593,10 +593,10 @@ void ApplyVelocityStretching(
 }
 
 //-----------------------------------------------------------------------------
-// Attached Particle Anisotropy
-// Flattens particle along surface normal (baduk stone effect)
-// Normal direction becomes the shortest axis
+// Attached Particle Anisotropy (DISABLED - SurfaceNormal not in struct)
+// TODO: Add SurfaceNormal to FGPUParticleAttachment if needed
 //-----------------------------------------------------------------------------
+/*
 void CalculateAttachedAnisotropy(
 	uint ParticleIndex,
 	out float3 Axis1, out float3 Axis2, out float3 Axis3,
@@ -648,6 +648,7 @@ void CalculateAttachedAnisotropy(
 		Scale3 /= VolumeNorm;
 	}
 }
+*/
 
 //-----------------------------------------------------------------------------
 // Main Compute Shader

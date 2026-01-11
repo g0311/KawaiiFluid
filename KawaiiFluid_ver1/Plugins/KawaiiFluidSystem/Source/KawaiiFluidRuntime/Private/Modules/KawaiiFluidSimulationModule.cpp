@@ -7,6 +7,7 @@
 #include "Components/KawaiiFluidComponent.h"
 #include "Data/KawaiiFluidPresetDataAsset.h"
 #include "GPU/GPUFluidSimulator.h"
+#include "GPU/GPUFluidParticle.h"  // For FGPUSpawnRequest
 
 UKawaiiFluidSimulationModule::UKawaiiFluidSimulationModule()
 {
@@ -343,9 +344,108 @@ FKawaiiFluidSimulationParams UKawaiiFluidSimulationModule::BuildSimulationParams
 		{
 			Params.OnCollisionEvent = OnCollisionEventCallback;
 		}
+
+		// SourceID 필터링용 (자기 Component에서 스폰한 파티클만 콜백)
+		Params.SourceID = CachedSourceID;
 	}
 
 	return Params;
+}
+
+void UKawaiiFluidSimulationModule::ProcessGPUCollisionFeedback()
+{
+	// GPU 모드가 아니거나 콜백이 없으면 스킵
+	if (!bGPUSimulationActive || !CachedGPUSimulator || !OnCollisionEventCallback.IsBound())
+	{
+		return;
+	}
+
+	// 충돌 이벤트가 비활성화되어 있으면 스킵
+	if (!bEnableCollisionEvents)
+	{
+		return;
+	}
+
+	// GPU에서 충돌 피드백 가져오기
+	TArray<FGPUCollisionFeedback> Feedbacks;
+	int32 FeedbackCount = 0;
+	CachedGPUSimulator->GetAllCollisionFeedback(Feedbacks, FeedbackCount);
+
+	if (FeedbackCount == 0)
+	{
+		return;
+	}
+
+	// 현재 시간 (쿨다운 체크용)
+	const float CurrentTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+
+	// Phase 1: ParallelFor로 유효한 피드백 필터링
+	struct FValidFeedback
+	{
+		int32 Index;
+		float HitSpeed;
+	};
+	TArray<FValidFeedback> ValidFeedbacks;
+	ValidFeedbacks.Reserve(FMath::Min(FeedbackCount, MaxEventsPerFrame));
+	FCriticalSection ValidFeedbackLock;
+
+	const int32 LocalSourceID = CachedSourceID;
+	const float LocalMinVelocity = MinVelocityForEvent;
+	const float LocalCooldown = EventCooldownPerParticle;
+
+	ParallelFor(FeedbackCount, [&](int32 i)
+	{
+		const FGPUCollisionFeedback& Feedback = Feedbacks[i];
+
+		// SourceID 필터링
+		if (LocalSourceID >= 0 && Feedback.ParticleSourceID != LocalSourceID)
+		{
+			return;
+		}
+
+		// 속도 계산 및 체크
+		const float HitSpeed = FVector3f(Feedback.ParticleVelocity).Length();
+		if (HitSpeed < LocalMinVelocity)
+		{
+			return;
+		}
+
+		// 유효한 피드백 수집 (thread-safe)
+		FScopeLock Lock(&ValidFeedbackLock);
+		if (ValidFeedbacks.Num() < MaxEventsPerFrame)
+		{
+			ValidFeedbacks.Add({ i, HitSpeed });
+		}
+	});
+
+	// Phase 2: 순차적으로 쿨다운 체크 및 콜백 호출 (game thread)
+	for (const FValidFeedback& Valid : ValidFeedbacks)
+	{
+		const FGPUCollisionFeedback& Feedback = Feedbacks[Valid.Index];
+		const int32 ParticleIndex = Feedback.ParticleIndex;
+
+		// 파티클별 쿨다운 체크
+		if (const float* LastTime = ParticleLastEventTime.Find(ParticleIndex))
+		{
+			if (CurrentTime - *LastTime < LocalCooldown)
+			{
+				continue;
+			}
+		}
+
+		// 쿨다운 업데이트
+		ParticleLastEventTime.Add(ParticleIndex, CurrentTime);
+
+		// 이벤트 생성 및 콜백 호출
+		FKawaiiFluidCollisionEvent Event;
+		Event.ParticleIndex = ParticleIndex;
+		Event.SourceID = Feedback.ParticleSourceID;
+		Event.HitLocation = FVector(Feedback.ImpactNormal * (-Feedback.Penetration));
+		Event.HitNormal = FVector(Feedback.ImpactNormal);
+		Event.HitSpeed = Valid.HitSpeed;
+
+		OnCollisionEventCallback.Execute(Event);
+	}
 }
 
 int32 UKawaiiFluidSimulationModule::SpawnParticle(FVector Position, FVector Velocity)
@@ -362,6 +462,7 @@ int32 UKawaiiFluidSimulationModule::SpawnParticle(FVector Position, FVector Velo
 		Request.Velocity = FVector3f(Velocity);
 		Request.Mass = Mass;
 		Request.Radius = Radius;
+		Request.SourceID = CachedSourceID;  // Propagate source identification
 
 		// Use batch API to preserve Radius value
 		TArray<FGPUSpawnRequest> Requests;
@@ -389,6 +490,7 @@ int32 UKawaiiFluidSimulationModule::SpawnParticle(FVector Position, FVector Velo
 	FFluidParticle NewParticle(Position, ParticleID);
 	NewParticle.Velocity = Velocity;
 	NewParticle.Mass = Mass;
+	NewParticle.SourceID = CachedSourceID;  // Propagate source identification
 	Particles.Add(NewParticle);
 	return ParticleID;
 }
@@ -414,6 +516,7 @@ void UKawaiiFluidSimulationModule::SpawnParticles(FVector Location, int32 Count,
 			Request.Velocity = FVector3f::ZeroVector;
 			Request.Mass = Mass;
 			Request.Radius = Radius;
+			Request.SourceID = CachedSourceID;  // Propagate source identification
 			SpawnRequests.Add(Request);
 			NextParticleID++;
 		}
@@ -493,6 +596,7 @@ int32 UKawaiiFluidSimulationModule::SpawnParticlesSphere(FVector Center, float R
 						Request.Velocity = FVector3f(WorldVelocity);
 						Request.Mass = Mass;
 						Request.Radius = ParticleRadius;
+						Request.SourceID = CachedSourceID;  // Propagate source identification
 						SpawnRequests.Add(Request);
 						NextParticleID++;
 						++SpawnedCount;
@@ -1278,4 +1382,14 @@ void UKawaiiFluidSimulationModule::ResolveContainmentCollisions()
 			P.Velocity = ContainmentRotation.RotateVector(LocalVel);
 		}
 	}
+}
+
+//========================================
+// Source Identification
+//========================================
+
+void UKawaiiFluidSimulationModule::SetSourceID(int32 InSourceID)
+{
+	CachedSourceID = InSourceID;
+	UE_LOG(LogTemp, Log, TEXT("SimulationModule::SetSourceID = %d"), CachedSourceID);
 }
