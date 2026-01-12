@@ -1789,6 +1789,16 @@ void FGPUFluidSimulator::SimulateSubstep_RDG(FRDGBuilder& GraphBuilder, const FG
 			AnisotropyParams.SmoothingRadius = Params.SmoothingRadius * 2.5f;
 			AnisotropyParams.CellSize = Params.CellSize;
 
+			// Morton-sorted spatial lookup (cache-friendly sequential access)
+			// When bUseZOrderSorting=true, ParticleBuffer is already sorted by Morton code
+			AnisotropyParams.bUseZOrderSorting = bUseZOrderSorting;
+			if (bUseZOrderSorting && CellStartSRVLocal && CellEndSRVLocal)
+			{
+				AnisotropyParams.CellStartSRV = CellStartSRVLocal;
+				AnisotropyParams.CellEndSRV = CellEndSRVLocal;
+				AnisotropyParams.MortonBoundsMin = FVector3f(Params.BoundsMin);
+			}
+
 			// Debug log for density-based anisotropy parameters
 			static int32 AnisotropyDebugCounter = 0;
 			if (++AnisotropyDebugCounter % 60 == 0)

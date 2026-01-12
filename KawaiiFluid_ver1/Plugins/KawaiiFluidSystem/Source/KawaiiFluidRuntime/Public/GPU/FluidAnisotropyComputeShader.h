@@ -23,8 +23,16 @@ struct KAWAIIFLUIDRUNTIME_API FAnisotropyComputeParams
 	// Input buffers
 	FRDGBufferSRVRef PhysicsParticlesSRV = nullptr;	// FGPUFluidParticle buffer
 	FRDGBufferSRVRef AttachmentsSRV = nullptr;		// FGPUParticleAttachment buffer (for surface normal)
+
+	// TODO(KHJ): Remove legacy hash-based lookup - bUseZOrderSorting is always true
+	// Legacy hash-based spatial lookup (random access)
 	FRDGBufferSRVRef CellCountsSRV = nullptr;		// Spatial hash cell counts
 	FRDGBufferSRVRef ParticleIndicesSRV = nullptr;	// Spatial hash particle indices
+
+	// Morton-sorted spatial lookup (sequential access, cache-friendly)
+	// When bUseZOrderSorting=true, PhysicsParticles buffer is already sorted by Morton code
+	FRDGBufferSRVRef CellStartSRV = nullptr;			// CellStart[cellID] = first particle index
+	FRDGBufferSRVRef CellEndSRV = nullptr;				// CellEnd[cellID] = last particle index
 
 	// Output buffers (float4: direction.xyz + scale.w)
 	FRDGBufferUAVRef OutAxis1UAV = nullptr;
@@ -47,6 +55,11 @@ struct KAWAIIFLUIDRUNTIME_API FAnisotropyComputeParams
 	float DensityWeight = 0.5f;
 	float SmoothingRadius = 10.0f;
 	float CellSize = 10.0f;
+
+	// TODO(KHJ): Remove bUseZOrderSorting - always true, legacy path is dead code
+	// Morton code params
+	bool bUseZOrderSorting = false;		// true = use Morton-sorted CellStart/End, false = legacy hash
+	FVector3f MortonBoundsMin = FVector3f::ZeroVector;	// Grid origin for Morton code calculation
 
 	// Attached particle anisotropy params
 	float AttachedFlattenScale = 0.3f;	// How much to flatten attached particles (0.3 = 30% of original height)
@@ -76,9 +89,15 @@ public:
 		// Input: Attachment buffer (FGPUParticleAttachment) - for surface normal of attached particles
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUParticleAttachment>, InAttachments)
 
-		// Spatial hash buffers (for neighbor search in DensityBased mode)
+		// TODO(KHJ): Remove legacy hash-based lookup - bUseZOrderSorting is always true
+		// Legacy hash-based spatial lookup (random access)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellCounts)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleIndices)
+
+		// Morton-sorted spatial lookup (sequential access, cache-friendly)
+		// When bUseZOrderSorting=1, InPhysicsParticles is already sorted by Morton code
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellStart)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellEnd)
 
 		// Output: Anisotropy SoA buffers (float4 = direction.xyz + scale.w)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FVector4f>, OutAnisotropyAxis1)
@@ -95,6 +114,9 @@ public:
 		SHADER_PARAMETER(float, DensityWeight)  // For Hybrid mode
 		SHADER_PARAMETER(float, SmoothingRadius)
 		SHADER_PARAMETER(float, CellSize)
+		// TODO(KHJ): Remove bUseZOrderSorting - always 1, legacy path is dead code
+		SHADER_PARAMETER(int32, bUseZOrderSorting)  // 1 = Morton-sorted, 0 = legacy hash
+		SHADER_PARAMETER(FVector3f, MortonBoundsMin)  // Grid origin for Morton code
 
 		// Attached particle anisotropy params
 		SHADER_PARAMETER(float, AttachedFlattenScale)  // How flat (0.3 = 30% height)

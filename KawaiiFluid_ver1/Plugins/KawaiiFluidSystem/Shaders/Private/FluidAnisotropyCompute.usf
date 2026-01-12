@@ -2,6 +2,7 @@
 
 #include "/Engine/Private/Common.ush"
 #include "FluidSpatialHash.ush"
+#include "FluidMortonUtils.ush"
 
 //-----------------------------------------------------------------------------
 // Anisotropy Compute Shader
@@ -58,8 +59,16 @@ StructuredBuffer<FGPUFluidParticle> InPhysicsParticles;
 StructuredBuffer<FGPUParticleAttachment> InAttachments;
 
 // Spatial Hash buffers (for DensityBased mode)
+// TODO(KHJ): Remove legacy hash-based lookup - bUseZOrderSorting is always true
+// Legacy hash-based lookup (random access pattern)
 StructuredBuffer<uint> CellCounts;
 StructuredBuffer<uint> ParticleIndices;
+
+// Morton-sorted lookup (sequential access pattern, cache-friendly)
+// When bUseZOrderSorting=1, ParticleBuffer is already sorted by Morton code
+// CellStart/CellEnd give contiguous ranges in the sorted buffer
+StructuredBuffer<uint> CellStart;           // CellStart[cellID] = first particle index in sorted array
+StructuredBuffer<uint> CellEnd;             // CellEnd[cellID] = last particle index in sorted array
 
 // Output: Anisotropy SoA buffers (float4 = direction.xyz + scale.w)
 RWStructuredBuffer<float4> OutAnisotropyAxis1;
@@ -76,10 +85,15 @@ float AnisotropyMax;
 float DensityWeight;  // For Hybrid mode
 float SmoothingRadius;
 float CellSize;
+// TODO(KHJ): Remove bUseZOrderSorting - always true, legacy path is dead code
+int bUseZOrderSorting;  // 1 = use Morton-sorted CellStart/End, 0 = use legacy CellCounts
 
 // Attached particle anisotropy params
 float AttachedFlattenScale;   // How flat (0.3 = 30% height along normal)
 float AttachedStretchScale;   // Perpendicular stretch (1.5 = 150%)
+
+// Morton code parameters (for Z-Order sorting mode)
+float3 MortonBoundsMin;       // Grid origin for Morton code calculation
 
 //-----------------------------------------------------------------------------
 // FleX / Yu & Turk Style Constants
@@ -436,49 +450,120 @@ void CalculateDensityBased(
 	float TotalWeight = 0.0f;            // Σwi
 	int NeighborCount = 0;
 
-	for (int dz = -CellRadius; dz <= CellRadius; ++dz)
+	// =========================================================================
+	// Neighbor Traversal: Two modes for different memory access patterns
+	// =========================================================================
+	if (bUseZOrderSorting)
 	{
-		for (int dy = -CellRadius; dy <= CellRadius; ++dy)
+		// =====================================================================
+		// Z-Order (Morton) Mode: Sequential memory access via CellStart/End
+		// Particles are sorted by Morton code, so neighbors are contiguous
+		// This enables better cache utilization and coalesced memory reads
+		// =====================================================================
+		for (int dz = -CellRadius; dz <= CellRadius; ++dz)
 		{
-			for (int dx = -CellRadius; dx <= CellRadius; ++dx)
+			for (int dy = -CellRadius; dy <= CellRadius; ++dy)
 			{
-				int3 NeighborCell = CenterCell + int3(dx, dy, dz);
-				uint Hash = HashCell(NeighborCell);
-				uint Count = min(CellCounts[Hash], (uint)MAX_PARTICLES_PER_CELL);
-				uint BaseIdx = Hash * MAX_PARTICLES_PER_CELL;
-
-				for (uint i = 0; i < Count; ++i)
+				for (int dx = -CellRadius; dx <= CellRadius; ++dx)
 				{
-					uint NeighborIdx = ParticleIndices[BaseIdx + i];
-					if (NeighborIdx >= ParticleCount)
+					int3 NeighborCell = CenterCell + int3(dx, dy, dz);
+					uint CellID = GetMortonCellIDFromCellCoord(NeighborCell, MortonBoundsMin, CellSize);
+					uint Start = CellStart[CellID];
+					uint End = CellEnd[CellID];
+
+					// Skip empty cells
+					if (Start == INVALID_INDEX || End == INVALID_INDEX)
 					{
 						continue;
 					}
 
-					float3 NeighborPos = InPhysicsParticles[NeighborIdx].Position;
-					float3 Diff = NeighborPos - CenterPos;
-					float Dist2 = dot(Diff, Diff);
+					// Clamp end to valid range
+					End = min(End, (uint)(ParticleCount - 1));
 
-					if (Dist2 < H2)
+					// Sequential access through sorted particle range
+					// ParticleBuffer is already sorted by Morton code, so we access directly
+					for (uint NeighborIdx = Start; NeighborIdx <= End; ++NeighborIdx)
 					{
-						float Dist = sqrt(Dist2);
-						float W = KernelWeight(Dist, SmoothingRadius);
-
-						if (W > 0.0001f)
+						if (NeighborIdx >= ParticleCount)
 						{
-							// Accumulate for mean: Σ(wi * xi)
-							SumWX += W * NeighborPos;
-							TotalWeight += W;
-							NeighborCount++;
+							continue;
+						}
 
-							// Accumulate for covariance: Σ(wi * xi * xi^T)
-							// Only upper triangle (symmetric matrix)
-							SumWXX_00 += W * NeighborPos.x * NeighborPos.x;
-							SumWXX_01 += W * NeighborPos.x * NeighborPos.y;
-							SumWXX_02 += W * NeighborPos.x * NeighborPos.z;
-							SumWXX_11 += W * NeighborPos.y * NeighborPos.y;
-							SumWXX_12 += W * NeighborPos.y * NeighborPos.z;
-							SumWXX_22 += W * NeighborPos.z * NeighborPos.z;
+						float3 NeighborPos = InPhysicsParticles[NeighborIdx].Position;
+						float3 Diff = NeighborPos - CenterPos;
+						float Dist2 = dot(Diff, Diff);
+
+						if (Dist2 < H2)
+						{
+							float Dist = sqrt(Dist2);
+							float W = KernelWeight(Dist, SmoothingRadius);
+
+							if (W > 0.0001f)
+							{
+								SumWX += W * NeighborPos;
+								TotalWeight += W;
+								NeighborCount++;
+
+								SumWXX_00 += W * NeighborPos.x * NeighborPos.x;
+								SumWXX_01 += W * NeighborPos.x * NeighborPos.y;
+								SumWXX_02 += W * NeighborPos.x * NeighborPos.z;
+								SumWXX_11 += W * NeighborPos.y * NeighborPos.y;
+								SumWXX_12 += W * NeighborPos.y * NeighborPos.z;
+								SumWXX_22 += W * NeighborPos.z * NeighborPos.z;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	// TODO(KHJ): Remove entire else block - legacy path is dead code (bUseZOrderSorting always true)
+	else
+	{
+		// =====================================================================
+		// Legacy Hash Mode: Random access via CellCounts/ParticleIndices
+		// =====================================================================
+		for (int dz = -CellRadius; dz <= CellRadius; ++dz)
+		{
+			for (int dy = -CellRadius; dy <= CellRadius; ++dy)
+			{
+				for (int dx = -CellRadius; dx <= CellRadius; ++dx)
+				{
+					int3 NeighborCell = CenterCell + int3(dx, dy, dz);
+					uint Hash = HashCell(NeighborCell);
+					uint Count = min(CellCounts[Hash], (uint)MAX_PARTICLES_PER_CELL);
+					uint BaseIdx = Hash * MAX_PARTICLES_PER_CELL;
+
+					for (uint i = 0; i < Count; ++i)
+					{
+						uint NeighborIdx = ParticleIndices[BaseIdx + i];
+						if (NeighborIdx >= ParticleCount)
+						{
+							continue;
+						}
+
+						float3 NeighborPos = InPhysicsParticles[NeighborIdx].Position;
+						float3 Diff = NeighborPos - CenterPos;
+						float Dist2 = dot(Diff, Diff);
+
+						if (Dist2 < H2)
+						{
+							float Dist = sqrt(Dist2);
+							float W = KernelWeight(Dist, SmoothingRadius);
+
+							if (W > 0.0001f)
+							{
+								SumWX += W * NeighborPos;
+								TotalWeight += W;
+								NeighborCount++;
+
+								SumWXX_00 += W * NeighborPos.x * NeighborPos.x;
+								SumWXX_01 += W * NeighborPos.x * NeighborPos.y;
+								SumWXX_02 += W * NeighborPos.x * NeighborPos.z;
+								SumWXX_11 += W * NeighborPos.y * NeighborPos.y;
+								SumWXX_12 += W * NeighborPos.y * NeighborPos.z;
+								SumWXX_22 += W * NeighborPos.z * NeighborPos.z;
+							}
 						}
 					}
 				}

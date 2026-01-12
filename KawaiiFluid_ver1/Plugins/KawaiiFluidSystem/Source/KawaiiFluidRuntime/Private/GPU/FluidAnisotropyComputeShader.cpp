@@ -48,8 +48,13 @@ void FFluidAnisotropyPassBuilder::AddAnisotropyPass(
 	// RDG requires all shader parameters to have valid buffers
 	// Must use QueueBufferUpload to mark buffer as "produced"
 	FRDGBufferSRVRef AttachmentsSRV = Params.AttachmentsSRV;
+	// TODO(KHJ): Remove legacy CellCounts/ParticleIndices - bUseZOrderSorting is always true
 	FRDGBufferSRVRef CellCountsSRV = Params.CellCountsSRV;
 	FRDGBufferSRVRef ParticleIndicesSRV = Params.ParticleIndicesSRV;
+
+	// Morton-sorted buffers (ParticleBuffer is already sorted when bUseZOrderSorting=true)
+	FRDGBufferSRVRef CellStartSRV = Params.CellStartSRV;
+	FRDGBufferSRVRef CellEndSRV = Params.CellEndSRV;
 
 	if (!AttachmentsSRV)
 	{
@@ -61,6 +66,7 @@ void FFluidAnisotropyPassBuilder::AddAnisotropyPass(
 		AttachmentsSRV = GraphBuilder.CreateSRV(DummyBuffer);
 	}
 
+	// TODO: Remove legacy dummy buffer creation - bUseZOrderSorting is always true
 	if (!CellCountsSRV)
 	{
 		FRDGBufferDesc DummyDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 1);
@@ -79,11 +85,37 @@ void FFluidAnisotropyPassBuilder::AddAnisotropyPass(
 		ParticleIndicesSRV = GraphBuilder.CreateSRV(DummyBuffer);
 	}
 
+	// Create dummy buffers for Morton-sorted inputs if not provided
+	if (!CellStartSRV)
+	{
+		FRDGBufferDesc DummyDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 1);
+		FRDGBufferRef DummyBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyCellStartBuffer"));
+		uint32 InvalidIndex = 0xFFFFFFFF;
+		GraphBuilder.QueueBufferUpload(DummyBuffer, &InvalidIndex, sizeof(uint32));
+		CellStartSRV = GraphBuilder.CreateSRV(DummyBuffer);
+	}
+
+	if (!CellEndSRV)
+	{
+		FRDGBufferDesc DummyDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 1);
+		FRDGBufferRef DummyBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyCellEndBuffer"));
+		uint32 InvalidIndex = 0xFFFFFFFF;
+		GraphBuilder.QueueBufferUpload(DummyBuffer, &InvalidIndex, sizeof(uint32));
+		CellEndSRV = GraphBuilder.CreateSRV(DummyBuffer);
+	}
+
 	// Input buffers
 	PassParameters->InPhysicsParticles = Params.PhysicsParticlesSRV;
 	PassParameters->InAttachments = AttachmentsSRV;
+
+	// TODO: Remove legacy hash-based binding - bUseZOrderSorting is always true
+	// Legacy hash-based spatial lookup
 	PassParameters->CellCounts = CellCountsSRV;
 	PassParameters->ParticleIndices = ParticleIndicesSRV;
+
+	// Morton-sorted spatial lookup
+	PassParameters->CellStart = CellStartSRV;
+	PassParameters->CellEnd = CellEndSRV;
 
 	// Output buffers
 	PassParameters->OutAnisotropyAxis1 = Params.OutAxis1UAV;
@@ -100,6 +132,11 @@ void FFluidAnisotropyPassBuilder::AddAnisotropyPass(
 	PassParameters->DensityWeight = Params.DensityWeight;
 	PassParameters->SmoothingRadius = Params.SmoothingRadius;
 	PassParameters->CellSize = Params.CellSize;
+
+	// TODO(KHJ): Remove bUseZOrderSorting - always 1, legacy path is dead code
+	// Morton code params
+	PassParameters->bUseZOrderSorting = Params.bUseZOrderSorting ? 1 : 0;
+	PassParameters->MortonBoundsMin = Params.MortonBoundsMin;
 
 	// Attached particle anisotropy params
 	PassParameters->AttachedFlattenScale = Params.AttachedFlattenScale;

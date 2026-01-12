@@ -1,0 +1,53 @@
+// Copyright KawaiiFluid Team. All Rights Reserved.
+// Morton Code (Z-Order Curve) Utility Functions
+// Shared between FluidSolveDensityPressure.usf, FluidAnisotropyCompute.usf, etc.
+
+#pragma once
+
+//=============================================================================
+// Morton Code Constants
+//=============================================================================
+
+#ifndef MAX_CELLS
+#define MAX_CELLS 65536  // 2^16 cells, must match FluidCellStartEnd.usf
+#endif
+
+#define INVALID_INDEX 0xFFFFFFFF
+
+//=============================================================================
+// Morton Code Functions
+//=============================================================================
+
+// Expand 10-bit integer to 30-bit with 2-bit gaps
+uint MortonExpandBits(uint v)
+{
+	v = (v * 0x00010001u) & 0xFF0000FFu;
+	v = (v * 0x00000101u) & 0x0F00F00Fu;
+	v = (v * 0x00000011u) & 0xC30C30C3u;
+	v = (v * 0x00000005u) & 0x49249249u;
+	return v;
+}
+
+// Compute 30-bit Morton Code for 3D point (each coord 10 bits: 0-1023)
+uint Morton3D(uint x, uint y, uint z)
+{
+	x = min(x, 1023u);
+	y = min(y, 1023u);
+	z = min(z, 1023u);
+	uint xx = MortonExpandBits(x);
+	uint yy = MortonExpandBits(y);
+	uint zz = MortonExpandBits(z);
+	return (zz << 2) | (yy << 1) | xx;
+}
+
+// Compute Morton-based cell ID from cell coordinates
+// Requires: MortonBoundsMin (float3), CellSize (float) defined in including shader
+uint GetMortonCellIDFromCellCoord(int3 cellCoord, float3 boundsMin, float cellSize)
+{
+	int3 gridMin = int3(floor(boundsMin / cellSize));
+	int3 offset = cellCoord - gridMin;
+	uint3 uoffset = uint3(max(offset, int3(0, 0, 0)));
+	uoffset = min(uoffset, uint3(1023, 1023, 1023));
+	uint mortonCode = Morton3D(uoffset.x, uoffset.y, uoffset.z);
+	return mortonCode & (MAX_CELLS - 1);
+}
