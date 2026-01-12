@@ -334,6 +334,71 @@ public:
 	int32 GetBoundaryParticleCount() const { return CachedBoundaryParticles.Num(); }
 
 	//=============================================================================
+	// GPU Boundary Skinning (Persistent Local Boundary + GPU Transform)
+	// Stores bone-local boundary particles once, transforms to world space on GPU each frame
+	//=============================================================================
+
+	/**
+	 * GPU Boundary Skinning Data - Input from FluidInteractionComponent
+	 * Contains bone-local particles and per-frame bone transforms
+	 */
+	struct FGPUBoundarySkinningData
+	{
+		/** Owner component ID for identification */
+		int32 OwnerID = 0;
+
+		/** Bone-local boundary particles (upload once, persistent) */
+		TArray<FGPUBoundaryParticleLocal> LocalParticles;
+
+		/** Bone transforms (upload each frame) - 4x4 matrices */
+		TArray<FMatrix44f> BoneTransforms;
+
+		/** Component transform for static meshes (BoneIndex == -1) */
+		FMatrix44f ComponentTransform = FMatrix44f::Identity;
+
+		/** Flag: local particles have been uploaded */
+		bool bLocalParticlesUploaded = false;
+	};
+
+	/**
+	 * Upload local boundary particles (persistent, upload once)
+	 * Call this when FluidInteractionComponent generates boundary particles
+	 * @param OwnerID - Unique ID for this interaction component
+	 * @param LocalParticles - Bone-local boundary particles
+	 */
+	void UploadLocalBoundaryParticles(int32 OwnerID, const TArray<FGPUBoundaryParticleLocal>& LocalParticles);
+
+	/**
+	 * Upload bone transforms for boundary skinning (call each frame)
+	 * @param OwnerID - Unique ID for this interaction component
+	 * @param BoneTransforms - Bone transforms in world space
+	 * @param ComponentTransform - Fallback transform for static meshes
+	 */
+	void UploadBoneTransformsForBoundary(int32 OwnerID, const TArray<FMatrix44f>& BoneTransforms, const FMatrix44f& ComponentTransform);
+
+	/**
+	 * Remove boundary skinning data for an owner
+	 * Call when FluidInteractionComponent is destroyed
+	 * @param OwnerID - Unique ID of the interaction component to remove
+	 */
+	void RemoveBoundarySkinningData(int32 OwnerID);
+
+	/**
+	 * Clear all boundary skinning data
+	 */
+	void ClearAllBoundarySkinningData();
+
+	/**
+	 * Check if GPU boundary skinning is enabled (has any local boundary particles)
+	 */
+	bool IsGPUBoundarySkinningEnabled() const { return TotalLocalBoundaryParticleCount > 0; }
+
+	/**
+	 * Get total local boundary particle count across all owners
+	 */
+	int32 GetTotalLocalBoundaryParticleCount() const { return TotalLocalBoundaryParticleCount; }
+
+	//=============================================================================
 	// Stream Compaction (Phase 2 - Per-Polygon Collision)
 	// GPU AABB filtering using parallel prefix sum
 	//=============================================================================
@@ -659,6 +724,11 @@ private:
 		FRDGBufferUAVRef ParticlesUAV,
 		const FGPUFluidSimulationParams& Params);
 
+	/** Add boundary skinning pass (GPU transform of bone-local particles to world space) */
+	void AddBoundarySkinningPass(
+		FRDGBuilder& GraphBuilder,
+		const FGPUFluidSimulationParams& Params);
+
 	//=============================================================================
 	// Z-Order (Morton Code) Sorting Pipeline
 	// Replaces hash table with cache-coherent sorted particle access
@@ -883,6 +953,35 @@ private:
 
 	// Flag: boundary particles need upload
 	bool bBoundaryParticlesValid = false;
+
+	//=============================================================================
+	// GPU Boundary Skinning Buffers
+	// Persistent bone-local particles + per-frame GPU transform
+	//=============================================================================
+
+	// Map from OwnerID to skinning data
+	TMap<int32, FGPUBoundarySkinningData> BoundarySkinningDataMap;
+
+	// Total local boundary particle count across all owners
+	int32 TotalLocalBoundaryParticleCount = 0;
+
+	// Persistent buffers for GPU skinning (one per owner)
+	// Key: OwnerID, Value: Persistent local boundary particles buffer
+	TMap<int32, TRefCountPtr<FRDGPooledBuffer>> PersistentLocalBoundaryBuffers;
+
+	// World-space boundary particles buffer (output of skinning, input to density/viscosity)
+	TRefCountPtr<FRDGPooledBuffer> PersistentWorldBoundaryBuffer;
+	int32 WorldBoundaryBufferCapacity = 0;
+
+	// Boundary spatial hash buffers (for efficient neighbor lookup)
+	TRefCountPtr<FRDGPooledBuffer> BoundaryCellCountsBuffer;
+	TRefCountPtr<FRDGPooledBuffer> BoundaryParticleIndicesBuffer;
+
+	// Flag: boundary skinning data has changed (need re-upload local particles)
+	bool bBoundarySkinningDataDirty = false;
+
+	// Lock for boundary skinning data access (thread safety)
+	FCriticalSection BoundarySkinningLock;
 
 	//=============================================================================
 	// GPU Particle Spawn System

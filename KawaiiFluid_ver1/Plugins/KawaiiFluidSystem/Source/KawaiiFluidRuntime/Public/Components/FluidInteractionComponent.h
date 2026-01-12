@@ -501,8 +501,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Fluid Interaction|Boundary Particles")
 	void RegenerateBoundaryParticles();
 
-	/** GPU용 경계 입자 데이터 수집 */
+	/** GPU용 경계 입자 데이터 수집 (legacy - CPU 월드 좌표 업로드 방식) */
 	void CollectGPUBoundaryParticles(struct FGPUBoundaryParticles& OutBoundaryParticles) const;
+
+	/** GPU Skinning용 로컬 경계 입자 데이터 수집 (한 번만 업로드) */
+	void CollectLocalBoundaryParticles(TArray<struct FGPUBoundaryParticleLocal>& OutLocalParticles) const;
+
+	/** GPU Skinning용 본 트랜스폼 수집 (매 프레임 업로드) */
+	void CollectBoneTransformsForBoundary(TArray<FMatrix>& OutBoneTransforms, FMatrix& OutComponentTransform) const;
+
+	/** 컴포넌트 고유 ID 반환 (GPU Skinning Owner ID용) */
+	int32 GetBoundaryOwnerID() const { return GetUniqueID(); }
+
+	/** GPU Skinning 활성화 여부 (로컬 입자가 있으면 true) */
+	bool HasLocalBoundaryParticles() const { return bBoundaryParticlesInitialized && BoundaryParticleLocalPositions.Num() > 0; }
 
 	/** Boundary Adhesion 활성화 여부 */
 	bool IsBoundaryAdhesionEnabled() const { return bEnableBoundaryParticles && bBoundaryParticlesInitialized && BoundaryParticlePositions.Num() > 0; }

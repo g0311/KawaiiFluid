@@ -157,6 +157,15 @@ IMPLEMENT_GLOBAL_SHADER(FBoundaryAdhesionCS,
 	"BoundaryAdhesionCS", SF_Compute);
 
 //=============================================================================
+// GPU Boundary Skinning Shader
+// Transforms bone-local boundary particles to world space
+//=============================================================================
+
+IMPLEMENT_GLOBAL_SHADER(FBoundarySkinningCS,
+	"/Plugin/KawaiiFluidSystem/Private/FluidBoundarySkinning.usf",
+	"BoundarySkinningCS", SF_Compute);
+
+//=============================================================================
 // Z-Order (Morton Code) Sorting Shaders
 // GPU-based spatial sorting for cache-coherent neighbor access
 //=============================================================================

@@ -31,6 +31,21 @@ float CellSize;
 int bUseNeighborCache;
 
 //=============================================================================
+// Boundary Particles for viscosity contribution
+//=============================================================================
+struct FGPUBoundaryParticle
+{
+	float3 Position;    // World position
+	float Psi;          // Boundary particle "mass" (volume contribution)
+	float3 Normal;      // Surface normal
+	int OwnerID;        // Owner component ID
+};
+
+StructuredBuffer<FGPUBoundaryParticle> BoundaryParticles;
+int BoundaryParticleCount;
+int bUseBoundaryViscosity;
+
+//=============================================================================
 // Unrolled 27-Cell Viscosity Processing Macro (Fallback when cache not available)
 //=============================================================================
 #define PROCESS_VISCOSITY_CELL(DX, DY, DZ) \
@@ -226,6 +241,32 @@ void ApplyViscosityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 						}
 					}
 				}
+			}
+		}
+	}
+
+	//=========================================================================
+	// Boundary Particles viscosity contribution
+	// Boundary particles are treated as stationary (velocity = 0)
+	// This causes fluid to slow down near surfaces, creating "sticky" flow
+	//=========================================================================
+	if (bUseBoundaryViscosity && BoundaryParticleCount > 0)
+	{
+		for (int bi = 0; bi < BoundaryParticleCount; ++bi)
+		{
+			FGPUBoundaryParticle boundary = BoundaryParticles[bi];
+			float3 r_cm = pos - boundary.Position;
+			float r2_cm = dot(r_cm, r_cm);
+			float r2 = r2_cm * CM_TO_M_SQ;
+
+			if (r2 < h2 && r2 > SMALL_NUMBER)
+			{
+				float w = Poly6Kernel(r2, h2) * Poly6Coeff;
+				// Boundary velocity is 0, so velDiff = -vel (slows down fluid)
+				float3 velDiff = -vel;
+				// Weight by Psi (boundary particle's volume contribution)
+				velocityCorrection += velDiff * w * boundary.Psi;
+				weightSum += w * boundary.Psi;
 			}
 		}
 	}

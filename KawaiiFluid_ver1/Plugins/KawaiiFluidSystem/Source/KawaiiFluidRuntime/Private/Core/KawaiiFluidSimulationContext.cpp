@@ -541,33 +541,61 @@ void UKawaiiFluidSimulationContext::SimulateGPU(
 	}
 
 	// =====================================================
-	// Collect and upload Boundary Particles (Flex-style Adhesion)
-	// From FluidInteractionComponents with boundary particles enabled
+	// GPU Boundary Skinning (Flex-style Adhesion)
+	// Upload local particles once, bone transforms each frame
+	// GPU transforms local → world (much faster than CPU)
 	// =====================================================
 	{
-		FGPUBoundaryParticles BoundaryParticles;
+		int32 TotalBoundaryParticles = 0;
 
 		for (UFluidInteractionComponent* Interaction : Params.InteractionComponents)
 		{
-			if (Interaction && Interaction->IsBoundaryAdhesionEnabled())
+			if (Interaction && Interaction->HasLocalBoundaryParticles())
 			{
-				Interaction->CollectGPUBoundaryParticles(BoundaryParticles);
+				const int32 OwnerID = Interaction->GetBoundaryOwnerID();
+
+				// Upload local particles only once (first time or after regeneration)
+				if (!GPUSimulator->IsGPUBoundarySkinningEnabled() ||
+				    GPUSimulator->GetTotalLocalBoundaryParticleCount() == 0)
+				{
+					TArray<FGPUBoundaryParticleLocal> LocalParticles;
+					Interaction->CollectLocalBoundaryParticles(LocalParticles);
+
+					if (LocalParticles.Num() > 0)
+					{
+						GPUSimulator->UploadLocalBoundaryParticles(OwnerID, LocalParticles);
+					}
+				}
+
+				// Upload bone transforms each frame
+				TArray<FMatrix> BoneTransforms;
+				FMatrix ComponentTransform;
+				Interaction->CollectBoneTransformsForBoundary(BoneTransforms, ComponentTransform);
+
+				// Convert to FMatrix44f
+				TArray<FMatrix44f> BoneTransforms44f;
+				BoneTransforms44f.SetNum(BoneTransforms.Num());
+				for (int32 i = 0; i < BoneTransforms.Num(); ++i)
+				{
+					BoneTransforms44f[i] = FMatrix44f(BoneTransforms[i]);
+				}
+
+				GPUSimulator->UploadBoneTransformsForBoundary(OwnerID, BoneTransforms44f, FMatrix44f(ComponentTransform));
 			}
 		}
 
-		// Upload to GPU and set parameters if we have boundary particles
-		if (!BoundaryParticles.IsEmpty())
-		{
-			GPUSimulator->UploadBoundaryParticles(BoundaryParticles);
+		TotalBoundaryParticles = GPUSimulator->GetTotalLocalBoundaryParticleCount();
 
-			// Set boundary adhesion parameters
+		// Set boundary adhesion parameters
+		if (TotalBoundaryParticles > 0)
+		{
 			FGPUBoundaryAdhesionParams BoundaryAdhesionParams;
 			BoundaryAdhesionParams.bEnabled = 1;
 			BoundaryAdhesionParams.AdhesionStrength = Preset->AdhesionStrength;
 			BoundaryAdhesionParams.AdhesionRadius = Preset->AdhesionRadius;
 			BoundaryAdhesionParams.CohesionStrength = Preset->CohesionStrength;
 			BoundaryAdhesionParams.SmoothingRadius = Preset->SmoothingRadius;
-			BoundaryAdhesionParams.BoundaryParticleCount = BoundaryParticles.GetCount();
+			BoundaryAdhesionParams.BoundaryParticleCount = TotalBoundaryParticles;
 			BoundaryAdhesionParams.FluidParticleCount = GPUSimulator->GetParticleCount();
 			BoundaryAdhesionParams.DeltaTime = Preset->SubstepDeltaTime;
 

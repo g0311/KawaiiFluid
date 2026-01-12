@@ -201,6 +201,10 @@ public:
 		SHADER_PARAMETER(float, InvW_DeltaQ)
 		// Iteration control for neighbor caching
 		SHADER_PARAMETER(int32, IterationIndex)
+		// Boundary Particles for density contribution (Akinci 2012)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoundaryParticle>, BoundaryParticles)
+		SHADER_PARAMETER(int32, BoundaryParticleCount)
+		SHADER_PARAMETER(int32, bUseBoundaryDensity)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 256;
@@ -247,6 +251,10 @@ public:
 		SHADER_PARAMETER(float, CellSize)
 		// Flag to use cached neighbors (1 = use cache, 0 = use hash)
 		SHADER_PARAMETER(int32, bUseNeighborCache)
+		// Boundary Particles for viscosity contribution
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoundaryParticle>, BoundaryParticles)
+		SHADER_PARAMETER(int32, BoundaryParticleCount)
+		SHADER_PARAMETER(int32, bUseBoundaryViscosity)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 256;
@@ -1399,6 +1407,48 @@ public:
 		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
 		OutEnvironment.SetDefine(TEXT("SPATIAL_HASH_SIZE"), GPU_SPATIAL_HASH_SIZE);
 		OutEnvironment.SetDefine(TEXT("MAX_PARTICLES_PER_CELL"), GPU_MAX_PARTICLES_PER_CELL);
+	}
+};
+
+//=============================================================================
+// GPU Boundary Skinning Compute Shader
+// Transforms bone-local boundary particles to world space using bone transforms
+// Runs once per frame for each FluidInteractionComponent
+//=============================================================================
+
+class FBoundarySkinningCS : public FGlobalShader
+{
+public:
+	DECLARE_GLOBAL_SHADER(FBoundarySkinningCS);
+	SHADER_USE_PARAMETER_STRUCT(FBoundarySkinningCS, FGlobalShader);
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		// Input: Local boundary particles (persistent, uploaded once)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoundaryParticleLocal>, LocalBoundaryParticles)
+		// Output: World-space boundary particles (updated each frame)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUBoundaryParticle>, WorldBoundaryParticles)
+		// Bone transforms (uploaded each frame)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4x4>, BoneTransforms)
+		SHADER_PARAMETER(int32, BoundaryParticleCount)
+		SHADER_PARAMETER(int32, BoneCount)
+		SHADER_PARAMETER(int32, OwnerID)
+		// Fallback transform for static meshes (BoneIndex == -1)
+		SHADER_PARAMETER(FMatrix44f, ComponentTransform)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static constexpr int32 ThreadGroupSize = 256;
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+
+	static void ModifyCompilationEnvironment(
+		const FGlobalShaderPermutationParameters& Parameters,
+		FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
 	}
 };
 

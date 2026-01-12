@@ -56,6 +56,21 @@ float3 MortonBoundsMin;     // Simulation bounds minimum
 float3 MortonBoundsExtent;  // Simulation bounds extent (Max - Min)
 
 //=============================================================================
+// Boundary Particles for density contribution (Akinci 2012)
+//=============================================================================
+struct FGPUBoundaryParticle
+{
+	float3 Position;    // World position
+	float Psi;          // Boundary particle "mass" (volume contribution)
+	float3 Normal;      // Surface normal
+	int OwnerID;        // Owner component ID
+};
+
+StructuredBuffer<FGPUBoundaryParticle> BoundaryParticles;
+int BoundaryParticleCount;
+int bUseBoundaryDensity;
+
+//=============================================================================
 // Constants for Z-Order Mode
 //=============================================================================
 #define INVALID_INDEX 0xFFFFFFFF
@@ -606,6 +621,30 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	// Self contribution to gradient sum
 	sumGradC2 += dot(gradC_i, gradC_i);
+
+	//=========================================================================
+	// Boundary Particles density contribution (Akinci 2012)
+	// ρ_i += Σ_k ψ_k W(|x_i - x_k|, h)
+	// This makes fluid particles "see" the boundary as solid, preventing penetration
+	//=========================================================================
+	if (bUseBoundaryDensity && BoundaryParticleCount > 0)
+	{
+		for (int bi = 0; bi < BoundaryParticleCount; ++bi)
+		{
+			FGPUBoundaryParticle boundary = BoundaryParticles[bi];
+			float3 r_cm = pos - boundary.Position;
+			float r2_cm = dot(r_cm, r_cm);
+			float r2 = r2_cm * CM_TO_M_SQ;
+
+			if (r2 < h2 && r2 > SMALL_NUMBER)
+			{
+				// Poly6 kernel for density
+				float w = Poly6Kernel(r2, h2);
+				// Psi is the boundary particle's volume contribution (like mass for fluid)
+				density += boundary.Psi * Poly6Coeff * w;
+			}
+		}
+	}
 
 	// Store density and neighbor count
 	particle.Density = density;

@@ -1007,6 +1007,36 @@ struct FGPUBoundaryParticle
 static_assert(sizeof(FGPUBoundaryParticle) == 32, "FGPUBoundaryParticle must be 32 bytes");
 
 /**
+ * GPU Boundary Particle Local Structure (32 bytes)
+ * Stores bone-local coordinates for GPU skinning
+ * Uploaded once at initialization, persistent on GPU
+ */
+struct FGPUBoundaryParticleLocal
+{
+	FVector3f LocalPosition;  // 12 bytes - Bone-local position
+	int32 BoneIndex;          // 4 bytes  - Skeleton bone index (-1 for static mesh)
+	FVector3f LocalNormal;    // 12 bytes - Bone-local surface normal
+	float Psi;                // 4 bytes  - Volume contribution
+
+	FGPUBoundaryParticleLocal()
+		: LocalPosition(FVector3f::ZeroVector)
+		, BoneIndex(-1)
+		, LocalNormal(FVector3f(0.0f, 0.0f, 1.0f))
+		, Psi(0.1f)
+	{
+	}
+
+	FGPUBoundaryParticleLocal(const FVector3f& InLocalPos, int32 InBoneIndex, const FVector3f& InLocalNormal, float InPsi)
+		: LocalPosition(InLocalPos)
+		, BoneIndex(InBoneIndex)
+		, LocalNormal(InLocalNormal)
+		, Psi(InPsi)
+	{
+	}
+};
+static_assert(sizeof(FGPUBoundaryParticleLocal) == 32, "FGPUBoundaryParticleLocal must be 32 bytes");
+
+/**
  * GPU Boundary Adhesion Parameters
  * Passed to boundary adhesion compute shader
  */

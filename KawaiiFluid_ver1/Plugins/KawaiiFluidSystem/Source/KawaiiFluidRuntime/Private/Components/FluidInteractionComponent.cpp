@@ -1517,9 +1517,82 @@ void UFluidInteractionComponent::CollectGPUBoundaryParticles(FGPUBoundaryParticl
 			? FVector3f(BoundaryParticleNormals[i])
 			: FVector3f(0.0f, 0.0f, 1.0f);
 
-		// Psi는 경계 입자의 볼륨 기여도 (기본값 사용)
-		float Psi = 1.0f;
+		// Psi는 경계 입자의 볼륨 기여도
+		// 낮을수록 밀려나는 힘 감소, 높을수록 강하게 밀려남
+		float Psi = 0.1f;
 
 		OutBoundaryParticles.Add(Position, Normal, OwnerID, Psi);
+	}
+}
+
+void UFluidInteractionComponent::CollectLocalBoundaryParticles(TArray<FGPUBoundaryParticleLocal>& OutLocalParticles) const
+{
+	if (!bBoundaryParticlesInitialized || BoundaryParticleLocalPositions.Num() == 0)
+	{
+		return;
+	}
+
+	const int32 NumParticles = BoundaryParticleLocalPositions.Num();
+	OutLocalParticles.Reserve(OutLocalParticles.Num() + NumParticles);
+
+	for (int32 i = 0; i < NumParticles; ++i)
+	{
+		FVector3f LocalPosition = FVector3f(BoundaryParticleLocalPositions[i]);
+		FVector3f LocalNormal = (i < BoundaryParticleLocalNormals.Num())
+			? FVector3f(BoundaryParticleLocalNormals[i])
+			: FVector3f(0.0f, 0.0f, 1.0f);
+		int32 BoneIndex = (i < BoundaryParticleBoneIndices.Num()) ? BoundaryParticleBoneIndices[i] : -1;
+
+		// Psi는 경계 입자의 볼륨 기여도
+		float Psi = 0.1f;
+
+		OutLocalParticles.Add(FGPUBoundaryParticleLocal(LocalPosition, BoneIndex, LocalNormal, Psi));
+	}
+}
+
+void UFluidInteractionComponent::CollectBoneTransformsForBoundary(TArray<FMatrix>& OutBoneTransforms, FMatrix& OutComponentTransform) const
+{
+	AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		OutComponentTransform = FMatrix::Identity;
+		return;
+	}
+
+	if (bIsSkeletalMesh)
+	{
+		USkeletalMeshComponent* SkelMesh = Owner->FindComponentByClass<USkeletalMeshComponent>();
+		if (SkelMesh)
+		{
+			// 모든 본의 월드 트랜스폼 수집
+			const int32 NumBones = SkelMesh->GetNumBones();
+			OutBoneTransforms.SetNum(NumBones);
+
+			for (int32 BoneIdx = 0; BoneIdx < NumBones; ++BoneIdx)
+			{
+				FTransform BoneWorldTransform = SkelMesh->GetBoneTransform(BoneIdx);
+				OutBoneTransforms[BoneIdx] = BoneWorldTransform.ToMatrixWithScale();
+			}
+
+			OutComponentTransform = SkelMesh->GetComponentTransform().ToMatrixWithScale();
+		}
+		else
+		{
+			OutComponentTransform = FMatrix::Identity;
+		}
+	}
+	else
+	{
+		// 스태틱 메시 또는 다른 컴포넌트
+		USceneComponent* RootComp = Owner->GetRootComponent();
+		if (RootComp)
+		{
+			OutComponentTransform = RootComp->GetComponentTransform().ToMatrixWithScale();
+		}
+		else
+		{
+			OutComponentTransform = FMatrix::Identity;
+		}
+		OutBoneTransforms.Empty();
 	}
 }
