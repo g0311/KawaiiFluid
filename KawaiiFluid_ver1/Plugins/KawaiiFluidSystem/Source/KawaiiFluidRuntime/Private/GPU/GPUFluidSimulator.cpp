@@ -83,6 +83,14 @@ void FGPUFluidSimulator::Initialize(int32 InMaxParticleCount)
 
 	MaxParticleCount = InMaxParticleCount;
 
+	// Initialize SpawnManager
+	SpawnManager = MakeUnique<FGPUSpawnManager>();
+	SpawnManager->Initialize(InMaxParticleCount);
+
+	// Initialize StreamCompactionManager
+	StreamCompactionManager = MakeUnique<FGPUStreamCompactionManager>();
+	StreamCompactionManager->Initialize(InMaxParticleCount);
+
 	// Initialize render resource on render thread
 	BeginInitResource(this);
 
@@ -101,6 +109,20 @@ void FGPUFluidSimulator::Release()
 	// Release render resource synchronously to avoid "deleted without being released" error
 	// BeginReleaseResource is async, so we need to flush to ensure completion before destruction
 	ReleaseResource();  // Synchronous release - blocks until render thread completes
+
+	// Release SpawnManager
+	if (SpawnManager.IsValid())
+	{
+		SpawnManager->Release();
+		SpawnManager.Reset();
+	}
+
+	// Release StreamCompactionManager
+	if (StreamCompactionManager.IsValid())
+	{
+		StreamCompactionManager->Release();
+		StreamCompactionManager.Reset();
+	}
 
 	bIsInitialized = false;
 	MaxParticleCount = 0;
@@ -268,7 +290,7 @@ void FGPUFluidSimulator::SimulateSubstep(const FGPUFluidSimulationParams& Params
 
 	// Check if we have particles OR pending spawn requests
 	// (Allow simulation to start with spawn requests even if CurrentParticleCount == 0)
-	const bool bHasPendingSpawns = bHasPendingSpawnRequests.load();
+	const bool bHasPendingSpawns = SpawnManager.IsValid() && SpawnManager->HasPendingSpawnRequests();
 	if (CurrentParticleCount == 0 && !bHasPendingSpawns)
 	{
 		return;
@@ -510,16 +532,15 @@ void FGPUFluidSimulator::SimulateSubstep_RDG(FRDGBuilder& GraphBuilder, const FG
 	// Phase 1: Swap spawn requests (double buffer for thread safety)
 	// Game thread writes to PendingSpawnRequests
 	// Render thread consumes from ActiveSpawnRequests
+	// Delegated to FGPUSpawnManager
 	// =====================================================
+	if (SpawnManager.IsValid())
 	{
-		FScopeLock Lock(&SpawnRequestLock);
-		ActiveSpawnRequests = MoveTemp(PendingSpawnRequests);
-		PendingSpawnRequests.Empty();
-		bHasPendingSpawnRequests.store(false);
+		SpawnManager->SwapBuffers();
 	}
 
-	const bool bHasSpawnRequests = ActiveSpawnRequests.Num() > 0;
-	const int32 SpawnCount = ActiveSpawnRequests.Num();
+	const bool bHasSpawnRequests = SpawnManager.IsValid() && SpawnManager->HasActiveRequests();
+	const int32 SpawnCount = SpawnManager.IsValid() ? SpawnManager->GetActiveRequestCount() : 0;
 
 	// Allow simulation to start even with 0 particles if we have spawn requests
 	if (CurrentParticleCount == 0 && !bHasSpawnRequests)
@@ -654,9 +675,9 @@ void FGPUFluidSimulator::SimulateSubstep_RDG(FRDGBuilder& GraphBuilder, const FG
 		);
 		FRDGBufferUAVRef CounterUAV = GraphBuilder.CreateUAV(CounterBuffer);
 
-		// Run spawn particles pass
+		// Run spawn particles pass using SpawnManager's active requests
 		FRDGBufferUAVRef ParticleUAVForSpawn = GraphBuilder.CreateUAV(ParticleBuffer);
-		AddSpawnParticlesPass(GraphBuilder, ParticleUAVForSpawn, CounterUAV, ActiveSpawnRequests);
+		AddSpawnParticlesPass(GraphBuilder, ParticleUAVForSpawn, CounterUAV, SpawnManager->GetActiveRequests());
 
 		// Update particle count
 		CurrentParticleCount = FMath::Min(SpawnCount, MaxParticleCount);
@@ -668,7 +689,8 @@ void FGPUFluidSimulator::SimulateSubstep_RDG(FRDGBuilder& GraphBuilder, const FG
 
 		UE_LOG(LogGPUFluidSimulator, Log, TEXT("GPU Buffer: First spawn - created %d particles"), CurrentParticleCount);
 
-		ActiveSpawnRequests.Empty();
+		// Clear active requests after processing
+		SpawnManager->ClearActiveRequests();
 	}
 	else if (bNeedFullUpload && CachedGPUParticles.Num() > 0)
 	{
@@ -837,9 +859,9 @@ void FGPUFluidSimulator::SimulateSubstep_RDG(FRDGBuilder& GraphBuilder, const FG
 		);
 		FRDGBufferUAVRef CounterUAV = GraphBuilder.CreateUAV(CounterBuffer);
 
-		// Run spawn particles pass
+		// Run spawn particles pass using SpawnManager's active requests
 		FRDGBufferUAVRef ParticleUAVForSpawn = GraphBuilder.CreateUAV(ParticleBuffer);
-		AddSpawnParticlesPass(GraphBuilder, ParticleUAVForSpawn, CounterUAV, ActiveSpawnRequests);
+		AddSpawnParticlesPass(GraphBuilder, ParticleUAVForSpawn, CounterUAV, SpawnManager->GetActiveRequests());
 
 		// Update particle count (after spawning, assuming all spawn requests succeed within capacity)
 		CurrentParticleCount = FMath::Min(ExpectedParticleCount, MaxParticleCount);
@@ -847,8 +869,8 @@ void FGPUFluidSimulator::SimulateSubstep_RDG(FRDGBuilder& GraphBuilder, const FG
 
 		//UE_LOG(LogGPUFluidSimulator, Log, TEXT("GPU Buffer: GPU Spawn path - spawned %d particles (existing: %d, total: %d)"),SpawnCount, ExistingCount, CurrentParticleCount);
 
-		// Clear spawn requests
-		ActiveSpawnRequests.Empty();
+		// Clear active requests after processing
+		SpawnManager->ClearActiveRequests();
 	}
 	else
 	{
@@ -867,7 +889,10 @@ void FGPUFluidSimulator::SimulateSubstep_RDG(FRDGBuilder& GraphBuilder, const FG
 	}
 
 	// Clear active spawn requests if any remaining (shouldn't happen, but safety)
-	ActiveSpawnRequests.Empty();
+	if (SpawnManager.IsValid())
+	{
+		SpawnManager->ClearActiveRequests();
+	}
 
 	// Create transient position buffer for spatial hash
 	FRDGBufferDesc PositionBufferDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector3f), CurrentParticleCount);

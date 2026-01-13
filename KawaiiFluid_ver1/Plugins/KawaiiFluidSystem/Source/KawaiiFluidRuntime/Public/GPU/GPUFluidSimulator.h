@@ -7,6 +7,8 @@
 #include "RHIResources.h"
 #include "RenderResource.h"
 #include "GPU/GPUFluidParticle.h"
+#include "GPU/Managers/GPUSpawnManager.h"
+#include "GPU/Managers/GPUStreamCompactionManager.h"
 #include "Core/FluidAnisotropy.h"
 #include <atomic>
 
@@ -422,12 +424,12 @@ public:
 	/**
 	 * Get count of filtered candidates
 	 */
-	int32 GetFilteredCandidateCount() const { return FilteredCandidateCount; }
+	int32 GetFilteredCandidateCount() const { return StreamCompactionManager.IsValid() ? StreamCompactionManager->GetFilteredCandidateCount() : 0; }
 
 	/**
 	 * Check if filtered candidates are available
 	 */
-	bool HasFilteredCandidates() const { return bHasFilteredCandidates; }
+	bool HasFilteredCandidates() const { return StreamCompactionManager.IsValid() && StreamCompactionManager->HasFilteredCandidates(); }
 
 	/**
 	 * Apply particle corrections from CPU Per-Polygon collision processing
@@ -548,17 +550,17 @@ public:
 	/**
 	 * Set default particle radius for spawning
 	 */
-	void SetDefaultSpawnRadius(float Radius) { DefaultSpawnRadius = Radius; }
+	void SetDefaultSpawnRadius(float Radius) { if (SpawnManager.IsValid()) SpawnManager->SetDefaultRadius(Radius); }
 
 	/**
 	 * Set default particle mass for spawning (used when spawn request Mass = 0)
 	 */
-	void SetDefaultSpawnMass(float Mass) { DefaultSpawnMass = Mass; }
+	void SetDefaultSpawnMass(float Mass) { if (SpawnManager.IsValid()) SpawnManager->SetDefaultMass(Mass); }
 
 	/**
 	 * Get next particle ID to assign
 	 */
-	int32 GetNextParticleID() const { return NextParticleID.load(); }
+	int32 GetNextParticleID() const { return SpawnManager.IsValid() ? SpawnManager->GetNextParticleID() : 0; }
 
 private:
 	//=============================================================================
@@ -987,83 +989,23 @@ private:
 	FCriticalSection BoundarySkinningLock;
 
 	//=============================================================================
-	// GPU Particle Spawn System
-	// Thread-safe spawn request queue processed on render thread
+	// GPU Particle Spawn System (Delegated to FGPUSpawnManager)
 	//=============================================================================
 
-	// Double-buffered spawn requests for thread safety
-	// GameThread writes to PendingSpawnRequests, RenderThread consumes from ActiveSpawnRequests
-	TArray<FGPUSpawnRequest> PendingSpawnRequests;
-	TArray<FGPUSpawnRequest> ActiveSpawnRequests;
+	// SpawnManager handles all spawn-related functionality
+	// Thread-safe spawn request queue processed on render thread
+	TUniquePtr<FGPUSpawnManager> SpawnManager;
 
-	// Lock for spawn request queue access (mutable for const methods)
-	mutable FCriticalSection SpawnRequestLock;
-
-	// GPU Counter buffer for atomic particle count
+	// GPU Counter buffer for atomic particle count (used during spawn pass)
 	TRefCountPtr<FRDGPooledBuffer> ParticleCounterBuffer;
 
-	// Next particle ID to assign (atomic for thread safety)
-	std::atomic<int32> NextParticleID{0};
-
-	// Default spawn radius
-	float DefaultSpawnRadius = 5.0f;
-
-	// Default spawn mass (used when spawn request Mass = 0)
-	float DefaultSpawnMass = 1.0f;
-
-	// Flag: spawn requests are pending
-	std::atomic<bool> bHasPendingSpawnRequests{false};
-
 	//=============================================================================
-	// Stream Compaction Buffers (Phase 2 - Per-Polygon Collision)
+	// Stream Compaction (Delegated to FGPUStreamCompactionManager)
+	// GPU AABB filtering using parallel prefix sum for per-polygon collision
 	//=============================================================================
 
-	// Marked flags buffer (0 or 1 per particle)
-	FBufferRHIRef MarkedFlagsBufferRHI;
-	FShaderResourceViewRHIRef MarkedFlagsSRV;
-	FUnorderedAccessViewRHIRef MarkedFlagsUAV;
-
-	// Marked AABB index buffer (-1 or interaction index per particle)
-	FBufferRHIRef MarkedAABBIndexBufferRHI;
-	FShaderResourceViewRHIRef MarkedAABBIndexSRV;
-	FUnorderedAccessViewRHIRef MarkedAABBIndexUAV;
-
-	// Prefix sum buffer
-	FBufferRHIRef PrefixSumsBufferRHI;
-	FShaderResourceViewRHIRef PrefixSumsSRV;
-	FUnorderedAccessViewRHIRef PrefixSumsUAV;
-
-	// Block sums buffer for multi-block prefix sum
-	FBufferRHIRef BlockSumsBufferRHI;
-	FShaderResourceViewRHIRef BlockSumsSRV;
-	FUnorderedAccessViewRHIRef BlockSumsUAV;
-
-	// Compacted candidates buffer
-	FBufferRHIRef CompactedCandidatesBufferRHI;
-	FUnorderedAccessViewRHIRef CompactedCandidatesUAV;
-
-	// Total count buffer (single uint)
-	FBufferRHIRef TotalCountBufferRHI;
-	FUnorderedAccessViewRHIRef TotalCountUAV;
-
-	// Filter AABBs buffer (uploaded from CPU each frame)
-	FBufferRHIRef FilterAABBsBufferRHI;
-	FShaderResourceViewRHIRef FilterAABBsSRV;
-
-	// Staging buffers for GPU→CPU readback
-	FBufferRHIRef TotalCountStagingBufferRHI;
-	FBufferRHIRef CandidatesStagingBufferRHI;
-
-	// Stream compaction state
-	int32 FilteredCandidateCount = 0;
-	bool bHasFilteredCandidates = false;
-	int32 CurrentFilterAABBCount = 0;
-	bool bStreamCompactionBuffersAllocated = false;
-
-	// Helper methods for stream compaction
-	void AllocateStreamCompactionBuffers(FRHICommandListImmediate& RHICmdList);
-	void ReleaseStreamCompactionBuffers();
-	void DispatchStreamCompactionShaders(FRHICommandListImmediate& RHICmdList, int32 InParticleCount, int32 InNumAABBs, FShaderResourceViewRHIRef InParticleSRV);
+	// StreamCompactionManager handles all AABB filtering and correction functionality
+	TUniquePtr<FGPUStreamCompactionManager> StreamCompactionManager;
 
 	//=============================================================================
 	// Collision Feedback Buffers (Particle -> Player Interaction)

@@ -1,5 +1,6 @@
 // Copyright KawaiiFluid Team. All Rights Reserved.
 // GPUFluidSimulator - Particle Spawn System Functions
+// Public API delegates to FGPUSpawnManager for thread-safe spawn queue management
 
 #include "GPU/GPUFluidSimulator.h"
 #include "GPU/GPUFluidSimulatorShaders.h"
@@ -10,53 +11,42 @@ DECLARE_LOG_CATEGORY_EXTERN(LogGPUFluidSimulator, Log, All);
 
 //=============================================================================
 // GPU Particle Spawning (Thread-Safe)
+// Public API delegates to FGPUSpawnManager
 // CPU sends spawn requests, GPU creates particles via atomic counter
 // This eliminates race conditions between game thread and render thread
 //=============================================================================
 
 void FGPUFluidSimulator::AddSpawnRequest(const FVector3f& Position, const FVector3f& Velocity, float Mass)
 {
-	FScopeLock Lock(&SpawnRequestLock);
-
-	FGPUSpawnRequest Request;
-	Request.Position = Position;
-	Request.Velocity = Velocity;
-	Request.Mass = Mass;
-	Request.Radius = DefaultSpawnRadius;
-
-	PendingSpawnRequests.Add(Request);
-	bHasPendingSpawnRequests.store(true);
-
-	UE_LOG(LogGPUFluidSimulator, Verbose, TEXT("AddSpawnRequest: Pos=(%.2f, %.2f, %.2f), Vel=(%.2f, %.2f, %.2f)"),
-		Position.X, Position.Y, Position.Z, Velocity.X, Velocity.Y, Velocity.Z);
+	if (SpawnManager.IsValid())
+	{
+		SpawnManager->AddSpawnRequest(Position, Velocity, Mass);
+	}
 }
 
 void FGPUFluidSimulator::AddSpawnRequests(const TArray<FGPUSpawnRequest>& Requests)
 {
-	if (Requests.Num() == 0)
+	if (SpawnManager.IsValid())
 	{
-		return;
+		SpawnManager->AddSpawnRequests(Requests);
 	}
-
-	FScopeLock Lock(&SpawnRequestLock);
-
-	PendingSpawnRequests.Append(Requests);
-	bHasPendingSpawnRequests.store(true);
-
-	//UE_LOG(LogGPUFluidSimulator, Log, TEXT("AddSpawnRequests: Added %d spawn requests (total pending: %d)"),Requests.Num(), PendingSpawnRequests.Num());
 }
 
 void FGPUFluidSimulator::ClearSpawnRequests()
 {
-	FScopeLock Lock(&SpawnRequestLock);
-	PendingSpawnRequests.Empty();
-	bHasPendingSpawnRequests.store(false);
+	if (SpawnManager.IsValid())
+	{
+		SpawnManager->ClearSpawnRequests();
+	}
 }
 
 int32 FGPUFluidSimulator::GetPendingSpawnCount() const
 {
-	FScopeLock Lock(&SpawnRequestLock);
-	return PendingSpawnRequests.Num();
+	if (SpawnManager.IsValid())
+	{
+		return SpawnManager->GetPendingSpawnCount();
+	}
+	return 0;
 }
 
 void FGPUFluidSimulator::AddSpawnParticlesPass(
@@ -65,7 +55,7 @@ void FGPUFluidSimulator::AddSpawnParticlesPass(
 	FRDGBufferUAVRef ParticleCounterUAV,
 	const TArray<FGPUSpawnRequest>& SpawnRequests)
 {
-	if (SpawnRequests.Num() == 0)
+	if (SpawnRequests.Num() == 0 || !SpawnManager.IsValid())
 	{
 		return;
 	}
@@ -92,9 +82,9 @@ void FGPUFluidSimulator::AddSpawnParticlesPass(
 	PassParameters->ParticleCounter = ParticleCounterUAV;
 	PassParameters->SpawnRequestCount = SpawnRequests.Num();
 	PassParameters->MaxParticleCount = MaxParticleCount;
-	PassParameters->NextParticleID = NextParticleID.load();
-	PassParameters->DefaultRadius = DefaultSpawnRadius;
-	PassParameters->DefaultMass = DefaultSpawnMass;
+	PassParameters->NextParticleID = SpawnManager->GetNextParticleID();
+	PassParameters->DefaultRadius = SpawnManager->GetDefaultRadius();
+	PassParameters->DefaultMass = SpawnManager->GetDefaultMass();
 
 	const uint32 NumGroups = FMath::DivideAndRoundUp(SpawnRequests.Num(), FSpawnParticlesCS::ThreadGroupSize);
 
@@ -106,10 +96,10 @@ void FGPUFluidSimulator::AddSpawnParticlesPass(
 		FIntVector(NumGroups, 1, 1)
 	);
 
-	// Update next particle ID (atomic increment)
-	NextParticleID.fetch_add(SpawnRequests.Num());
+	// Update next particle ID via SpawnManager
+	SpawnManager->OnSpawnComplete(SpawnRequests.Num());
 
-	//UE_LOG(LogGPUFluidSimulator, Log, TEXT("SpawnParticlesPass: Spawned %d particles (NextID: %d)"), SpawnRequests.Num(), NextParticleID.load());
+	//UE_LOG(LogGPUFluidSimulator, Log, TEXT("SpawnParticlesPass: Spawned %d particles (NextID: %d)"), SpawnRequests.Num(), SpawnManager->GetNextParticleID());
 }
 
 //=============================================================================
