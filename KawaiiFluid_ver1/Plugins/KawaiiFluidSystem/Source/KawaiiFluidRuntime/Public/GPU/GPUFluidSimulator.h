@@ -213,6 +213,18 @@ public:
 		OutMax = SimulationBoundsMax;
 	}
 
+	/**
+	 * Set grid resolution preset for Z-Order sorting shader permutation
+	 * @param Preset - Grid resolution preset (Small/Medium/Large)
+	 */
+	void SetGridResolutionPreset(EGridResolutionPreset Preset)
+	{
+		if (SpatialHashManager.IsValid())
+		{
+			SpatialHashManager->SetGridResolutionPreset(Preset);
+		}
+	}
+
 
 	/** Get anisotropy parameters */
 	const FFluidAnisotropyParams& GetAnisotropyParams() const { return CachedAnisotropyParams; }

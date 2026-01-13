@@ -26,6 +26,79 @@ enum class EWorldCollisionMethod : uint8
 };
 
 /**
+ * Grid resolution preset for Z-Order sorting
+ *
+ * Controls the number of bits per axis for Morton code encoding.
+ * Higher bits = larger simulation bounds but more memory/computation.
+ *
+ * Bounds extent formula: GridResolution × CellSize
+ * - Small (6 bits):  64³ = 262,144 cells,  64 × CellSize bounds
+ * - Medium (7 bits): 128³ = 2,097,152 cells, 128 × CellSize bounds
+ * - Large (8 bits):  256³ = 16,777,216 cells, 256 × CellSize bounds
+ *
+ * For 100k particle simulations, Medium (7 bits) is recommended.
+ */
+UENUM(BlueprintType)
+enum class EGridResolutionPreset : uint8
+{
+	/** 6 bits per axis = 64³ cells (262,144 total)
+	 * Smallest bounds, fastest computation
+	 * Good for: Small-scale simulations, local effects */
+	Small UMETA(DisplayName = "Small"),
+
+	/** 7 bits per axis = 128³ cells (2,097,152 total)
+	 * Balanced bounds and performance
+	 * Good for: Medium-scale simulations, 100k particles */
+	Medium UMETA(DisplayName = "Medium"),
+
+	/** 8 bits per axis = 256³ cells (16,777,216 total)
+	 * Largest bounds, more computation
+	 * Good for: Large-scale simulations, environmental effects */
+	Large UMETA(DisplayName = "Large")
+};
+
+/** Helper functions for EGridResolutionPreset */
+namespace GridResolutionPresetHelper
+{
+	/** Get bits per axis from preset */
+	inline int32 GetAxisBits(EGridResolutionPreset Preset)
+	{
+		switch (Preset)
+		{
+		case EGridResolutionPreset::Small:  return 6;
+		case EGridResolutionPreset::Medium: return 7;
+		case EGridResolutionPreset::Large:  return 8;
+		default: return 7;
+		}
+	}
+
+	/** Get grid resolution per axis (2^bits) */
+	inline int32 GetGridResolution(EGridResolutionPreset Preset)
+	{
+		return 1 << GetAxisBits(Preset);
+	}
+
+	/** Get total cell count (resolution³) */
+	inline int32 GetMaxCells(EGridResolutionPreset Preset)
+	{
+		const int32 Res = GetGridResolution(Preset);
+		return Res * Res * Res;
+	}
+
+	/** Get display name for UI */
+	inline FString GetDisplayName(EGridResolutionPreset Preset)
+	{
+		switch (Preset)
+		{
+		case EGridResolutionPreset::Small:  return TEXT("Small");
+		case EGridResolutionPreset::Medium: return TEXT("Medium");
+		case EGridResolutionPreset::Large:  return TEXT("Large");
+		default: return TEXT("Unknown");
+		}
+	}
+}
+
+/**
  * Debug visualization modes for fluid particles
  */
 UENUM(BlueprintType)
@@ -155,6 +228,9 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidSimulationParams
 
 	/** Use GPU compute shaders for physics simulation */
 	bool bUseGPUSimulation = false;
+
+	/** Grid resolution preset for Z-Order sorting (determines shader permutation) */
+	EGridResolutionPreset GridResolutionPreset = EGridResolutionPreset::Medium;
 
 	/**
 	 * Simulation origin (component world location)

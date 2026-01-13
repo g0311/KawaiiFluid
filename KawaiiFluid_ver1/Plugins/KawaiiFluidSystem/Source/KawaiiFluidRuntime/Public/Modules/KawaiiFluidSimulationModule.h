@@ -135,13 +135,26 @@ public:
 	 * Multiple modules sharing the same Volume can interact with each other.
 	 *
 	 * When nullptr, the module uses its own internal volume settings
-	 * configured below (CellSize).
+	 * configured below (GridResolutionPreset).
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Simulation Volume", meta = (DisplayName = "Target Volume (External)"))
 	TObjectPtr<AKawaiiFluidSimulationVolume> TargetSimulationVolume = nullptr;
 
 	/**
-	 * Cell size for Z-Order spatial hashing grid (read-only, auto-derived).
+	 * Grid resolution preset for internal Z-Order sorting (when no External Volume)
+	 * Controls the simulation bounds size and memory usage.
+	 * - Small (64³): Compact bounds, fastest
+	 * - Medium (128³): Balanced, recommended for 100k particles
+	 * - Large (256³): Large bounds, more memory
+	 *
+	 * Ignored when TargetSimulationVolume is set (uses external volume's preset).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Simulation Volume",
+		meta = (EditCondition = "TargetSimulationVolume == nullptr", EditConditionHides))
+	EGridResolutionPreset GridResolutionPreset = EGridResolutionPreset::Medium;
+
+	/**
+	 * Cell size for Z-Order grid (read-only, auto-derived).
 	 *
 	 * This value is automatically determined and cannot be set directly:
 	 * - Internal Volume Mode: Derived from Preset's SmoothingRadius (CellSize = SmoothingRadius)
@@ -154,22 +167,19 @@ public:
 	float CellSize = 20.0f;
 
 	/**
-	 * Grid resolution bits per axis (shader constant, read-only)
-	 * Current: 7 bits = 128 grid resolution per axis
+	 * Grid resolution bits per axis (derived from GridResolutionPreset or external volume)
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Simulation Volume|Info")
 	int32 GridAxisBits = 7;
 
 	/**
 	 * Grid resolution per axis (2^GridAxisBits)
-	 * Current: 128 cells per axis
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Simulation Volume|Info")
 	int32 GridResolution = 128;
 
 	/**
-	 * Total number of cells (GridResolution^3)
-	 * Current: 2,097,152 cells
+	 * Total number of cells (GridResolution³)
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Simulation Volume|Info")
 	int32 MaxCells = 2097152;

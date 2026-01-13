@@ -15,12 +15,7 @@
 
 UKawaiiFluidSimulationModule::UKawaiiFluidSimulationModule()
 {
-	// Initialize grid values from shader constants
-	GridAxisBits = GPU_MORTON_GRID_AXIS_BITS;
-	GridResolution = GPU_MORTON_GRID_SIZE;
-	MaxCells = GPU_MAX_CELLS;
-
-	// Calculate initial bounds
+	// Calculate initial bounds (uses GridResolutionPreset default = Medium)
 	RecalculateVolumeBounds();
 }
 
@@ -112,6 +107,15 @@ void UKawaiiFluidSimulationModule::PostEditChangeProperty(FPropertyChangedEvent&
 		}
 
 		UpdateVolumeInfoDisplay();
+	}
+	// GridResolutionPreset 변경 시 (Internal Volume용)
+	else if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationModule, GridResolutionPreset))
+	{
+		// Only update if not using external volume
+		if (!TargetSimulationVolume)
+		{
+			UpdateVolumeInfoDisplay();
+		}
 	}
 	// Override 값 변경 시
 	else if (PropertyName.ToString().StartsWith(TEXT("bOverride_")) ||
@@ -1582,6 +1586,11 @@ void UKawaiiFluidSimulationModule::RecalculateVolumeBounds()
 	// Ensure valid CellSize
 	CellSize = FMath::Max(CellSize, 1.0f);
 
+	// Update grid parameters from preset
+	GridAxisBits = GridResolutionPresetHelper::GetAxisBits(GridResolutionPreset);
+	GridResolution = GridResolutionPresetHelper::GetGridResolution(GridResolutionPreset);
+	MaxCells = GridResolutionPresetHelper::GetMaxCells(GridResolutionPreset);
+
 	// Calculate bounds extent from grid resolution and cell size
 	BoundsExtent = static_cast<float>(GridResolution) * CellSize;
 
@@ -1601,6 +1610,10 @@ void UKawaiiFluidSimulationModule::RecalculateVolumeBounds()
 	// Sync all bounds since OwnedVolumeComponent doesn't have a proper transform
 	if (OwnedVolumeComponent)
 	{
+		OwnedVolumeComponent->GridResolutionPreset = GridResolutionPreset;
+		OwnedVolumeComponent->GridAxisBits = GridAxisBits;
+		OwnedVolumeComponent->GridResolution = GridResolution;
+		OwnedVolumeComponent->MaxCells = MaxCells;
 		OwnedVolumeComponent->CellSize = CellSize;
 		OwnedVolumeComponent->BoundsExtent = BoundsExtent;
 		OwnedVolumeComponent->WorldBoundsMin = WorldBoundsMin;
@@ -1615,7 +1628,8 @@ void UKawaiiFluidSimulationModule::UpdateVolumeInfoDisplay()
 		// Read info from external volume
 		if (UKawaiiFluidSimulationVolumeComponent* ExternalVolume = TargetSimulationVolume->GetVolumeComponent())
 		{
-			// Copy read-only info from external volume
+			// Copy all info from external volume (preset is controlled by external)
+			GridResolutionPreset = ExternalVolume->GridResolutionPreset;
 			GridAxisBits = ExternalVolume->GridAxisBits;
 			GridResolution = ExternalVolume->GridResolution;
 			MaxCells = ExternalVolume->MaxCells;
@@ -1632,7 +1646,7 @@ void UKawaiiFluidSimulationModule::UpdateVolumeInfoDisplay()
 		{
 			CellSize = Preset->SmoothingRadius;
 		}
-		// Calculate bounds from internal settings
+		// Calculate bounds from internal settings (uses GridResolutionPreset)
 		RecalculateVolumeBounds();
 	}
 }

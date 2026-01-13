@@ -63,8 +63,12 @@ FRDGBufferRef FGPUSpatialHashManager::ExecuteZOrderSortingPipeline(
 		return InParticleBuffer;
 	}
 
+	// Get grid parameters from current preset
+	const int32 GridAxisBits = GridResolutionPresetHelper::GetAxisBits(GridResolutionPreset);
+	const int32 GridSize = GridResolutionPresetHelper::GetGridResolution(GridResolutionPreset);
+	const int32 CellCount = GridResolutionPresetHelper::GetMaxCells(GridResolutionPreset);
+
 	const int32 NumBlocks = FMath::DivideAndRoundUp(CurrentParticleCount, 256);
-	const int32 CellCount = GPU_MAX_CELLS;
 
 	//=========================================================================
 	// Step 1: Create Morton code and index buffers
@@ -156,20 +160,26 @@ void FGPUSpatialHashManager::AddComputeMortonCodesPass(
 		UE_LOG(LogGPUSpatialHash, Error, TEXT("Morton code ERROR: Invalid CellSize (%.4f)!"), Params.CellSize);
 	}
 
+	// Get grid parameters from current preset
+	const int32 GridSize = GridResolutionPresetHelper::GetGridResolution(GridResolutionPreset);
+
 	// Validate bounds fit within Morton code capacity
 	const float CellSizeToUse = FMath::Max(Params.CellSize, 0.001f);
-	const float MaxExtent = GPU_MORTON_GRID_SIZE * CellSizeToUse;
+	const float MaxExtent = static_cast<float>(GridSize) * CellSizeToUse;
 	const FVector3f BoundsExtent = SimulationBoundsMax - SimulationBoundsMin;
 
 	if (BoundsExtent.X > MaxExtent || BoundsExtent.Y > MaxExtent || BoundsExtent.Z > MaxExtent)
 	{
 		UE_LOG(LogGPUSpatialHash, Warning,
-			TEXT("Morton code bounds overflow! BoundsExtent(%.1f, %.1f, %.1f) exceeds MaxExtent(%.1f)."),
-			BoundsExtent.X, BoundsExtent.Y, BoundsExtent.Z, MaxExtent);
+			TEXT("Morton code bounds overflow! BoundsExtent(%.1f, %.1f, %.1f) exceeds MaxExtent(%.1f). Preset=%d"),
+			BoundsExtent.X, BoundsExtent.Y, BoundsExtent.Z, MaxExtent, static_cast<int32>(GridResolutionPreset));
 	}
 
+	// Get shader with correct permutation
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
-	TShaderMapRef<FComputeMortonCodesCS> ComputeShader(ShaderMap);
+	FComputeMortonCodesCS::FPermutationDomain PermutationVector;
+	PermutationVector.Set<FGridResolutionDim>(GridResolutionPermutation::FromPreset(GridResolutionPreset));
+	TShaderMapRef<FComputeMortonCodesCS> ComputeShader(ShaderMap, PermutationVector);
 
 	FComputeMortonCodesCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FComputeMortonCodesCS::FParameters>();
 	PassParameters->Particles = ParticlesSRV;
@@ -184,7 +194,7 @@ void FGPUSpatialHashManager::AddComputeMortonCodesPass(
 
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
-		RDG_EVENT_NAME("GPUFluid::ComputeMortonCodes(%d)", CurrentParticleCount),
+		RDG_EVENT_NAME("GPUFluid::ComputeMortonCodes(%d,Preset=%d)", CurrentParticleCount, static_cast<int32>(GridResolutionPreset)),
 		ComputeShader,
 		PassParameters,
 		FIntVector(NumGroups, 1, 1)
@@ -200,6 +210,19 @@ void FGPUSpatialHashManager::AddRadixSortPasses(
 	if (ParticleCount <= 0)
 	{
 		return;
+	}
+
+	// Calculate radix sort passes based on Morton code bits from preset
+	// Morton code bits = GridAxisBits × 3 (X, Y, Z interleaved)
+	// Sort passes = ceil(MortonCodeBits / RadixBits)
+	// Round up to even number for ping-pong buffer correctness
+	const int32 GridAxisBits = GridResolutionPresetHelper::GetAxisBits(GridResolutionPreset);
+	const int32 MortonCodeBits = GridAxisBits * 3;
+	int32 RadixSortPasses = (MortonCodeBits + GPU_RADIX_BITS - 1) / GPU_RADIX_BITS;
+	// Round up to even for ping-pong buffer to end in original buffer
+	if (RadixSortPasses % 2 != 0)
+	{
+		RadixSortPasses++;
 	}
 
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
@@ -224,9 +247,7 @@ void FGPUSpatialHashManager::AddRadixSortPasses(
 	FRDGBufferRef Values[2] = { InOutParticleIndices, ValuesTemp };
 	int32 BufferIndex = 0;
 
-	static_assert(GPU_RADIX_SORT_PASSES % 2 == 0, "GPU_RADIX_SORT_PASSES must be even");
-
-	for (int32 Pass = 0; Pass < GPU_RADIX_SORT_PASSES; ++Pass)
+	for (int32 Pass = 0; Pass < RadixSortPasses; ++Pass)
 	{
 		const int32 BitOffset = Pass * GPU_RADIX_BITS;
 		const int32 SrcIndex = BufferIndex;
@@ -326,11 +347,20 @@ void FGPUSpatialHashManager::AddComputeCellStartEndPass(
 	int32 CurrentParticleCount)
 {
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
-	const int32 CellCount = GPU_MAX_CELLS;
+
+	// Get cell count from preset
+	const int32 CellCount = GridResolutionPresetHelper::GetMaxCells(GridResolutionPreset);
+
+	// Create permutation vector for current preset
+	FClearCellIndicesCS::FPermutationDomain ClearPermutation;
+	ClearPermutation.Set<FGridResolutionDim>(GridResolutionPermutation::FromPreset(GridResolutionPreset));
+
+	FComputeCellStartEndCS::FPermutationDomain CellStartEndPermutation;
+	CellStartEndPermutation.Set<FGridResolutionDim>(GridResolutionPermutation::FromPreset(GridResolutionPreset));
 
 	// Step 1: Clear cell indices
 	{
-		TShaderMapRef<FClearCellIndicesCS> ClearShader(ShaderMap);
+		TShaderMapRef<FClearCellIndicesCS> ClearShader(ShaderMap, ClearPermutation);
 		FClearCellIndicesCS::FParameters* ClearParams = GraphBuilder.AllocParameters<FClearCellIndicesCS::FParameters>();
 		ClearParams->CellStart = CellStartUAV;
 		ClearParams->CellEnd = CellEndUAV;
@@ -339,7 +369,7 @@ void FGPUSpatialHashManager::AddComputeCellStartEndPass(
 
 		FComputeShaderUtils::AddPass(
 			GraphBuilder,
-			RDG_EVENT_NAME("GPUFluid::ClearCellIndices(%d)", CellCount),
+			RDG_EVENT_NAME("GPUFluid::ClearCellIndices(%d,Preset=%d)", CellCount, static_cast<int32>(GridResolutionPreset)),
 			ClearShader,
 			ClearParams,
 			FIntVector(NumGroups, 1, 1)
@@ -348,7 +378,7 @@ void FGPUSpatialHashManager::AddComputeCellStartEndPass(
 
 	// Step 2: Compute cell start/end
 	{
-		TShaderMapRef<FComputeCellStartEndCS> ComputeShader(ShaderMap);
+		TShaderMapRef<FComputeCellStartEndCS> ComputeShader(ShaderMap, CellStartEndPermutation);
 		FComputeCellStartEndCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FComputeCellStartEndCS::FParameters>();
 		PassParameters->SortedMortonCodes = SortedMortonCodesSRV;
 		PassParameters->CellStart = CellStartUAV;
@@ -359,7 +389,7 @@ void FGPUSpatialHashManager::AddComputeCellStartEndPass(
 
 		FComputeShaderUtils::AddPass(
 			GraphBuilder,
-			RDG_EVENT_NAME("GPUFluid::ComputeCellStartEnd(%d)", CurrentParticleCount),
+			RDG_EVENT_NAME("GPUFluid::ComputeCellStartEnd(%d,Preset=%d)", CurrentParticleCount, static_cast<int32>(GridResolutionPreset)),
 			ComputeShader,
 			PassParameters,
 			FIntVector(NumGroups, 1, 1)

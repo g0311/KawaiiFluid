@@ -49,41 +49,85 @@ float CellSize;        // Grid cell size (= SmoothingRadius)
 //=============================================================================
 // Morton Code Encoding Functions
 // Interleaves bits: x0y0z0 x1y1z1 x2y2z2 ...
-// For 7-bit input: produces 21-bit Morton code
+// Supports 6, 7, and 8-bit presets (Small, Medium, Large)
 //=============================================================================
 
-// Expand 7-bit integer to 21-bit with 2-bit gaps between each bit
-// Input:  0000 0000 0000 0000 0000 000x xxxx xx (7 bits, 0-127)
-// Output: 0x0 0x00 x00x 00x0 0x00 x00x 00x (21 bits, spread out)
-uint ExpandBits7(uint v)
+//-----------------------------------------------------------------------------
+// 6-bit Morton Code (Small preset: 64³ cells)
+// Each coordinate is 0-63, Morton code is 18 bits
+//-----------------------------------------------------------------------------
+uint ExpandBits6(uint v)
 {
-    // Clamp to 7 bits first
-    v = v & 0x7Fu;  // 127 max
-
-    // Bit manipulation to spread 7 bits across 21 bits (with 2-bit gaps)
-    // Similar algorithm to 10-bit version but adjusted for 7 bits
-    v = (v | (v << 8)) & 0x0000F00Fu;  // 0000 0000 0000 0000 xxxx 0000 0000 xxxx
-    v = (v | (v << 4)) & 0x000C30C3u;  // 0000 0000 0000 xx00 00xx 00xx 00xx 00xx
-    v = (v | (v << 2)) & 0x00249249u;  // 0000 0000 00x0 0x00 x00x 00x0 0x00 x00x
+    v = v & 0x3Fu;  // 63 max (6 bits)
+    v = (v | (v << 8)) & 0x0000F00Fu;
+    v = (v | (v << 4)) & 0x000C30C3u;
+    v = (v | (v << 2)) & 0x00249249u;
     return v;
 }
 
-// Compute 21-bit Morton Code for 3D point
-// Each coordinate is quantized to 7 bits (0-127)
+uint Morton3D_6bit(uint x, uint y, uint z)
+{
+    x = min(x, 63u);
+    y = min(y, 63u);
+    z = min(z, 63u);
+    return (ExpandBits6(z) << 2) | (ExpandBits6(y) << 1) | ExpandBits6(x);
+}
+
+//-----------------------------------------------------------------------------
+// 7-bit Morton Code (Medium preset: 128³ cells)
+// Each coordinate is 0-127, Morton code is 21 bits
+//-----------------------------------------------------------------------------
+uint ExpandBits7(uint v)
+{
+    v = v & 0x7Fu;  // 127 max (7 bits)
+    v = (v | (v << 8)) & 0x0000F00Fu;
+    v = (v | (v << 4)) & 0x000C30C3u;
+    v = (v | (v << 2)) & 0x00249249u;
+    return v;
+}
+
 uint Morton3D_7bit(uint x, uint y, uint z)
 {
-    // Clamp to 7 bits (0-127)
-    x = min(x, MORTON_MAX_VALUE);
-    y = min(y, MORTON_MAX_VALUE);
-    z = min(z, MORTON_MAX_VALUE);
+    x = min(x, 127u);
+    y = min(y, 127u);
+    z = min(z, 127u);
+    return (ExpandBits7(z) << 2) | (ExpandBits7(y) << 1) | ExpandBits7(x);
+}
 
-    // Interleave bits: z takes highest bits, then y, then x
-    // Result: z6y6x6 z5y5x5 z4y4x4 ... z0y0x0 (21 bits total)
-    uint xx = ExpandBits7(x);
-    uint yy = ExpandBits7(y);
-    uint zz = ExpandBits7(z);
+//-----------------------------------------------------------------------------
+// 8-bit Morton Code (Large preset: 256³ cells)
+// Each coordinate is 0-255, Morton code is 24 bits
+//-----------------------------------------------------------------------------
+uint ExpandBits8(uint v)
+{
+    v = v & 0xFFu;  // 255 max (8 bits)
+    v = (v | (v << 16)) & 0x030000FFu;
+    v = (v | (v << 8)) & 0x0300F00Fu;
+    v = (v | (v << 4)) & 0x030C30C3u;
+    v = (v | (v << 2)) & 0x09249249u;
+    return v;
+}
 
-    return (zz << 2) | (yy << 1) | xx;
+uint Morton3D_8bit(uint x, uint y, uint z)
+{
+    x = min(x, 255u);
+    y = min(y, 255u);
+    z = min(z, 255u);
+    return (ExpandBits8(z) << 2) | (ExpandBits8(y) << 1) | ExpandBits8(x);
+}
+
+//-----------------------------------------------------------------------------
+// Generic Morton3D function - selects based on MORTON_GRID_AXIS_BITS
+//-----------------------------------------------------------------------------
+uint Morton3D(uint x, uint y, uint z)
+{
+#if MORTON_GRID_AXIS_BITS == 6
+    return Morton3D_6bit(x, y, z);
+#elif MORTON_GRID_AXIS_BITS == 8
+    return Morton3D_8bit(x, y, z);
+#else  // Default to 7-bit (Medium)
+    return Morton3D_7bit(x, y, z);
+#endif
 }
 
 // Legacy 10-bit version (for reference, not used)
@@ -128,7 +172,8 @@ uint Morton3DFromCell(int3 CellCoord, int3 GridMin)
     uint3 uoffset = uint3(max(offset, int3(0, 0, 0)));
     uoffset = min(uoffset, uint3(MORTON_MAX_VALUE, MORTON_MAX_VALUE, MORTON_MAX_VALUE));
 
-    return Morton3D_7bit(uoffset.x, uoffset.y, uoffset.z);
+    // Use preset-specific Morton function
+    return Morton3D(uoffset.x, uoffset.y, uoffset.z);
 }
 
 //=============================================================================
@@ -153,11 +198,11 @@ void ComputeMortonCodesCS(uint3 DispatchThreadId : SV_DispatchThreadID)
     // Normalize position to [0, 1] range within simulation bounds
     float3 normalizedPos = saturate((pos - BoundsMin) / BoundsExtent);
 
-    // Quantize to 7-bit integer (0-127) - matches MORTON_GRID_SIZE
+    // Quantize to grid-bit integer (matches MORTON_GRID_SIZE)
     uint3 quantized = uint3(normalizedPos * float(MORTON_MAX_VALUE));
 
-    // Compute 21-bit Morton code (IS the Cell ID)
-    uint mortonCode = Morton3D_7bit(quantized.x, quantized.y, quantized.z);
+    // Compute Morton code using preset-specific function
+    uint mortonCode = Morton3D(quantized.x, quantized.y, quantized.z);
 
     // Output Morton code and initial particle index
     MortonCodes[idx] = mortonCode;

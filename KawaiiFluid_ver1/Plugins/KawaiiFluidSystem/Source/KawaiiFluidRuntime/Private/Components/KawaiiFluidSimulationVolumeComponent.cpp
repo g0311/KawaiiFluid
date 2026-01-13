@@ -14,12 +14,7 @@ UKawaiiFluidSimulationVolumeComponent::UKawaiiFluidSimulationVolumeComponent()
 	// Enable ticking in editor for debug visualization
 	bTickInEditor = true;
 
-	// Initialize from shader constants
-	GridAxisBits = GPU_MORTON_GRID_AXIS_BITS;
-	GridResolution = GPU_MORTON_GRID_SIZE;
-	MaxCells = GPU_MAX_CELLS;
-
-	// Calculate initial bounds
+	// Calculate initial bounds (uses GridResolutionPreset default = Medium)
 	RecalculateBounds();
 }
 
@@ -74,7 +69,9 @@ void UKawaiiFluidSimulationVolumeComponent::PostEditChangeProperty(FPropertyChan
 	const FName PropertyName = PropertyChangedEvent.Property ?
 		PropertyChangedEvent.Property->GetFName() : NAME_None;
 
-	if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationVolumeComponent, CellSize))
+	// Handle both CellSize and GridResolutionPreset changes
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationVolumeComponent, CellSize) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationVolumeComponent, GridResolutionPreset))
 	{
 		RecalculateBounds();
 
@@ -94,6 +91,11 @@ void UKawaiiFluidSimulationVolumeComponent::RecalculateBounds()
 {
 	// Ensure valid CellSize
 	CellSize = FMath::Max(CellSize, 1.0f);
+
+	// Update grid parameters from preset
+	GridAxisBits = GridResolutionPresetHelper::GetAxisBits(GridResolutionPreset);
+	GridResolution = GridResolutionPresetHelper::GetGridResolution(GridResolutionPreset);
+	MaxCells = GridResolutionPresetHelper::GetMaxCells(GridResolutionPreset);
 
 	// Calculate bounds extent from grid resolution and cell size
 	BoundsExtent = static_cast<float>(GridResolution) * CellSize;

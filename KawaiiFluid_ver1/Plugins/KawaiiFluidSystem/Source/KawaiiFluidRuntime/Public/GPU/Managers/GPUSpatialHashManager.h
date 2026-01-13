@@ -7,6 +7,7 @@
 #include "RenderGraphResources.h"
 #include "RHIResources.h"
 #include "GPU/GPUFluidParticle.h"
+#include "Core/KawaiiFluidSimulationTypes.h"  // For EGridResolutionPreset
 
 class FRDGBuilder;
 
@@ -68,6 +69,10 @@ public:
 	/** Enable/disable Z-Order sorting */
 	void SetZOrderSortingEnabled(bool bEnabled) { bUseZOrderSorting = bEnabled; }
 	bool IsZOrderSortingEnabled() const { return bUseZOrderSorting; }
+
+	/** Set grid resolution preset for shader permutation selection */
+	void SetGridResolutionPreset(EGridResolutionPreset Preset) { GridResolutionPreset = Preset; }
+	EGridResolutionPreset GetGridResolutionPreset() const { return GridResolutionPreset; }
 
 	//=========================================================================
 	// Z-Order Sorting Pipeline
@@ -143,6 +148,9 @@ private:
 	//=========================================================================
 
 	bool bUseZOrderSorting = true;
+
+	// Grid resolution preset for shader permutation selection
+	EGridResolutionPreset GridResolutionPreset = EGridResolutionPreset::Medium;
 
 	// Simulation bounds for Morton code computation
 	FVector3f SimulationBoundsMin = FVector3f(-1280.0f, -1280.0f, -1280.0f);

@@ -50,8 +50,18 @@ public:
 	//========================================
 
 	/**
+	 * Grid resolution preset for Z-Order sorting
+	 * Controls the simulation bounds size and memory usage.
+	 * - Small (64³): Compact bounds, fastest
+	 * - Medium (128³): Balanced, recommended for 100k particles
+	 * - Large (256³): Large bounds, more memory
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Z-Order Space")
+	EGridResolutionPreset GridResolutionPreset = EGridResolutionPreset::Medium;
+
+	/**
 	 * Cell size for Z-Order grid (should match SmoothingRadius of fluid presets)
-	 * Determines the spatial hash grid resolution.
+	 * Determines the grid cell size for neighbor search.
 	 * Smaller values = more precision but smaller bounds extent.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Z-Order Space", meta = (ClampMin = "1.0", ClampMax = "1000.0"))
@@ -62,22 +72,19 @@ public:
 	//========================================
 
 	/**
-	 * Grid resolution bits per axis (shader constant, read-only)
-	 * Current: 7 bits = 128 grid resolution per axis
+	 * Grid resolution bits per axis (derived from GridResolutionPreset)
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Z-Order Space|Info")
 	int32 GridAxisBits = 7;
 
 	/**
 	 * Grid resolution per axis (2^GridAxisBits)
-	 * Current: 128 cells per axis
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Z-Order Space|Info")
 	int32 GridResolution = 128;
 
 	/**
-	 * Total number of cells (GridResolution^3)
-	 * Current: 2,097,152 cells
+	 * Total number of cells (GridResolution³)
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Z-Order Space|Info")
 	int32 MaxCells = 2097152;
@@ -152,6 +159,14 @@ public:
 	/** Get bounds extent */
 	UFUNCTION(BlueprintPure, Category = "Z-Order Space")
 	float GetBoundsExtent() const { return BoundsExtent; }
+
+	/** Get grid resolution preset */
+	UFUNCTION(BlueprintPure, Category = "Z-Order Space")
+	EGridResolutionPreset GetGridResolutionPreset() const { return GridResolutionPreset; }
+
+	/** Get grid axis bits */
+	UFUNCTION(BlueprintPure, Category = "Z-Order Space")
+	int32 GetGridAxisBits() const { return GridAxisBits; }
 
 	//========================================
 	// Registration (for Subsystem tracking)

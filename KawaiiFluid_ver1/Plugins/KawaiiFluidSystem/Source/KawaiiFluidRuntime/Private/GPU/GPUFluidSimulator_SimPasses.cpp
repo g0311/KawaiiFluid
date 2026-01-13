@@ -93,7 +93,18 @@ void FGPUFluidSimulator::AddSolveDensityPressurePass(
 	const FGPUFluidSimulationParams& Params)
 {
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
-	TShaderMapRef<FSolveDensityPressureCS> ComputeShader(ShaderMap);
+
+	// Get GridResolutionPreset for shader permutation (Z-Order neighbor search)
+	EGridResolutionPreset GridPreset = EGridResolutionPreset::Medium;
+	if (SpatialHashManager.IsValid())
+	{
+		GridPreset = SpatialHashManager->GetGridResolutionPreset();
+	}
+
+	// Create permutation vector and get shader
+	FSolveDensityPressureCS::FPermutationDomain PermutationVector;
+	PermutationVector.Set<FGridResolutionDim>(GridResolutionPermutation::FromPreset(GridPreset));
+	TShaderMapRef<FSolveDensityPressureCS> ComputeShader(ShaderMap, PermutationVector);
 
 	FSolveDensityPressureCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FSolveDensityPressureCS::FParameters>();
 	PassParameters->Particles = InParticlesUAV;

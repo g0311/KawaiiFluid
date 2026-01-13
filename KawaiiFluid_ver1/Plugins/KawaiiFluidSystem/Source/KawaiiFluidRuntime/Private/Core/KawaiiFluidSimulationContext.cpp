@@ -408,25 +408,27 @@ void UKawaiiFluidSimulationContext::SimulateGPU(
 	// Set simulation bounds for Z-Order sorting (Morton code)
 	// Priority: TargetVolumeComponent bounds > Preset bounds + SimulationOrigin
 	FVector3f WorldBoundsMin, WorldBoundsMax;
+	EGridResolutionPreset GridPreset = Params.GridResolutionPreset;
 
 	if (UKawaiiFluidSimulationVolumeComponent* Volume = TargetVolumeComponent.Get())
 	{
-		// Use Volume's world-space bounds directly
+		// Use Volume's world-space bounds and GridResolutionPreset
 		WorldBoundsMin = FVector3f(Volume->GetWorldBoundsMin());
 		WorldBoundsMax = FVector3f(Volume->GetWorldBoundsMax());
+		GridPreset = Volume->GetGridResolutionPreset();
 	}
 	else
 	{
-		// Fallback: Calculate bounds from SmoothingRadius
-		// GridAxisBits=7 → GridResolution=128, BoundsExtent = 128 * SmoothingRadius
-		constexpr int32 GridResolution = 128;
-		const float BoundsExtent = GridResolution * Preset->SmoothingRadius;
+		// Fallback: Calculate bounds from GridResolutionPreset and SmoothingRadius
+		const int32 GridResolution = GridResolutionPresetHelper::GetGridResolution(GridPreset);
+		const float BoundsExtent = static_cast<float>(GridResolution) * Preset->SmoothingRadius;
 		const float HalfExtent = BoundsExtent * 0.5f;
 		WorldBoundsMin = FVector3f(-HalfExtent) + FVector3f(Params.SimulationOrigin);
 		WorldBoundsMax = FVector3f(HalfExtent) + FVector3f(Params.SimulationOrigin);
 	}
 
 	GPUSimulator->SetSimulationBounds(WorldBoundsMin, WorldBoundsMax);
+	GPUSimulator->SetGridResolutionPreset(GridPreset);
 
 	// =====================================================
 	// GPU-Only Mode: No CPU Particles array dependency

@@ -8,6 +8,7 @@
 #include "RenderGraphResources.h"
 #include "RenderGraphUtils.h"
 #include "GPU/GPUFluidParticle.h"
+#include "Core/KawaiiFluidSimulationTypes.h"  // For EGridResolutionPreset
 
 // Spatial hash constants (must match FluidSpatialHash.ush)
 #define GPU_SPATIAL_HASH_SIZE 65536
@@ -16,6 +17,63 @@
 // Neighbor caching constants
 // 64 neighbors is sufficient for typical SPH simulations (avg ~30-40 neighbors)
 #define GPU_MAX_NEIGHBORS_PER_PARTICLE 64
+
+//=============================================================================
+// Grid Resolution Permutation
+// Enables different grid sizes (64³, 128³, 256³) via shader permutation
+//=============================================================================
+
+/**
+ * Grid Resolution Permutation Dimension
+ *
+ * Permutation Values:
+ *   0 = Small  (6 bits, 64³ cells,    262,144 max cells)
+ *   1 = Medium (7 bits, 128³ cells, 2,097,152 max cells)
+ *   2 = Large  (8 bits, 256³ cells, 16,777,216 max cells)
+ */
+class FGridResolutionDim : SHADER_PERMUTATION_RANGE_INT("GRID_RESOLUTION_PRESET", 0, 3);
+
+/** Helper to get Morton grid constants from permutation ID */
+namespace GridResolutionPermutation
+{
+	/** Get axis bits for a permutation index */
+	inline int32 GetAxisBits(int32 PermutationId)
+	{
+		switch (PermutationId)
+		{
+		case 0: return 6;  // Small
+		case 1: return 7;  // Medium
+		case 2: return 8;  // Large
+		default: return 7;
+		}
+	}
+
+	/** Get grid resolution for a permutation index */
+	inline int32 GetGridResolution(int32 PermutationId)
+	{
+		return 1 << GetAxisBits(PermutationId);
+	}
+
+	/** Get max cells for a permutation index */
+	inline int32 GetMaxCells(int32 PermutationId)
+	{
+		const int32 Res = GetGridResolution(PermutationId);
+		return Res * Res * Res;
+	}
+
+	/** Get radix sort passes needed for Morton code bits */
+	inline int32 GetRadixSortPasses(int32 PermutationId)
+	{
+		const int32 MortonCodeBits = GetAxisBits(PermutationId) * 3;
+		return (MortonCodeBits + 3) / 4;  // ceil(bits / 4)
+	}
+
+	/** Convert EGridResolutionPreset to permutation index */
+	inline int32 FromPreset(EGridResolutionPreset Preset)
+	{
+		return static_cast<int32>(Preset);
+	}
+}
 
 //=============================================================================
 // Predict Positions Compute Shader
@@ -171,6 +229,9 @@ public:
 	DECLARE_GLOBAL_SHADER(FSolveDensityPressureCS);
 	SHADER_USE_PARAMETER_STRUCT(FSolveDensityPressureCS, FGlobalShader);
 
+	// Permutation domain for grid resolution (Z-Order neighbor search)
+	using FPermutationDomain = TShaderPermutationDomain<FGridResolutionDim>;
+
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, Particles)
 		// Hash table mode (legacy)
@@ -223,6 +284,17 @@ public:
 		OutEnvironment.SetDefine(TEXT("SPATIAL_HASH_SIZE"), GPU_SPATIAL_HASH_SIZE);
 		OutEnvironment.SetDefine(TEXT("MAX_PARTICLES_PER_CELL"), GPU_MAX_PARTICLES_PER_CELL);
 		OutEnvironment.SetDefine(TEXT("MAX_NEIGHBORS_PER_PARTICLE"), GPU_MAX_NEIGHBORS_PER_PARTICLE);
+
+		// Get grid resolution from permutation for Z-Order neighbor search
+		const FPermutationDomain PermutationVector(Parameters.PermutationId);
+		const int32 GridPreset = PermutationVector.Get<FGridResolutionDim>();
+		const int32 AxisBits = GridResolutionPermutation::GetAxisBits(GridPreset);
+		const int32 GridSize = GridResolutionPermutation::GetGridResolution(GridPreset);
+		const int32 MaxCells = GridResolutionPermutation::GetMaxCells(GridPreset);
+
+		OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), AxisBits);
+		OutEnvironment.SetDefine(TEXT("MORTON_GRID_SIZE"), GridSize);
+		OutEnvironment.SetDefine(TEXT("MAX_CELLS"), MaxCells);
 	}
 };
 
@@ -1551,12 +1623,17 @@ public:
  * Compute Morton Codes Compute Shader
  * Converts 3D particle positions to 1D Morton codes for spatial sorting
  * IMPORTANT: Uses PredictedPosition to match Solver's neighbor search
+ *
+ * Supports GridResolutionPreset permutation (Small/Medium/Large)
  */
 class FComputeMortonCodesCS : public FGlobalShader
 {
 public:
 	DECLARE_GLOBAL_SHADER(FComputeMortonCodesCS);
 	SHADER_USE_PARAMETER_STRUCT(FComputeMortonCodesCS, FGlobalShader);
+
+	// Permutation domain for grid resolution
+	using FPermutationDomain = TShaderPermutationDomain<FGridResolutionDim>;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		// Full particle structure to access PredictedPosition (must match Solver)
@@ -1582,9 +1659,17 @@ public:
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-		OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), GPU_MORTON_GRID_AXIS_BITS);
-		OutEnvironment.SetDefine(TEXT("MORTON_GRID_SIZE"), GPU_MORTON_GRID_SIZE);
-		OutEnvironment.SetDefine(TEXT("MAX_CELLS"), GPU_MAX_CELLS);
+
+		// Get grid resolution from permutation
+		const FPermutationDomain PermutationVector(Parameters.PermutationId);
+		const int32 GridPreset = PermutationVector.Get<FGridResolutionDim>();
+		const int32 AxisBits = GridResolutionPermutation::GetAxisBits(GridPreset);
+		const int32 GridSize = GridResolutionPermutation::GetGridResolution(GridPreset);
+		const int32 MaxCells = GridResolutionPermutation::GetMaxCells(GridPreset);
+
+		OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), AxisBits);
+		OutEnvironment.SetDefine(TEXT("MORTON_GRID_SIZE"), GridSize);
+		OutEnvironment.SetDefine(TEXT("MAX_CELLS"), MaxCells);
 	}
 };
 
@@ -1859,6 +1944,9 @@ public:
 	DECLARE_GLOBAL_SHADER(FClearCellIndicesCS);
 	SHADER_USE_PARAMETER_STRUCT(FClearCellIndicesCS, FGlobalShader);
 
+	// Permutation domain for grid resolution
+	using FPermutationDomain = TShaderPermutationDomain<FGridResolutionDim>;
+
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, CellStart)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, CellEnd)
@@ -1877,8 +1965,15 @@ public:
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-		OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), GPU_MORTON_GRID_AXIS_BITS);
-		OutEnvironment.SetDefine(TEXT("MAX_CELLS"), GPU_MAX_CELLS);
+
+		// Get grid resolution from permutation
+		const FPermutationDomain PermutationVector(Parameters.PermutationId);
+		const int32 GridPreset = PermutationVector.Get<FGridResolutionDim>();
+		const int32 AxisBits = GridResolutionPermutation::GetAxisBits(GridPreset);
+		const int32 MaxCells = GridResolutionPermutation::GetMaxCells(GridPreset);
+
+		OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), AxisBits);
+		OutEnvironment.SetDefine(TEXT("MAX_CELLS"), MaxCells);
 	}
 };
 
@@ -1891,6 +1986,9 @@ class FComputeCellStartEndCS : public FGlobalShader
 public:
 	DECLARE_GLOBAL_SHADER(FComputeCellStartEndCS);
 	SHADER_USE_PARAMETER_STRUCT(FComputeCellStartEndCS, FGlobalShader);
+
+	// Permutation domain for grid resolution
+	using FPermutationDomain = TShaderPermutationDomain<FGridResolutionDim>;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, SortedMortonCodes)
@@ -1912,7 +2010,14 @@ public:
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-		OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), GPU_MORTON_GRID_AXIS_BITS);
-		OutEnvironment.SetDefine(TEXT("MAX_CELLS"), GPU_MAX_CELLS);
+
+		// Get grid resolution from permutation
+		const FPermutationDomain PermutationVector(Parameters.PermutationId);
+		const int32 GridPreset = PermutationVector.Get<FGridResolutionDim>();
+		const int32 AxisBits = GridResolutionPermutation::GetAxisBits(GridPreset);
+		const int32 MaxCells = GridResolutionPermutation::GetMaxCells(GridPreset);
+
+		OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), AxisBits);
+		OutEnvironment.SetDefine(TEXT("MAX_CELLS"), MaxCells);
 	}
 };
