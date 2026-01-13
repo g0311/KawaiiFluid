@@ -53,13 +53,8 @@ void UKawaiiFluidSimulationModule::PostEditChangeProperty(FPropertyChangedEvent&
 			InternalCellSize = CellSize;
 		}
 
+		// RecalculateVolumeBounds() syncs all bounds to OwnedVolumeComponent
 		RecalculateVolumeBounds();
-		// OwnedVolumeComponent의 CellSize도 업데이트
-		if (OwnedVolumeComponent)
-		{
-			OwnedVolumeComponent->CellSize = CellSize;
-			OwnedVolumeComponent->RecalculateBounds();
-		}
 	}
 	// TargetSimulationVolume 변경 시 정보 업데이트
 	else if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationModule, TargetSimulationVolume))
@@ -1598,10 +1593,13 @@ void UKawaiiFluidSimulationModule::RecalculateVolumeBounds()
 	WorldBoundsMax = OwnerLocation + FVector(HalfExtent, HalfExtent, HalfExtent);
 
 	// Update owned volume component if exists
+	// Sync all bounds since OwnedVolumeComponent doesn't have a proper transform
 	if (OwnedVolumeComponent)
 	{
 		OwnedVolumeComponent->CellSize = CellSize;
-		// Note: OwnedVolumeComponent doesn't have a transform, so bounds are calculated here
+		OwnedVolumeComponent->BoundsExtent = BoundsExtent;
+		OwnedVolumeComponent->WorldBoundsMin = WorldBoundsMin;
+		OwnedVolumeComponent->WorldBoundsMax = WorldBoundsMax;
 	}
 }
 

@@ -178,8 +178,16 @@ FGPUFluidSimulationParams UKawaiiFluidSimulationContext::BuildGPUSimParams(
 	GPUParams.DeltaTime = SubstepDT;
 	GPUParams.CurrentTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 
-	// Spatial hash
-	GPUParams.CellSize = Preset->SmoothingRadius;  // Cell size = smoothing radius
+	// Spatial hash cell size - must match the Volume's CellSize for Morton code consistency
+	// Priority: TargetVolumeComponent's CellSize > Fallback to SmoothingRadius
+	if (UKawaiiFluidSimulationVolumeComponent* Volume = TargetVolumeComponent.Get())
+	{
+		GPUParams.CellSize = Volume->CellSize;
+	}
+	else
+	{
+		GPUParams.CellSize = Preset->SmoothingRadius;
+	}
 
 	// Bounds collision (use world bounds from params if containment is enabled)
 	if (Params.WorldBounds.IsValid)

@@ -251,14 +251,13 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 
 	// Simulation Volume Wireframe Visualization (Z-Order Sorting region)
 	// Always visible in EDITOR ONLY when GPU simulation is active
-	// Uses preset bounds directly (not cached GPU bounds) for immediate preset change feedback
+	// Uses SimulationModule->BoundsExtent which is calculated from CellSize
 	// Skip if external TargetSimulationVolume is set - the Volume will draw its own bounds instead
 #if WITH_EDITOR
-	if (Preset && bUseGPUSimulation && !bIsGameWorld && !GetTargetSimulationVolume())
+	if (SimulationModule && bUseGPUSimulation && !bIsGameWorld && !GetTargetSimulationVolume())
 	{
-		// Calculate bounds from SmoothingRadius (GridAxisBits=7 → GridResolution=128)
-		constexpr int32 GridResolution = 128;
-		const float BoundsExtent = GridResolution * Preset->SmoothingRadius;
+		// Use BoundsExtent from SimulationModule (calculated from CellSize * GridResolution)
+		const float BoundsExtent = SimulationModule->BoundsExtent;
 		const FVector HalfExtent = FVector(BoundsExtent * 0.5f);
 		const FVector ComponentLocation = GetComponentLocation();
 
