@@ -21,6 +21,12 @@ struct FMetaballIntermediateTextures
 	/** Accumulated thickness texture */
 	FRDGTextureRef ThicknessTexture = nullptr;
 
+	/** Screen-space velocity texture for flow effects (RG16F: velocity.xy) */
+	FRDGTextureRef VelocityTexture = nullptr;
+
+	/** Accumulated flow UV offset texture (RG16F: accumulated offset.xy) */
+	FRDGTextureRef AccumulatedFlowTexture = nullptr;
+
 	/** GBuffer textures (optional, for GBuffer shading mode) */
 	FRDGTextureRef GBufferATexture = nullptr;
 	FRDGTextureRef GBufferBTexture = nullptr;
@@ -39,6 +45,8 @@ struct FMetaballIntermediateTextures
 		SmoothedDepthTexture = nullptr;
 		NormalTexture = nullptr;
 		ThicknessTexture = nullptr;
+		VelocityTexture = nullptr;
+		AccumulatedFlowTexture = nullptr;
 		GBufferATexture = nullptr;
 		GBufferBTexture = nullptr;
 		GBufferCTexture = nullptr;

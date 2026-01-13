@@ -24,8 +24,11 @@ class FFluidSurfaceDecorationCS : public FGlobalShader
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, NormalTexture)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ThicknessTexture)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneColorTexture)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, VelocityMapTexture)  // Screen-space velocity (RDG, from Depth pass)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, AccumulatedFlowTexture)  // Accumulated flow offset in world units (RDG)
 		SHADER_PARAMETER_SAMPLER(SamplerState, PointClampSampler)
 		SHADER_PARAMETER_SAMPLER(SamplerState, BilinearWrapSampler)
+		SHADER_PARAMETER_SAMPLER(SamplerState, BilinearClampSampler)  // For screen-space textures
 
 		// Decoration textures (non-RDG, use engine textures as fallback)
 		SHADER_PARAMETER_TEXTURE(Texture2D, FoamTexture)
@@ -34,7 +37,6 @@ class FFluidSurfaceDecorationCS : public FGlobalShader
 		SHADER_PARAMETER_TEXTURE(Texture2D, PrimaryLayerNormalMap)
 		SHADER_PARAMETER_TEXTURE(Texture2D, SecondaryLayerTexture)
 		SHADER_PARAMETER_TEXTURE(Texture2D, FlowMapTexture)
-		SHADER_PARAMETER_TEXTURE(Texture2D, VelocityMapTexture)
 
 		// Parameters
 		SHADER_PARAMETER(FVector2f, TextureSize)
@@ -74,6 +76,7 @@ class FFluidSurfaceDecorationCS : public FGlobalShader
 
 		// Flow
 		SHADER_PARAMETER(int32, bFlowEnabled)
+		SHADER_PARAMETER(int32, bUseAccumulatedFlow)  // Use accumulated flow (velocity-based) instead of Time-based
 		SHADER_PARAMETER(float, FlowSpeed)
 		SHADER_PARAMETER(float, FlowDistortionStrength)
 
@@ -90,6 +93,9 @@ class FFluidSurfaceDecorationCS : public FGlobalShader
 		SHADER_PARAMETER(float, SecondaryTilingScale)
 		SHADER_PARAMETER(float, SecondaryOpacity)
 		SHADER_PARAMETER(float, SecondaryNormalZThreshold)
+
+		// Debug (0=off, 1=AccumulatedFlow, 2=Velocity, 3=Both)
+		SHADER_PARAMETER(int32, DebugMode)
 
 		// Output
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, OutputTexture)
@@ -140,6 +146,7 @@ void RenderFluidSurfaceDecorationPass(
 	FRDGTextureRef ThicknessTexture,
 	FRDGTextureRef SceneColorTexture,
 	FRDGTextureRef VelocityMapTexture,
+	FRDGTextureRef AccumulatedFlowTexture,
 	const FIntRect& OutputViewRect,
 	FRDGTextureRef& OutDecoratedTexture)
 {
@@ -186,6 +193,7 @@ void RenderFluidSurfaceDecorationPass(
 	PassParameters->SceneColorTexture = SceneColorTexture;
 	PassParameters->PointClampSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp>::GetRHI();
 	PassParameters->BilinearWrapSampler = TStaticSamplerState<SF_Bilinear, AM_Wrap, AM_Wrap>::GetRHI();
+	PassParameters->BilinearClampSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp>::GetRHI();
 
 	// Decoration textures (non-RDG) - use engine global textures as fallback
 	FRHITexture* WhiteFallback = GWhiteTexture->TextureRHI;
@@ -202,10 +210,39 @@ void RenderFluidSurfaceDecorationPass(
 	PassParameters->SecondaryLayerTexture = GetTextureRHIOrDefault(Params.SecondaryLayer.Texture.Get(), WhiteFallback);
 	PassParameters->FlowMapTexture = GetTextureRHIOrDefault(Params.FlowMap.FlowMapTexture.Get(), FlowFallback);
 
-	// VelocityMapTexture - use black fallback (TODO: implement actual velocity map generation)
-	// Note: VelocityMapTexture parameter is currently ignored, using fallback
-	(void)VelocityMapTexture;  // Suppress unused warning
-	PassParameters->VelocityMapTexture = FlowFallback;
+	// Velocity and AccumulatedFlow textures (RDG)
+	// Create properly formatted dummy textures with producer pass when not provided
+	auto CreateAndClearDummyTexture = [&GraphBuilder](const TCHAR* Name) -> FRDGTextureRef
+	{
+		// Must match the format expected by the shader (PF_G16R16F for velocity/flow data)
+		FRDGTextureDesc DummyDesc = FRDGTextureDesc::Create2D(
+			FIntPoint(4, 4),  // Small but not 1x1 to avoid potential edge cases
+			PF_G16R16F,
+			FClearValueBinding::Black,
+			TexCreate_ShaderResource | TexCreate_RenderTargetable);
+		FRDGTextureRef DummyTexture = GraphBuilder.CreateTexture(DummyDesc, Name);
+		// Add clear pass as producer - this makes the texture valid for reading
+		AddClearRenderTargetPass(GraphBuilder, DummyTexture, FLinearColor::Black);
+		return DummyTexture;
+	};
+
+	if (VelocityMapTexture)
+	{
+		PassParameters->VelocityMapTexture = VelocityMapTexture;
+	}
+	else
+	{
+		PassParameters->VelocityMapTexture = CreateAndClearDummyTexture(TEXT("DummyVelocityMap"));
+	}
+
+	if (AccumulatedFlowTexture)
+	{
+		PassParameters->AccumulatedFlowTexture = AccumulatedFlowTexture;
+	}
+	else
+	{
+		PassParameters->AccumulatedFlowTexture = CreateAndClearDummyTexture(TEXT("DummyAccumulatedFlow"));
+	}
 
 	// Auto-enable layers if textures are assigned (user convenience)
 	const bool bPrimaryHasTexture = Params.PrimaryLayer.Texture.Get() != nullptr;
@@ -259,6 +296,8 @@ void RenderFluidSurfaceDecorationPass(
 
 	// Flow
 	PassParameters->bFlowEnabled = Params.FlowMap.bEnabled ? 1 : 0;
+	// Use accumulated flow if particle velocity is enabled and we have accumulated flow texture
+	PassParameters->bUseAccumulatedFlow = (Params.FlowMap.bUseParticleVelocity && AccumulatedFlowTexture != nullptr) ? 1 : 0;
 	PassParameters->FlowSpeed = Params.FlowMap.FlowSpeed;
 	PassParameters->FlowDistortionStrength = Params.FlowMap.DistortionStrength;
 
@@ -275,6 +314,14 @@ void RenderFluidSurfaceDecorationPass(
 	PassParameters->SecondaryTilingScale = Params.SecondaryLayer.TilingScale;
 	PassParameters->SecondaryOpacity = Params.SecondaryLayer.Opacity;
 	PassParameters->SecondaryNormalZThreshold = Params.SecondaryLayer.NormalZThreshold;
+
+	// Debug mode: 0=off, 1=AccumulatedFlow, 2=Velocity, 3=Both
+	// Change this value to debug flow accumulation:
+	// - Mode 1: Red/Green shows AccumulatedFlow.xy magnitude
+	// - Mode 2: Blue shows Velocity magnitude
+	// - Mode 3: Shows both
+	// TODO: Expose as runtime parameter or console variable
+	PassParameters->DebugMode = 0;
 
 	// Output
 	PassParameters->OutputTexture = GraphBuilder.CreateUAV(OutDecoratedTexture);

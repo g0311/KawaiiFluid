@@ -52,11 +52,12 @@ struct FVertexOutput
 	float ParticleRadius : TEXCOORD3;
 	uint InstanceId : TEXCOORD4;
 	float4 ScreenPosition : TEXCOORD5; // Screen space position for depth comparison
+	float2 WorldXYVelocity : TEXCOORD6; // World-space XY velocity for flow texture
 #if USE_ANISOTROPY
 	// Ellipsoid axes in view space (xyz = normalized direction, w = scale)
-	float4 EllipsoidAxis1 : TEXCOORD6;
-	float4 EllipsoidAxis2 : TEXCOORD7;
-	float4 EllipsoidAxis3 : TEXCOORD8;
+	float4 EllipsoidAxis1 : TEXCOORD7;
+	float4 EllipsoidAxis2 : TEXCOORD8;
+	float4 EllipsoidAxis3 : TEXCOORD9;
 #endif
 };
 
@@ -137,6 +138,12 @@ FVertexOutput MainVS(FVertexInput Input)
 	Output.InstanceId = Input.InstanceId;
 	Output.ScreenPosition = Output.Position; // Screen position for depth comparison
 
+	// Output world-space XY velocity for flow texture
+	// This is used with world-space UV texturing (WorldPos.xy)
+	// Stored unscaled - scaling is applied in flow accumulation pass
+	float3 WorldVelocity = ParticleVelocities[Input.InstanceId];
+	Output.WorldXYVelocity = WorldVelocity.xy;
+
 	return Output;
 }
 
@@ -147,6 +154,7 @@ FVertexOutput MainVS(FVertexInput Input)
 struct FPixelOutput
 {
 	float LinearDepth : SV_Target0;
+	float2 WorldXYVelocity : SV_Target1;  // World-space XY velocity for flow texture
 	float DeviceDepth : SV_Depth;
 };
 
@@ -315,6 +323,9 @@ FPixelOutput MainPS(FVertexOutput Input)
 	// Linear Depth 계산 (뷰 공간 Z를 양수 거리로 변환)
 	// View Space는 -Z가 전방이므로, 음수를 양수로 변환하여 저장
 	Output.LinearDepth = -IntersectionPoint.z;
+
+	// World XY velocity (passed from vertex shader, same for entire particle)
+	Output.WorldXYVelocity = Input.WorldXYVelocity;
 
 	// Device Depth 계산 (클립 공간)
 	float4 ClipPosition = mul(float4(IntersectionPoint, 1.0), ProjectionMatrix);

@@ -26,7 +26,9 @@ Texture2D<float4> PrimaryLayerTexture;
 Texture2D<float4> PrimaryLayerNormalMap;
 Texture2D<float4> SecondaryLayerTexture;
 Texture2D<float2> FlowMapTexture;
-Texture2D<float2> VelocityMapTexture;  // Runtime-generated from particles
+Texture2D<float2> VelocityMapTexture;     // Screen-space velocity from Depth pass (RDG)
+Texture2D<float2> AccumulatedFlowTexture; // Accumulated flow offset in world units (velocity-based, RDG)
+SamplerState BilinearClampSampler;        // For screen-space textures that shouldn't wrap
 
 //=============================================================================
 // Parameters
@@ -69,6 +71,7 @@ float PulseAmplitude;
 
 // Flow
 int bFlowEnabled;
+int bUseAccumulatedFlow;  // Use accumulated flow (velocity-based) instead of Time-based
 float FlowSpeed;
 float FlowDistortionStrength;
 
@@ -85,6 +88,9 @@ int bSecondaryLayerEnabled;
 float SecondaryTilingScale;
 float SecondaryOpacity;
 float SecondaryNormalZThreshold;
+
+// Debug
+int DebugMode;  // 0=off, 1=AccumulatedFlow, 2=Velocity, 3=Both
 
 // Output
 RWTexture2D<float4> OutputTexture;
@@ -147,8 +153,45 @@ float2 SampleFlowDirection(float2 UV)
 	return float2(0, 0);
 }
 
+// Get accumulated flow offset (velocity-based, accumulated over time)
+// Returns the flow offset in world units (cm)
+// Still water: returns near-zero (no movement)
+// Flowing water: returns accumulated offset (texture moves)
+// SSFRTexcoord: UV coordinates in SSFR texture space [0,1]
+float2 GetAccumulatedFlowOffset(float2 SSFRTexcoord)
+{
+	if (bUseAccumulatedFlow > 0)
+	{
+		// Sample accumulated flow using SSFR coordinates
+		// Use BilinearClampSampler to avoid wrapping at screen edges
+		// Returns world-space offset in cm (accumulated velocity * dt)
+		return AccumulatedFlowTexture.SampleLevel(BilinearClampSampler, SSFRTexcoord, 0).xy;
+	}
+	return float2(0, 0);
+}
+
 // Flow-based UV animation (two-phase blend to avoid seams)
-float2 FlowUV(float2 BaseUV, float2 FlowDir, float Phase)
+// When bUseAccumulatedFlow is true, uses accumulated flow instead of Time
+float2 FlowUV(float2 BaseUV, float2 FlowDir, float Phase, float2 AccumulatedOffset)
+{
+	if (bUseAccumulatedFlow > 0)
+	{
+		// Velocity-based flow: use accumulated offset directly
+		// The accumulated offset already encodes the flow amount over time
+		// For dual-phase, use different phases of the accumulated offset
+		float Progress = frac(length(AccumulatedOffset) * FlowSpeed + Phase);
+		return BaseUV + AccumulatedOffset * FlowDistortionStrength + FlowDir * Progress * FlowDistortionStrength * 0.1;
+	}
+	else
+	{
+		// Time-based flow (original behavior)
+		float Progress = frac(Time * FlowSpeed + Phase);
+		return BaseUV + FlowDir * Progress * FlowDistortionStrength;
+	}
+}
+
+// Legacy FlowUV for compatibility (used where accumulated flow is not needed)
+float2 FlowUV_Legacy(float2 BaseUV, float2 FlowDir, float Phase)
 {
 	float Progress = frac(Time * FlowSpeed + Phase);
 	return BaseUV + FlowDir * Progress * FlowDistortionStrength;
@@ -264,14 +307,21 @@ void SurfaceDecorationCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	float3x3 ViewToWorld = transpose((float3x3)ViewMatrix);
 	float3 WorldNormal = normalize(mul(ViewNormal, ViewToWorld));
 
-	// For now, use screen UV directly to verify texture renders correctly on fluid
-	// TODO: World position reconstruction for camera-independent texturing
-	float2 WorldUV = UV * 1000.0;  // Scale up for visible tiling
+	// Reconstruct world position for camera-independent texturing
+	float3 WorldPos = ReconstructWorldPosition(UV, Depth);
 
-	// Sample velocity for flow and foam
-	float2 Velocity = VelocityMapTexture.SampleLevel(BilinearWrapSampler, UV, 0).xy;
+	// Fixed Z-axis projection (XY plane) - texture always projected from above
+	// This ensures consistent appearance regardless of viewing angle
+	float2 WorldUV = WorldPos.xy;
+
+	// SSFR texture coordinate (normalized [0,1] for SSFR-sized textures like Velocity, AccumulatedFlow)
+	float2 SSFRTexcoord = (float2(SSFRPixelCoord) + 0.5) / float2(SSFRSize);
+
+	// Sample velocity for flow and foam (use SSFR coordinates for screen-space textures)
+	float2 Velocity = VelocityMapTexture.SampleLevel(BilinearClampSampler, SSFRTexcoord, 0).xy;
 	float VelocityMag = length(Velocity);
 	float2 FlowDir = SampleFlowDirection(UV);
+	float2 AccumulatedFlow = GetAccumulatedFlowOffset(SSFRTexcoord);
 
 	// Compute depth gradient for wave crest detection (using SSFR coordinates)
 	float DepthL = DepthTexture.Load(int3(max(SSFRPixelCoord.x - 1, 0), SSFRPixelCoord.y, 0));
@@ -289,7 +339,7 @@ void SurfaceDecorationCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	float3 EmissiveAccum = float3(0, 0, 0);
 
 	//-------------------------------------------------------------------------
-	// Foam Effect
+	// Foam Effect - Z-axis projection (XY plane)
 	//-------------------------------------------------------------------------
 	if (bFoamEnabled > 0)
 	{
@@ -297,20 +347,40 @@ void SurfaceDecorationCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 		if (FoamAmount > 0.01)
 		{
-			// Flow-animated foam UV
-			float2 FoamUV1 = FlowUV(WorldUV * FoamTilingScale, FlowDir, 0.0);
-			float2 FoamUV2 = FlowUV(WorldUV * FoamTilingScale, FlowDir, 0.5);
+			// Flow offset for foam (AccumulatedFlow is in world-space units cm)
+			float2 FoamFlowOffset = float2(0, 0);
+			if (bUseAccumulatedFlow > 0)
+			{
+				// Scale to UV space using FoamTilingScale
+				// AccumulatedFlow (cm) * TilingScale (1/cm-per-tile) = UV offset
+				FoamFlowOffset = AccumulatedFlow * FoamTilingScale;
 
-			// Two-phase blend for seamless flow
-			float Phase = frac(Time * FlowSpeed);
+				// Debug fallback: if accumulated flow is zero but we have velocity
+				float AccumMag = length(AccumulatedFlow);
+				if (AccumMag < 0.1 && VelocityMag > 1.0)
+				{
+					// Use instantaneous velocity as fallback (diagnostic)
+					FoamFlowOffset = Velocity * FoamTilingScale * 0.01;
+				}
+			}
+
+			// Phase for dual-blend (use length of accumulated flow for phase cycling)
+			float Phase = (bUseAccumulatedFlow > 0) ? frac(length(AccumulatedFlow) * FoamTilingScale * FlowSpeed) : frac(Time * FlowSpeed);
 			float BlendPhase = abs(Phase * 2.0 - 1.0);
 
+			// Z-axis projection UV (XY plane)
+			// Subtract flow offset so texture moves with flow direction
+			float2 FoamUV1 = WorldUV * FoamTilingScale - FoamFlowOffset;
+			float2 FoamUV2 = WorldUV * FoamTilingScale - FoamFlowOffset * 0.5;
+
+			// Sample foam (single projection)
 			float4 FoamSample1 = FoamTexture.SampleLevel(BilinearWrapSampler, FoamUV1, 0);
 			float4 FoamSample2 = FoamTexture.SampleLevel(BilinearWrapSampler, FoamUV2, 0);
+
+			// Dual-phase blend
 			float4 FoamSample = lerp(FoamSample1, FoamSample2, BlendPhase);
 
 			// Use texture RGB as color, grayscale (R) as mask
-			// FoamColor acts as tint multiplier
 			float3 FoamRGB = FoamSample.rgb * FoamColor.rgb;
 			float FoamMask = FoamSample.r * FoamAmount;
 
@@ -320,22 +390,32 @@ void SurfaceDecorationCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	}
 
 	//-------------------------------------------------------------------------
-	// Emissive Effect (Lava cracks, magic glow)
+	// Emissive Effect (Lava cracks, magic glow) - Z-axis projection
 	//-------------------------------------------------------------------------
 	if (bEmissiveEnabled > 0)
 	{
 		float EmissiveAmount = ComputeEmissiveIntensity(VelocityMag, WorldNormal);
 
-		// Sample crack texture to mask where emissive shows through
-		float2 CrackUV = WorldUV * CrackTilingScale;
+		// Flow offset for cracks (AccumulatedFlow is in world-space units)
+		float2 CrackFlowOffset = float2(0, 0);
+		if (bUseAccumulatedFlow > 0)
+		{
+			// Scale to UV space and apply a subtle effect (0.1 multiplier)
+			CrackFlowOffset = AccumulatedFlow * CrackTilingScale * 0.1;
+		}
+		else
+		{
+			CrackFlowOffset = FlowDir * Time * FlowSpeed * 0.1;
+		}
 
-		// Animate cracks slowly
-		CrackUV += FlowDir * Time * FlowSpeed * 0.1;
+		// Z-axis projection UV (XY plane)
+		// Subtract flow offset so texture moves with flow direction
+		float2 CrackUV = WorldUV * CrackTilingScale - CrackFlowOffset;
 
+		// Sample crack texture (single projection)
 		float4 CrackSample = EmissiveCrackTexture.SampleLevel(BilinearWrapSampler, CrackUV, 0);
 
 		// Crack texture: dark areas = cracks = emissive visible
-		// Invert so black areas glow
 		float CrackMask = 1.0 - CrackSample.r;
 
 		// Combine with temperature/emissive amount
@@ -345,55 +425,69 @@ void SurfaceDecorationCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	}
 
 	//-------------------------------------------------------------------------
-	// Primary Layer (custom texture overlay)
+	// Primary Layer (custom texture overlay) - Z-axis projection
 	//-------------------------------------------------------------------------
 	if (bPrimaryLayerEnabled > 0)
 	{
-		// Check normal threshold (e.g., only top surfaces)
-		if (WorldNormal.z >= PrimaryNormalZThreshold)
+		// Flow offset (in UV space - scaled by TilingScale to match WorldUV scale)
+		// SUBTRACT flow offset so texture appears to move WITH the fluid direction
+		float2 FlowOffset = float2(0, 0);
+		if (PrimaryFlowInfluence > 0.0)
 		{
-			float2 LayerUV = WorldUV * PrimaryTilingScale;
-
-			// Apply flow influence
-			if (PrimaryFlowInfluence > 0.0)
+			if (bUseAccumulatedFlow > 0)
 			{
-				LayerUV += FlowDir * Time * FlowSpeed * PrimaryFlowInfluence;
+				// AccumulatedFlow is in world-space units (cm), scale to UV space
+				// FlowOffset = AccumulatedFlow (cm) * TilingScale (1/cm-per-tile) * Influence
+				FlowOffset = AccumulatedFlow * PrimaryTilingScale * PrimaryFlowInfluence;
+
+				// Debug fallback: if AccumulatedFlow is near zero but velocity is non-zero,
+				// use time-based flow as fallback (helps diagnose accumulation issues)
+				float AccumMag = length(AccumulatedFlow);
+				if (AccumMag < 0.1 && VelocityMag > 1.0)
+				{
+					// Fallback to velocity-based instant flow (diagnostic mode)
+					FlowOffset = Velocity * PrimaryTilingScale * PrimaryFlowInfluence * 0.01;
+				}
 			}
-
-			// Apply scroll
-			LayerUV += PrimaryScrollSpeed * Time;
-
-			float4 LayerSample = PrimaryLayerTexture.SampleLevel(BilinearWrapSampler, LayerUV, 0);
-
-			// Smooth blend based on normal
-			float NormalBlend = smoothstep(PrimaryNormalZThreshold, PrimaryNormalZThreshold + 0.2, WorldNormal.z);
-			// Use texture alpha if available (> 0), otherwise use full opacity
-			float TextureAlpha = LayerSample.a > 0.001 ? LayerSample.a : 1.0;
-			float LayerAlpha = TextureAlpha * PrimaryOpacity * NormalBlend;
-
-			DecorationColor = lerp(DecorationColor, LayerSample.rgb, LayerAlpha);
-			DecorationAlpha = max(DecorationAlpha, LayerAlpha);
+			else
+			{
+				FlowOffset = FlowDir * Time * FlowSpeed * PrimaryFlowInfluence;
+			}
 		}
+		float2 ScrollOffset = PrimaryScrollSpeed * Time;
+
+		// Z-axis projection UV (XY plane)
+		// Subtract FlowOffset so texture moves in the direction of flow
+		float2 PrimaryUV = WorldUV * PrimaryTilingScale - FlowOffset + ScrollOffset;
+
+		// Sample texture (single projection)
+		float4 LayerSample = PrimaryLayerTexture.SampleLevel(BilinearWrapSampler, PrimaryUV, 0);
+
+		// Use texture alpha if available (> 0), otherwise use full opacity
+		float TextureAlpha = LayerSample.a > 0.001 ? LayerSample.a : 1.0;
+		float LayerAlpha = TextureAlpha * PrimaryOpacity;
+
+		DecorationColor = lerp(DecorationColor, LayerSample.rgb, LayerAlpha);
+		DecorationAlpha = max(DecorationAlpha, LayerAlpha);
 	}
 
 	//-------------------------------------------------------------------------
-	// Secondary Layer (detail overlay)
+	// Secondary Layer (detail overlay) - Z-axis projection
 	//-------------------------------------------------------------------------
 	if (bSecondaryLayerEnabled > 0)
 	{
-		if (WorldNormal.z >= SecondaryNormalZThreshold)
-		{
-			float2 LayerUV = WorldUV * SecondaryTilingScale;
-			float4 LayerSample = SecondaryLayerTexture.SampleLevel(BilinearWrapSampler, LayerUV, 0);
+		// Z-axis projection UV (XY plane)
+		float2 SecondaryUV = WorldUV * SecondaryTilingScale;
 
-			float NormalBlend = smoothstep(SecondaryNormalZThreshold, SecondaryNormalZThreshold + 0.2, WorldNormal.z);
-			// Use texture alpha if available (> 0), otherwise use full opacity
-			float TextureAlpha = LayerSample.a > 0.001 ? LayerSample.a : 1.0;
-			float LayerAlpha = TextureAlpha * SecondaryOpacity * NormalBlend;
+		// Sample texture (single projection)
+		float4 LayerSample = SecondaryLayerTexture.SampleLevel(BilinearWrapSampler, SecondaryUV, 0);
 
-			DecorationColor = lerp(DecorationColor, LayerSample.rgb, LayerAlpha);
-			DecorationAlpha = max(DecorationAlpha, LayerAlpha);
-		}
+		// Use texture alpha if available (> 0), otherwise use full opacity
+		float TextureAlpha = LayerSample.a > 0.001 ? LayerSample.a : 1.0;
+		float LayerAlpha = TextureAlpha * SecondaryOpacity;
+
+		DecorationColor = lerp(DecorationColor, LayerSample.rgb, LayerAlpha);
+		DecorationAlpha = max(DecorationAlpha, LayerAlpha);
 	}
 
 	//=========================================================================
@@ -415,6 +509,36 @@ void SurfaceDecorationCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	// Add emissive (additive)
 	FinalColor += EmissiveAccum;
+
+	//=========================================================================
+	// Debug Visualization
+	//=========================================================================
+	if (DebugMode > 0)
+	{
+		float3 DebugColor = float3(0, 0, 0);
+
+		// AccumulatedFlow debug (DebugMode 1 or 3)
+		if (DebugMode == 1 || DebugMode == 3)
+		{
+			// Visualize accumulated flow as color
+			// Scale to make small values visible (assume max ~1000 cm)
+			float2 FlowNorm = AccumulatedFlow / 100.0;  // Normalize to ~10 units visible
+			DebugColor.r = saturate(abs(FlowNorm.x));   // Red = X flow magnitude
+			DebugColor.g = saturate(abs(FlowNorm.y));   // Green = Y flow magnitude
+		}
+
+		// Velocity debug (DebugMode 2 or 3)
+		if (DebugMode == 2 || DebugMode == 3)
+		{
+			// Visualize velocity as blue channel
+			// Scale to make reasonable velocities visible (assume max ~500 cm/s)
+			float VelNorm = VelocityMag / 100.0;
+			DebugColor.b = saturate(VelNorm);
+		}
+
+		// Blend debug color with scene (50% overlay)
+		FinalColor = lerp(FinalColor, DebugColor, 0.7);
+	}
 
 	OutputTexture[PixelCoord] = float4(FinalColor, SceneColor.a);
 }

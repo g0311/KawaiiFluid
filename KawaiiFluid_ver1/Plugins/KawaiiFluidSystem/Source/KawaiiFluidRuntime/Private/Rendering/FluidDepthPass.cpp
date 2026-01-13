@@ -24,7 +24,8 @@ void RenderFluidDepthPass(
 	const FSceneView& View,
 	const TArray<UKawaiiFluidMetaballRenderer*>& Renderers,
 	FRDGTextureRef SceneDepthTexture,
-	FRDGTextureRef& OutLinearDepthTexture)
+	FRDGTextureRef& OutLinearDepthTexture,
+	FRDGTextureRef& OutVelocityTexture)
 {
 	RDG_EVENT_SCOPE(GraphBuilder, "FluidDepthPass_Batched");
 
@@ -42,6 +43,15 @@ void RenderFluidDepthPass(
 
 	OutLinearDepthTexture = GraphBuilder.CreateTexture(LinearDepthDesc, TEXT("FluidLinearDepth"));
 
+	// Velocity Texture 생성 (Screen-space flow용)
+	FRDGTextureDesc VelocityDesc = FRDGTextureDesc::Create2D(
+		View.UnscaledViewRect.Size(),
+		PF_G16R16F,  // RG16F for 2D screen velocity
+		FClearValueBinding(FLinearColor(0.0f, 0.0f, 0.0f, 0.0f)),
+		TexCreate_ShaderResource | TexCreate_RenderTargetable);
+
+	OutVelocityTexture = GraphBuilder.CreateTexture(VelocityDesc, TEXT("FluidVelocity"));
+
 	// Z-Test 용도의 Depth Texture 생성
 	FRDGTextureDesc HardwareDepthDesc = FRDGTextureDesc::Create2D(
 		View.UnscaledViewRect.Size(),
@@ -54,6 +64,7 @@ void RenderFluidDepthPass(
 
 	// Clear render targets
 	AddClearRenderTargetPass(GraphBuilder, OutLinearDepthTexture, FLinearColor(MAX_flt, 0, 0, 0));
+	AddClearRenderTargetPass(GraphBuilder, OutVelocityTexture, FLinearColor(0, 0, 0, 0));
 	AddClearDepthStencilPass(GraphBuilder, FluidDepthStencil, true, 0.0f, true, 0);
 
 	// Get ParticleRenderRadius from first renderer's LocalParameters
@@ -110,6 +121,27 @@ void RenderFluidDepthPass(
 			TEXT("SSFRParticlePositions"));
 		ParticleBufferSRV = GraphBuilder.CreateSRV(PositionBuffer);
 
+		// Velocity 버퍼 가져오기 (Flow texture용)
+		FRDGBufferSRVRef VelocityBufferSRV = nullptr;
+		TRefCountPtr<FRDGPooledBuffer> VelocityPooledBuffer = RR->GetPooledVelocityBuffer();
+		if (VelocityPooledBuffer.IsValid())
+		{
+			FRDGBufferRef VelocityBuffer = GraphBuilder.RegisterExternalBuffer(
+				VelocityPooledBuffer,
+				TEXT("SSFRParticleVelocities"));
+			VelocityBufferSRV = GraphBuilder.CreateSRV(VelocityBuffer);
+		}
+		else
+		{
+			// Create dummy velocity buffer (single zero vector) when velocity data not available
+			// This prevents shader crashes when flow texture is disabled
+			FRDGBufferDesc DummyVelDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector3f), 1);
+			FRDGBufferRef DummyVelocityBuffer = GraphBuilder.CreateBuffer(DummyVelDesc, TEXT("DummyVelocityBuffer"));
+			// Clear to zero
+			AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(DummyVelocityBuffer), 0);
+			VelocityBufferSRV = GraphBuilder.CreateSRV(DummyVelocityBuffer);
+		}
+
 		// Anisotropy (GPU 모드에서만 유효)
 		bUseAnisotropy = RR->GetAnisotropyBufferSRVs(
 			GraphBuilder,
@@ -143,6 +175,9 @@ void RenderFluidDepthPass(
 		PassParameters->AnisotropyAxis2 = AnisotropyAxis2SRV;
 		PassParameters->AnisotropyAxis3 = AnisotropyAxis3SRV;
 
+		// Velocity buffer for flow texture
+		PassParameters->ParticleVelocities = VelocityBufferSRV;
+
 		// SceneDepth UV 변환을 위한 ViewRect와 텍스처 크기
 		// FViewInfo::ViewRect = SceneDepth의 유효 영역 (Screen Percentage 적용됨)
 		const FViewInfo& ViewInfo = static_cast<const FViewInfo&>(View);
@@ -155,6 +190,12 @@ void RenderFluidDepthPass(
 
 		PassParameters->RenderTargets[0] = FRenderTargetBinding(
 			OutLinearDepthTexture,
+			ERenderTargetLoadAction::ELoad
+		);
+
+		// MRT[1]: Screen-space velocity for flow texture
+		PassParameters->RenderTargets[1] = FRenderTargetBinding(
+			OutVelocityTexture,
 			ERenderTargetLoadAction::ELoad
 		);
 

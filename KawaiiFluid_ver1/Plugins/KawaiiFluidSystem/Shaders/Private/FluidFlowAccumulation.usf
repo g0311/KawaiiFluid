@@ -1,0 +1,172 @@
+// Copyright KawaiiFluid Team. All Rights Reserved.
+//
+// Flow Accumulation Shader
+// Accumulates screen-space velocity into UV offset for flow texture effects.
+// Still water: no accumulation (offset stays constant)
+// Flowing water: accumulates offset based on velocity
+//
+// Uses temporal reprojection to handle camera movement correctly.
+
+#include "/Engine/Private/Common.ush"
+
+//=============================================================================
+// Input Textures
+//=============================================================================
+
+Texture2D<float2> VelocityTexture;      // Current frame's screen-space velocity (from Depth pass)
+Texture2D<float2> PrevAccumulatedFlow;  // Previous frame's accumulated flow offset
+Texture2D<float> DepthTexture;          // Fluid depth (to mask non-fluid areas)
+SamplerState PointClampSampler;
+SamplerState BilinearClampSampler;
+
+//=============================================================================
+// Parameters
+//=============================================================================
+
+float2 TextureSize;
+float DeltaTime;
+float FlowDecay;         // How quickly flow decays when velocity is zero (0 = no decay)
+float MaxFlowOffset;     // Maximum accumulated offset before wrapping (for dual-phase)
+float VelocityScale;     // Scale factor for velocity contribution
+
+// Temporal reprojection matrices
+float4x4 InvViewProjectionMatrix;     // Current frame: Clip -> World
+float4x4 InvViewMatrix;               // Current frame: View -> World
+float4x4 InvProjectionMatrix;         // Current frame: Clip -> View
+float4x4 PrevViewProjectionMatrix;    // Previous frame: World -> Clip
+
+// Background depth threshold
+#define BACKGROUND_DEPTH_THRESH 3.0e30f
+
+//=============================================================================
+// Output
+//=============================================================================
+
+RWTexture2D<float2> OutputAccumulatedFlow;
+
+//=============================================================================
+// Helper Functions
+//=============================================================================
+
+// Reconstruct view-space position from screen UV and linear depth
+float3 ReconstructViewPosition(float2 ScreenUV, float LinearDepth)
+{
+	// Convert UV to NDC (clip space)
+	// UV: (0,0) = top-left, (1,1) = bottom-right
+	// NDC: (-1,-1) = bottom-left, (1,1) = top-right
+	float2 ClipXY = float2(ScreenUV.x * 2.0 - 1.0, 1.0 - ScreenUV.y * 2.0);
+
+	// Create clip position with arbitrary Z
+	float4 ClipPos = float4(ClipXY, 0.5, 1.0);
+
+	// Unproject to view space using InvProjectionMatrix
+	float4 ViewPos = mul(ClipPos, InvProjectionMatrix);
+	ViewPos /= ViewPos.w;
+
+	// Get view-space ray direction (normalize so Z = 1)
+	float3 ViewRay = ViewPos.xyz / ViewPos.z;
+
+	// Scale by linear depth
+	// LinearDepth is positive (distance from camera), ViewSpace Z is negative
+	return ViewRay * (-LinearDepth);
+}
+
+// Reconstruct world position from screen UV and linear depth
+float3 ReconstructWorldPosition(float2 ScreenUV, float LinearDepth)
+{
+	// First get view-space position
+	float3 ViewPos = ReconstructViewPosition(ScreenUV, LinearDepth);
+
+	// Transform to world space
+	float4 WorldPos = mul(float4(ViewPos, 1.0), InvViewMatrix);
+
+	return WorldPos.xyz;
+}
+
+// Reproject world position to previous frame's screen UV
+float2 ReprojectToPrevFrame(float3 WorldPos)
+{
+	float4 PrevClipPos = mul(float4(WorldPos, 1.0), PrevViewProjectionMatrix);
+	PrevClipPos /= PrevClipPos.w;
+
+	// Convert from NDC to UV
+	float2 PrevUV;
+	PrevUV.x = PrevClipPos.x * 0.5 + 0.5;
+	PrevUV.y = 0.5 - PrevClipPos.y * 0.5;
+
+	return PrevUV;
+}
+
+//=============================================================================
+// Main Compute Shader
+//=============================================================================
+
+[numthreads(8, 8, 1)]
+void FlowAccumulationCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	int2 PixelCoord = int2(DispatchThreadId.xy);
+	int2 Size = int2(TextureSize);
+
+	if (any(PixelCoord >= Size))
+	{
+		return;
+	}
+
+	// Current pixel UV
+	float2 CurrentUV = (float2(PixelCoord) + 0.5) / TextureSize;
+
+	// Sample depth to check if this pixel has fluid
+	float Depth = DepthTexture.Load(int3(PixelCoord, 0));
+
+	// No fluid at this pixel - clear accumulated flow
+	if (Depth > BACKGROUND_DEPTH_THRESH)
+	{
+		OutputAccumulatedFlow[PixelCoord] = float2(0, 0);
+		return;
+	}
+
+	// Sample current velocity first (in world units, e.g., cm/sec)
+	float2 Velocity = VelocityTexture.Load(int3(PixelCoord, 0));
+	float VelocityMag = length(Velocity);
+
+	// Sample previous accumulated flow with temporal reprojection
+	// This handles BOTH camera movement AND fluid movement
+	float3 WorldPos = ReconstructWorldPosition(CurrentUV, Depth);
+
+	// Key insight: To find where THIS fluid was in the previous frame,
+	// we need to trace back along the fluid velocity
+	// PrevWorldPos = CurrentWorldPos - Velocity * DeltaTime
+	float3 PrevWorldPos = WorldPos - float3(Velocity.x, Velocity.y, 0.0) * DeltaTime;
+
+	// Now reproject this previous world position to previous frame's screen space
+	float2 PrevUV = ReprojectToPrevFrame(PrevWorldPos);
+
+	// Check if reprojected UV is valid (within screen bounds)
+	float2 PrevFlow = float2(0, 0);
+	if (PrevUV.x >= 0.0 && PrevUV.x <= 1.0 && PrevUV.y >= 0.0 && PrevUV.y <= 1.0)
+	{
+		// Use bilinear sampling for smoother reprojection
+		PrevFlow = PrevAccumulatedFlow.SampleLevel(BilinearClampSampler, PrevUV, 0).xy;
+	}
+
+	// Accumulate: NewFlow = PrevFlow + Velocity * DeltaTime
+	// Velocity is in world units (cm/sec), AccumulatedFlow is also in world units (cm)
+	// VelocityScale controls how fast texture moves (default 1.0)
+	// TilingScale in SurfaceDecoration will convert world units to UV
+	float2 NewFlow = PrevFlow + Velocity * VelocityScale * DeltaTime;
+
+	// Optional decay when velocity is near zero
+	// This prevents indefinite accumulation from numerical drift
+	if (FlowDecay > 0.0 && VelocityMag < 0.001)
+	{
+		NewFlow *= (1.0 - FlowDecay * DeltaTime);
+	}
+
+	// Wrap to prevent overflow (for seamless dual-phase blending)
+	// Keep offset in [-MaxFlowOffset, MaxFlowOffset] range
+	// Note: fmod preserves sign, so we need to handle negative values explicitly
+	float WrapRange = MaxFlowOffset * 2.0;
+	NewFlow = fmod(fmod(NewFlow + MaxFlowOffset, WrapRange) + WrapRange, WrapRange) - MaxFlowOffset;
+
+	OutputAccumulatedFlow[PixelCoord] = NewFlow;
+}

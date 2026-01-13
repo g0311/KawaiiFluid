@@ -19,7 +19,8 @@ class FSceneView;
  * @param NormalTexture  Fluid normal texture (from SSFR)
  * @param ThicknessTexture  Fluid thickness texture (from SSFR)
  * @param SceneColorTexture  Current scene color (fluid already composited)
- * @param VelocityMapTexture  Optional runtime velocity map (for flow/foam)
+ * @param VelocityMapTexture  Optional screen-space velocity texture (for flow/foam, from Depth pass)
+ * @param AccumulatedFlowTexture  Optional accumulated flow UV offset (for velocity-based flow)
  * @param OutputViewRect  ViewRect where fluid was rendered in SceneColorTexture
  * @param OutDecoratedTexture  Output with decorations applied
  */
@@ -32,5 +33,6 @@ void RenderFluidSurfaceDecorationPass(
 	FRDGTextureRef ThicknessTexture,
 	FRDGTextureRef SceneColorTexture,
 	FRDGTextureRef VelocityMapTexture,
+	FRDGTextureRef AccumulatedFlowTexture,
 	const FIntRect& OutputViewRect,
 	FRDGTextureRef& OutDecoratedTexture);

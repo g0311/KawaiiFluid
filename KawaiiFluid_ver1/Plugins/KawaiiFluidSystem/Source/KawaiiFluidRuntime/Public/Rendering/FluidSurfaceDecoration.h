@@ -45,7 +45,7 @@ struct KAWAIIFLUIDRUNTIME_API FSurfaceDecorationLayer
 
 	/** Flow map influence (0 = static, 1 = full flow animation) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Layer", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float FlowInfluence = 0.0f;
+	float FlowInfluence = 0.5f;
 
 	/** Scroll speed for animated textures */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Layer")
@@ -179,6 +179,41 @@ struct KAWAIIFLUIDRUNTIME_API FFlowMapSettings
 	/** Flow distortion strength */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flow", meta = (EditCondition = "bEnabled", ClampMin = "0.0", ClampMax = "1.0"))
 	float DistortionStrength = 0.1f;
+
+	//========================================
+	// Flow Accumulation (Velocity-based)
+	// When bUseParticleVelocity is true, these control how velocity is accumulated into UV offset
+	// Still water: no accumulation (texture stays static)
+	// Flowing water: accumulates offset (texture moves)
+	//========================================
+
+	/**
+	 * Scale factor for velocity contribution to flow
+	 * Higher = faster texture movement for same velocity
+	 * Note: Particle velocity is in cm/sec, so 1.0 means 1 cm offset per 1 cm/sec per second
+	 * Increase this if flow effect is too subtle
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flow",
+		meta = (EditCondition = "bEnabled && bUseParticleVelocity", ClampMin = "0.01", ClampMax = "100.0"))
+	float VelocityScale = 1.0f;
+
+	/**
+	 * How quickly flow decays when velocity is zero
+	 * 0 = no decay (offset accumulates indefinitely)
+	 * Higher = texture slowly returns to original position when water stops
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flow",
+		meta = (EditCondition = "bEnabled && bUseParticleVelocity", ClampMin = "0.0", ClampMax = "5.0"))
+	float FlowDecay = 0.1f;
+
+	/**
+	 * Maximum accumulated flow offset in world units (cm) before wrapping
+	 * Used to prevent numerical overflow in long simulations
+	 * Should be large enough to cover multiple texture tiles (e.g., 1000cm = 10m)
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flow",
+		meta = (EditCondition = "bEnabled && bUseParticleVelocity", ClampMin = "10.0", ClampMax = "10000.0"))
+	float MaxFlowOffset = 1000.0f;
 };
 
 /**

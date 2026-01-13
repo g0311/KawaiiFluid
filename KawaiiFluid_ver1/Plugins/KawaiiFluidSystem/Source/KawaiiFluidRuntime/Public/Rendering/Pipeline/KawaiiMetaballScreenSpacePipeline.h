@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "RenderGraphResources.h"
 #include "Rendering/Pipeline/IKawaiiMetaballRenderingPipeline.h"
 
 /**
@@ -79,6 +80,15 @@ public:
 private:
 	/** Cached intermediate textures from PostBasePass for use in Tonemap */
 	FMetaballIntermediateTextures CachedIntermediateTextures;
+
+	/** Pooled texture for previous frame's accumulated flow (for temporal accumulation) */
+	TRefCountPtr<IPooledRenderTarget> PrevAccumulatedFlowRT;
+
+	/** Previous frame's ViewProjectionMatrix for temporal reprojection */
+	FMatrix PrevViewProjectionMatrix = FMatrix::Identity;
+
+	/** Flag to indicate if we have valid previous frame data */
+	bool bHasPrevFrameData = false;
 
 	// Note: Shading methods are in KawaiiScreenSpaceShadingImpl.h/cpp
 	// This pipeline delegates to KawaiiScreenSpaceShading::* namespace functions

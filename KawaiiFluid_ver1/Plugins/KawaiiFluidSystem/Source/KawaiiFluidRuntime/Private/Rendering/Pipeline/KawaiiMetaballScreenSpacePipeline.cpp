@@ -10,6 +10,7 @@
 // Separated shading implementation
 #include "Rendering/Shading/KawaiiScreenSpaceShadingImpl.h"
 #include "Rendering/FluidSurfaceDecorationPass.h"
+#include "Rendering/FluidFlowAccumulationPass.h"
 
 #include "RenderGraphBuilder.h"
 #include "RenderGraphEvent.h"
@@ -60,9 +61,10 @@ static bool GenerateIntermediateTextures(
 	}
 	int32 NumIterations = 3;
 
-	// 1. Depth Pass
+	// 1. Depth Pass (outputs linear depth + screen-space velocity)
 	FRDGTextureRef DepthTexture = nullptr;
-	RenderFluidDepthPass(GraphBuilder, View, Renderers, SceneDepthTexture, DepthTexture);
+	FRDGTextureRef VelocityTexture = nullptr;
+	RenderFluidDepthPass(GraphBuilder, View, Renderers, SceneDepthTexture, DepthTexture, VelocityTexture);
 
 	if (!DepthTexture)
 	{
@@ -150,6 +152,7 @@ static bool GenerateIntermediateTextures(
 	OutIntermediateTextures.SmoothedDepthTexture = SmoothedDepthTexture;
 	OutIntermediateTextures.NormalTexture = NormalTexture;
 	OutIntermediateTextures.ThicknessTexture = SmoothedThicknessTexture;
+	OutIntermediateTextures.VelocityTexture = VelocityTexture;
 
 	return true;
 }
@@ -231,6 +234,67 @@ void FKawaiiMetaballScreenSpacePipeline::PrepareRender(
 	if (!GenerateIntermediateTextures(GraphBuilder, View, RenderParams, Renderers, SceneDepthTexture, CachedIntermediateTextures))
 	{
 		return;
+	}
+
+	// IMPORTANT: Clear AccumulatedFlowTexture to prevent stale pointer from previous frame
+	// RDG textures are only valid within the same frame's RDG graph
+	CachedIntermediateTextures.AccumulatedFlowTexture = nullptr;
+
+	// Flow Accumulation Pass (if enabled and using particle velocity)
+	if (RenderParams.SurfaceDecoration.bEnabled &&
+		RenderParams.SurfaceDecoration.FlowMap.bEnabled &&
+		RenderParams.SurfaceDecoration.FlowMap.bUseParticleVelocity &&
+		CachedIntermediateTextures.VelocityTexture != nullptr)
+	{
+		// Get previous accumulated flow from history
+		FRDGTextureRef PrevAccumulatedFlowTexture = nullptr;
+		if (PrevAccumulatedFlowRT.IsValid())
+		{
+			PrevAccumulatedFlowTexture = GraphBuilder.RegisterExternalTexture(
+				PrevAccumulatedFlowRT,
+				TEXT("FluidPrevAccumulatedFlow"));
+		}
+
+		// Setup flow accumulation parameters from surface decoration settings
+		FFlowAccumulationParams FlowParams;
+		FlowParams.VelocityScale = RenderParams.SurfaceDecoration.FlowMap.VelocityScale;
+		FlowParams.FlowDecay = RenderParams.SurfaceDecoration.FlowMap.FlowDecay;
+		FlowParams.MaxFlowOffset = RenderParams.SurfaceDecoration.FlowMap.MaxFlowOffset;
+
+		// Current frame's matrices for world position reconstruction
+		FlowParams.InvViewProjectionMatrix = View.ViewMatrices.GetInvViewProjectionMatrix();
+		FlowParams.InvViewMatrix = View.ViewMatrices.GetInvViewMatrix();
+		FlowParams.InvProjectionMatrix = View.ViewMatrices.GetInvProjectionMatrix();
+
+		// Previous frame's view-projection for temporal reprojection
+		// Use current frame's matrix if no previous data (first frame)
+		FlowParams.PrevViewProjectionMatrix = bHasPrevFrameData
+			? PrevViewProjectionMatrix
+			: View.ViewMatrices.GetViewProjectionMatrix();
+
+		// Run flow accumulation pass
+		FRDGTextureRef AccumulatedFlowTexture = nullptr;
+		RenderFluidFlowAccumulationPass(
+			GraphBuilder,
+			View,
+			FlowParams,
+			CachedIntermediateTextures.VelocityTexture,
+			CachedIntermediateTextures.SmoothedDepthTexture,
+			PrevAccumulatedFlowTexture,
+			AccumulatedFlowTexture);
+
+		// Store in intermediate textures
+		CachedIntermediateTextures.AccumulatedFlowTexture = AccumulatedFlowTexture;
+
+		// Extract to history for next frame
+		if (AccumulatedFlowTexture)
+		{
+			GraphBuilder.QueueTextureExtraction(AccumulatedFlowTexture, &PrevAccumulatedFlowRT);
+		}
+
+		// Save current frame's ViewProjectionMatrix for next frame's reprojection
+		PrevViewProjectionMatrix = View.ViewMatrices.GetViewProjectionMatrix();
+		bHasPrevFrameData = true;
 	}
 
 	UE_LOG(LogTemp, Verbose, TEXT("FKawaiiMetaballScreenSpacePipeline: PrepareForTonemap completed - intermediate textures cached"));
@@ -327,7 +391,8 @@ void FKawaiiMetaballScreenSpacePipeline::ExecuteRender(
 			CachedIntermediateTextures.NormalTexture,
 			CachedIntermediateTextures.ThicknessTexture,
 			CompositeResultTexture,
-			nullptr,  // VelocityMapTexture - TODO: generate from particle velocities
+			CachedIntermediateTextures.VelocityTexture,         // Screen-space velocity
+			CachedIntermediateTextures.AccumulatedFlowTexture,  // Accumulated flow UV offset
 			Output.ViewRect,  // Pass the actual ViewRect where fluid was rendered
 			DecoratedTexture);
 
