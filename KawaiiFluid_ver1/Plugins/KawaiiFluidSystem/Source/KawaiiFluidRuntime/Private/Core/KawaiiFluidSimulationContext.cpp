@@ -678,19 +678,26 @@ void UKawaiiFluidSimulationContext::SimulateGPU(
 	// Run GPU simulation with Accumulator method
 	// Simulate with fixed dt substeps for frame-rate independence
 	// =====================================================
+	
 	const int32 MaxSubstepsPerFrame = Preset->MaxSubsteps;
 	const float MaxAllowedTime = Preset->SubstepDeltaTime * MaxSubstepsPerFrame;
 	AccumulatedTime += FMath::Min(DeltaTime, MaxAllowedTime);
 
-	int32 SubstepCount = 0;
-	while (AccumulatedTime >= Preset->SubstepDeltaTime && SubstepCount < MaxSubstepsPerFrame)
-	{
-		GPUSimulator->SimulateSubstep(GPUParams);
-		AccumulatedTime -= Preset->SubstepDeltaTime;
-		++SubstepCount;
-	}
+	int32 TotalSubsteps = FMath::Min(
+		FMath::FloorToInt(AccumulatedTime / Preset->SubstepDeltaTime), 
+		MaxSubstepsPerFrame
+	);
 
-	
+	int32 SubstepCount = 0;
+	for (; SubstepCount < TotalSubsteps; ++SubstepCount)
+	{
+		GPUParams.SubstepIndex = SubstepCount;
+		GPUParams.TotalSubsteps = TotalSubsteps;
+
+		GPUSimulator->SimulateSubstep(GPUParams);
+
+		AccumulatedTime -= Preset->SubstepDeltaTime;
+	}
 	
 	// =====================================================
 	// Phase 2: AABB Filtering for Per-Polygon Collision
