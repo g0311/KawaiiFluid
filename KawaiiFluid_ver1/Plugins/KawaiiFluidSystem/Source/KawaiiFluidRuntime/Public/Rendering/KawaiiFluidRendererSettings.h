@@ -179,35 +179,6 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidMetaballRendererSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|GBuffer",
 		meta = (EditCondition = "bEnabled && ShadingMode == EMetaballShadingMode::GBuffer", ClampMin = "0.0", ClampMax = "1.0"))
 	float SubsurfaceOpacity = 0.5f;
-
-	//========================================
-	// Shadow Casting (VSM) - Legacy
-	//========================================
-
-	/** Enable fluid shadow casting onto other objects (Legacy VSM approach) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shadow",
-		meta = (EditCondition = "bEnabled", DisplayName = "Enable Shadow Casting (Legacy)"))
-	bool bEnableShadowCasting = false;
-
-	/** VSM shadow map resolution (higher = sharper shadows but more expensive) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shadow",
-		meta = (EditCondition = "bEnabled && bEnableShadowCasting", ClampMin = "256", ClampMax = "4096"))
-	int32 VSMResolution = 1024;
-
-	/** VSM blur radius (higher = softer shadows) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shadow",
-		meta = (EditCondition = "bEnabled && bEnableShadowCasting", ClampMin = "0.0", ClampMax = "16.0"))
-	float VSMBlurRadius = 4.0f;
-
-	/** Number of VSM blur iterations */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shadow",
-		meta = (EditCondition = "bEnabled && bEnableShadowCasting", ClampMin = "0", ClampMax = "3"))
-	int32 VSMBlurIterations = 1;
-
-	/** Shadow intensity (0 = no shadow, 1 = full black) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shadow",
-		meta = (EditCondition = "bEnabled && bEnableShadowCasting", ClampMin = "0.0", ClampMax = "1.0"))
-	float ShadowIntensity = 0.5f;
 };
 
 // Backwards compatibility alias

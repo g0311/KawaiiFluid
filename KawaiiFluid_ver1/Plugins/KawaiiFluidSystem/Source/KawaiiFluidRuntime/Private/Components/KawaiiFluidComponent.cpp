@@ -331,21 +331,90 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 		{
 			if (RendererSubsystem->bEnableVSMIntegration)
 			{
-				// Get particle positions
-				const TArray<FFluidParticle>& Particles = SimulationModule->GetParticles();
-				const int32 NumParticles = Particles.Num();
+				TArray<FVector> Positions;
+				int32 NumParticles = 0;
+
+				// Check if GPU simulation is active
+				FGPUFluidSimulator* GPUSimulator = SimulationModule->GetGPUSimulator();
+				const bool bGPUActive = SimulationModule->IsGPUSimulationActive() && GPUSimulator != nullptr;
+
+				if (bGPUActive)
+				{
+					// GPU Mode: Enable async shadow readback and get positions
+					GPUSimulator->SetShadowReadbackEnabled(true);
+					GPUSimulator->SetAnisotropyReadbackEnabled(true);
+
+					TArray<FVector> NewVelocities;
+					TArray<FVector4> NewAnisotropyAxis1, NewAnisotropyAxis2, NewAnisotropyAxis3;
+
+					if (GPUSimulator->HasReadyShadowPositions())
+					{
+						// New readback data available - update cache (with anisotropy)
+						GPUSimulator->GetShadowDataWithAnisotropy(
+							Positions, NewVelocities,
+							NewAnisotropyAxis1, NewAnisotropyAxis2, NewAnisotropyAxis3);
+						NumParticles = Positions.Num();
+
+						if (NumParticles > 0)
+						{
+							CachedShadowPositions = Positions;
+							CachedShadowVelocities = NewVelocities;
+							CachedAnisotropyAxis1 = NewAnisotropyAxis1;
+							CachedAnisotropyAxis2 = NewAnisotropyAxis2;
+							CachedAnisotropyAxis3 = NewAnisotropyAxis3;
+							LastShadowReadbackFrame = GFrameCounter;
+							LastShadowReadbackTime = FPlatformTime::Seconds();
+						}
+					}
+					else if (CachedShadowPositions.Num() > 0 && CachedShadowVelocities.Num() == CachedShadowPositions.Num())
+					{
+						// No new data - predict positions using cached velocity
+						const double CurrentTime = FPlatformTime::Seconds();
+						const float PredictionDelta = static_cast<float>(CurrentTime - LastShadowReadbackTime);
+
+						// Clamp prediction delta to avoid extreme extrapolation
+						const float ClampedDelta = FMath::Clamp(PredictionDelta, 0.0f, 0.1f);
+
+						NumParticles = CachedShadowPositions.Num();
+						Positions.SetNumUninitialized(NumParticles);
+
+						for (int32 i = 0; i < NumParticles; ++i)
+						{
+							// Predict: Position += Velocity * DeltaTime
+							Positions[i] = CachedShadowPositions[i] + CachedShadowVelocities[i] * ClampedDelta;
+						}
+						// Note: Anisotropy is not predicted, use cached values directly
+					}
+					else if (CachedShadowPositions.Num() > 0)
+					{
+						// Fallback: use cached positions without prediction
+						Positions = CachedShadowPositions;
+						NumParticles = Positions.Num();
+					}
+				}
+				else
+				{
+					// CPU Mode: Get positions from CPU particles
+					const TArray<FFluidParticle>& Particles = SimulationModule->GetParticles();
+					NumParticles = Particles.Num();
+
+					if (NumParticles > 0)
+					{
+						Positions.SetNum(NumParticles);
+						for (int32 i = 0; i < NumParticles; ++i)
+						{
+							Positions[i] = Particles[i].Position;
+						}
+					}
+				}
 
 				if (NumParticles > 0)
 				{
-					// Calculate fluid bounds from particles
+					// Calculate fluid bounds from positions
 					FBox FluidBounds(ForceInit);
-					TArray<FVector> Positions;
-					Positions.SetNum(NumParticles);
-
 					for (int32 i = 0; i < NumParticles; ++i)
 					{
-						Positions[i] = Particles[i].Position;
-						FluidBounds += Particles[i].Position;
+						FluidBounds += Positions[i];
 					}
 
 					// Expand bounds by particle radius
@@ -355,16 +424,45 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 					// Update shadow proxy state (creates HISM if needed)
 					RendererSubsystem->UpdateShadowProxyState();
 
-					// Update HISM shadow instances from particle positions
-					RendererSubsystem->UpdateShadowInstances(Positions.GetData(), NumParticles);
+					// Update HISM shadow instances from particle positions (with anisotropy for ellipsoid shadows)
+					const bool bHasAnisotropy = CachedAnisotropyAxis1.Num() == NumParticles;
 
-					// Legacy: Update density grid (for future use)
-					RendererSubsystem->UpdateDensityGrid(Positions.GetData(), NumParticles, FluidBounds);
+					static int32 ShadowDebugCounter = 0;
+					if (++ShadowDebugCounter % 60 == 1)
+					{
+						UE_LOG(LogTemp, Warning, TEXT("Shadow Update: NumParticles=%d, CachedAniso1=%d, bHasAnisotropy=%d"),
+							NumParticles, CachedAnisotropyAxis1.Num(), bHasAnisotropy ? 1 : 0);
+					}
+
+					// Use anisotropy if available (rotation disabled for now, scale only)
+					if (bHasAnisotropy)
+					{
+						RendererSubsystem->UpdateShadowInstancesWithAnisotropy(
+							Positions.GetData(),
+							CachedAnisotropyAxis1.GetData(),
+							CachedAnisotropyAxis2.GetData(),
+							CachedAnisotropyAxis3.GetData(),
+							NumParticles);
+					}
+					else
+					{
+						RendererSubsystem->UpdateShadowInstances(Positions.GetData(), NumParticles);
+					}
 				}
 				else
 				{
 					// 파티클 0개일 때 shadow ISM 클리어
 					RendererSubsystem->UpdateShadowInstances(nullptr, 0);
+				}
+			}
+			else
+			{
+				// VSM disabled - ensure shadow readback is also disabled for GPU mode
+				FGPUFluidSimulator* GPUSimulator = SimulationModule->GetGPUSimulator();
+				if (GPUSimulator != nullptr)
+				{
+					GPUSimulator->SetShadowReadbackEnabled(false);
+					GPUSimulator->SetAnisotropyReadbackEnabled(false);
 				}
 			}
 		}

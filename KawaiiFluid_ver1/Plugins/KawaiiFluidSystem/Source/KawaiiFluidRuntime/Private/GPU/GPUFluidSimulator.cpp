@@ -169,6 +169,9 @@ void FGPUFluidSimulator::Release()
 		AdhesionManager.Reset();
 	}
 
+	// Release Shadow Readback objects
+	ReleaseShadowReadbackObjects();
+
 	bIsInitialized = false;
 	MaxParticleCount = 0;
 	CurrentParticleCount = 0;
@@ -437,6 +440,28 @@ void FGPUFluidSimulator::SimulateSubstep(const FGPUFluidSimulationParams& Params
 			if (Self->CollisionManager.IsValid() && Self->CollisionManager->GetFeedbackManager())
 			{
 				Self->CollisionManager->GetFeedbackManager()->EnqueueReadbackCopy(RHICmdList);
+			}
+
+			// =====================================================
+			// Phase 4: Shadow Position Readback (for HISM Shadow Instances)
+			// Async GPU→CPU using FRHIGPUBufferReadback (no stall)
+			// =====================================================
+			if (Self->bShadowReadbackEnabled.load() && Self->PersistentParticleBuffer.IsValid())
+			{
+				// First, process any previously completed readback
+				Self->ProcessShadowReadback();
+				Self->ProcessAnisotropyReadback();
+
+				// Then enqueue new readback for this frame
+				Self->EnqueueShadowPositionReadback(RHICmdList,
+					Self->PersistentParticleBuffer->GetRHI(),
+					Self->CurrentParticleCount);
+
+				// Enqueue anisotropy readback if enabled
+				if (Self->bAnisotropyReadbackEnabled.load())
+				{
+					Self->EnqueueAnisotropyReadback(RHICmdList, Self->CurrentParticleCount);
+				}
 			}
 
 			// Mark that we have valid GPU results (buffer is ready for rendering)
@@ -1000,14 +1025,43 @@ void FGPUFluidSimulator::ExecutePostSimulation(
 		if (AnisotropyFrameCounter >= UpdateInterval || !PersistentAnisotropyAxis1Buffer.IsValid())
 		{
 			AnisotropyFrameCounter = 0;
-			FRDGBufferRef Axis1Buffer, Axis2Buffer, Axis3Buffer;
-			FFluidAnisotropyPassBuilder::CreateAnisotropyBuffers(GraphBuilder, CurrentParticleCount, Axis1Buffer, Axis2Buffer, Axis3Buffer);
+
+			// Create or reuse anisotropy output buffers
+			// For temporal smoothing, we need to preserve previous frame's data
+			FRDGBufferRef Axis1Buffer = nullptr;
+			FRDGBufferRef Axis2Buffer = nullptr;
+			FRDGBufferRef Axis3Buffer = nullptr;
+
+			// Check if persistent buffers exist and have correct size
+			const bool bHasPersistentAnisotropyBuffers =
+				PersistentAnisotropyAxis1Buffer.IsValid() &&
+				PersistentAnisotropyAxis2Buffer.IsValid() &&
+				PersistentAnisotropyAxis3Buffer.IsValid() &&
+				PersistentAnisotropyAxis1Buffer->GetSize() >= static_cast<uint32>(CurrentParticleCount * sizeof(FVector4f));
+
+			if (bHasPersistentAnisotropyBuffers)
+			{
+				// Reuse persistent buffers (contains previous frame's anisotropy for temporal smoothing)
+				Axis1Buffer = GraphBuilder.RegisterExternalBuffer(
+					PersistentAnisotropyAxis1Buffer, TEXT("FluidAnisotropyAxis1"));
+				Axis2Buffer = GraphBuilder.RegisterExternalBuffer(
+					PersistentAnisotropyAxis2Buffer, TEXT("FluidAnisotropyAxis2"));
+				Axis3Buffer = GraphBuilder.RegisterExternalBuffer(
+					PersistentAnisotropyAxis3Buffer, TEXT("FluidAnisotropyAxis3"));
+			}
+			else
+			{
+				// First frame or particle count changed - create new buffers
+				FFluidAnisotropyPassBuilder::CreateAnisotropyBuffers(
+					GraphBuilder, CurrentParticleCount, Axis1Buffer, Axis2Buffer, Axis3Buffer);
+			}
 
 			if (Axis1Buffer && Axis2Buffer && Axis3Buffer && SpatialData.CellCountsBuffer && SpatialData.ParticleIndicesBuffer)
 			{
 				FAnisotropyComputeParams AnisotropyParams;
 				AnisotropyParams.PhysicsParticlesSRV = GraphBuilder.CreateSRV(ParticleBuffer);
 
+				// Attachment buffer for anisotropy
 				TRefCountPtr<FRDGPooledBuffer> AttachmentBufferForAniso = AdhesionManager.IsValid() ? AdhesionManager->GetPersistentAttachmentBuffer() : nullptr;
 				if (AdhesionManager.IsValid() && AdhesionManager->IsAdhesionEnabled() && AttachmentBufferForAniso.IsValid())
 				{
@@ -1028,7 +1082,7 @@ void FGPUFluidSimulator::ExecutePostSimulation(
 				AnisotropyParams.OutAxis2UAV = GraphBuilder.CreateUAV(Axis2Buffer);
 				AnisotropyParams.OutAxis3UAV = GraphBuilder.CreateUAV(Axis3Buffer);
 				AnisotropyParams.ParticleCount = CurrentParticleCount;
-				
+
 				// Params Mapping
 				AnisotropyParams.Mode = (EGPUAnisotropyMode)CachedAnisotropyParams.Mode;
 				AnisotropyParams.VelocityStretchFactor = CachedAnisotropyParams.VelocityStretchFactor;
@@ -1042,16 +1096,33 @@ void FGPUFluidSimulator::ExecutePostSimulation(
 				AnisotropyParams.bStretchIsolatedByVelocity = CachedAnisotropyParams.bStretchIsolatedByVelocity;
 				AnisotropyParams.bFadeSlowIsolated = CachedAnisotropyParams.bFadeSlowIsolated;
 				AnisotropyParams.IsolationFadeSpeed = CachedAnisotropyParams.IsolationFadeSpeed;
-				
+				AnisotropyParams.IsolationShrinkSpeed = CachedAnisotropyParams.IsolationShrinkSpeed;
+				AnisotropyParams.IsolationGrowSpeed = CachedAnisotropyParams.IsolationGrowSpeed;
+				AnisotropyParams.DeltaTime = Params.DeltaTime;
+
+				// Neighbor-average based growth control
+				AnisotropyParams.bUseNeighborAverageGrowth = CachedAnisotropyParams.bUseNeighborAverageGrowth;
+				AnisotropyParams.MinNeighborsForGrowth = CachedAnisotropyParams.MinNeighborsForGrowth;
+				AnisotropyParams.NeighborScaleMatchRatio = CachedAnisotropyParams.NeighborScaleMatchRatio;
+
+				// Previous frame anisotropy for neighbor scale averaging
+				// Uses the same buffer registered above (contains previous frame data)
+				if (bHasPersistentAnisotropyBuffers)
+				{
+					AnisotropyParams.PrevAnisotropyAxis1SRV = GraphBuilder.CreateSRV(Axis1Buffer);
+				}
+
+				// Density-based anisotropy needs wider neighbor search than simulation
 				AnisotropyParams.SmoothingRadius = Params.SmoothingRadius * 2.5f;
 				AnisotropyParams.CellSize = Params.CellSize;
+
+				// Morton-sorted spatial lookup (cache-friendly sequential access)
 				AnisotropyParams.bUseZOrderSorting = SpatialHashManager.IsValid();
 				if (SpatialHashManager.IsValid())
 				{
 					AnisotropyParams.CellStartSRV = SpatialData.CellStartSRV;
 					AnisotropyParams.CellEndSRV = SpatialData.CellEndSRV;
 					AnisotropyParams.MortonBoundsMin = SimulationBoundsMin;
-					AnisotropyParams.GridResolutionPreset = SpatialHashManager->GetGridResolutionPreset();
 				}
 
 				FFluidAnisotropyPassBuilder::AddAnisotropyPass(GraphBuilder, AnisotropyParams);
@@ -1623,4 +1694,407 @@ void FGPUFluidSimulator::ProcessColliderContactCountReadback(FRHICommandListImme
 	{
 		CollisionManager->ProcessColliderContactCountReadback(RHICmdList);
 	}
+}
+
+//=============================================================================
+// Shadow Position Readback (Async GPU→CPU for HISM Shadow Instances)
+//=============================================================================
+
+/**
+ * @brief Allocate shadow readback objects for async GPU→CPU transfer.
+ * @param RHICmdList RHI command list.
+ */
+void FGPUFluidSimulator::AllocateShadowReadbackObjects(FRHICommandListImmediate& RHICmdList)
+{
+	for (int32 i = 0; i < NUM_SHADOW_READBACK_BUFFERS; ++i)
+	{
+		if (ShadowPositionReadbacks[i] == nullptr)
+		{
+			ShadowPositionReadbacks[i] = new FRHIGPUBufferReadback(*FString::Printf(TEXT("ShadowPositionReadback_%d"), i));
+		}
+		ShadowReadbackFrameNumbers[i] = 0;
+		ShadowReadbackParticleCounts[i] = 0;
+
+		// Allocate anisotropy readback objects (3 buffers per frame: Axis1, Axis2, Axis3)
+		for (int32 j = 0; j < 3; ++j)
+		{
+			if (ShadowAnisotropyReadbacks[i][j] == nullptr)
+			{
+				ShadowAnisotropyReadbacks[i][j] = new FRHIGPUBufferReadback(
+					*FString::Printf(TEXT("ShadowAnisotropyReadback_%d_Axis%d"), i, j + 1));
+			}
+		}
+	}
+
+	UE_LOG(LogGPUFluidSimulator, Log, TEXT("Shadow readback objects allocated (NumBuffers=%d, with Anisotropy)"), NUM_SHADOW_READBACK_BUFFERS);
+}
+
+/**
+ * @brief Release shadow readback objects.
+ */
+void FGPUFluidSimulator::ReleaseShadowReadbackObjects()
+{
+	for (int32 i = 0; i < NUM_SHADOW_READBACK_BUFFERS; ++i)
+	{
+		if (ShadowPositionReadbacks[i] != nullptr)
+		{
+			delete ShadowPositionReadbacks[i];
+			ShadowPositionReadbacks[i] = nullptr;
+		}
+		ShadowReadbackFrameNumbers[i] = 0;
+		ShadowReadbackParticleCounts[i] = 0;
+
+		// Release anisotropy readback objects
+		for (int32 j = 0; j < 3; ++j)
+		{
+			if (ShadowAnisotropyReadbacks[i][j] != nullptr)
+			{
+				delete ShadowAnisotropyReadbacks[i][j];
+				ShadowAnisotropyReadbacks[i][j] = nullptr;
+			}
+		}
+	}
+	ShadowReadbackWriteIndex = 0;
+	ReadyShadowPositions.Empty();
+	ReadyShadowVelocities.Empty();
+	ReadyShadowAnisotropyAxis1.Empty();
+	ReadyShadowAnisotropyAxis2.Empty();
+	ReadyShadowAnisotropyAxis3.Empty();
+	ReadyShadowPositionsFrame.store(0);
+}
+
+/**
+ * @brief Enqueue shadow position copy to readback buffer (non-blocking).
+ * @param RHICmdList RHI command list.
+ * @param SourceBuffer Source GPU buffer containing particle data.
+ * @param ParticleCount Number of particles to read back.
+ */
+void FGPUFluidSimulator::EnqueueShadowPositionReadback(FRHICommandListImmediate& RHICmdList, FRHIBuffer* SourceBuffer, int32 ParticleCount)
+{
+	if (!bShadowReadbackEnabled.load() || ParticleCount <= 0 || SourceBuffer == nullptr)
+	{
+		return;
+	}
+
+	// Allocate readback objects if needed
+	if (ShadowPositionReadbacks[0] == nullptr)
+	{
+		AllocateShadowReadbackObjects(RHICmdList);
+	}
+
+	// Get current write index and advance for next frame
+	const int32 WriteIdx = ShadowReadbackWriteIndex;
+	ShadowReadbackWriteIndex = (ShadowReadbackWriteIndex + 1) % NUM_SHADOW_READBACK_BUFFERS;
+
+	// Calculate copy size (only positions: FVector3f per particle)
+	// Note: We're reading from FGPUFluidParticle buffer, position is at offset 0
+	const int32 CopySize = ParticleCount * sizeof(FGPUFluidParticle);
+
+	// Enqueue async copy
+	ShadowPositionReadbacks[WriteIdx]->EnqueueCopy(RHICmdList, SourceBuffer, CopySize);
+	ShadowReadbackFrameNumbers[WriteIdx] = GFrameCounterRenderThread;
+	ShadowReadbackParticleCounts[WriteIdx] = ParticleCount;
+}
+
+/**
+ * @brief Process shadow readback - check for completion and copy to ready buffer.
+ */
+void FGPUFluidSimulator::ProcessShadowReadback()
+{
+	if (!bShadowReadbackEnabled.load() || ShadowPositionReadbacks[0] == nullptr)
+	{
+		return;
+	}
+
+	// Search for oldest ready buffer
+	int32 ReadIdx = -1;
+	uint64 OldestFrame = UINT64_MAX;
+
+	for (int32 i = 0; i < NUM_SHADOW_READBACK_BUFFERS; ++i)
+	{
+		if (ShadowPositionReadbacks[i] != nullptr &&
+			ShadowReadbackFrameNumbers[i] > 0 &&
+			ShadowPositionReadbacks[i]->IsReady())
+		{
+			if (ShadowReadbackFrameNumbers[i] < OldestFrame)
+			{
+				OldestFrame = ShadowReadbackFrameNumbers[i];
+				ReadIdx = i;
+			}
+		}
+	}
+
+	if (ReadIdx < 0)
+	{
+		return;  // No ready buffers
+	}
+
+	const int32 ParticleCount = ShadowReadbackParticleCounts[ReadIdx];
+	if (ParticleCount <= 0)
+	{
+		return;
+	}
+
+	// Lock and copy position data
+	const int32 BufferSize = ParticleCount * sizeof(FGPUFluidParticle);
+	const FGPUFluidParticle* ParticleData = (const FGPUFluidParticle*)ShadowPositionReadbacks[ReadIdx]->Lock(BufferSize);
+
+	if (ParticleData)
+	{
+		FScopeLock Lock(&BufferLock);
+		ReadyShadowPositions.SetNumUninitialized(ParticleCount);
+		ReadyShadowVelocities.SetNumUninitialized(ParticleCount);
+
+		for (int32 i = 0; i < ParticleCount; ++i)
+		{
+			ReadyShadowPositions[i] = ParticleData[i].Position;
+			ReadyShadowVelocities[i] = ParticleData[i].Velocity;
+		}
+
+		ReadyShadowPositionsFrame.store(ShadowReadbackFrameNumbers[ReadIdx]);
+	}
+
+	ShadowPositionReadbacks[ReadIdx]->Unlock();
+
+	// Store the buffer index so ProcessAnisotropyReadback() can read from the same buffer.
+	// This ensures position and anisotropy data are synchronized (same frame).
+	LastProcessedShadowReadbackIndex = ReadIdx;
+
+	// Mark buffer as available for next write cycle
+	ShadowReadbackFrameNumbers[ReadIdx] = 0;
+}
+
+/**
+ * @brief Get shadow positions for HISM shadow instances (non-blocking).
+ * @param OutPositions Output array of particle positions (FVector).
+ * @return true if valid positions were retrieved.
+ */
+bool FGPUFluidSimulator::GetShadowPositions(TArray<FVector>& OutPositions) const
+{
+	if (ReadyShadowPositionsFrame.load() == 0 || ReadyShadowPositions.Num() == 0)
+	{
+		OutPositions.Empty();
+		return false;
+	}
+
+	FScopeLock Lock(&const_cast<FCriticalSection&>(BufferLock));
+
+	const int32 Count = ReadyShadowPositions.Num();
+	OutPositions.SetNumUninitialized(Count);
+
+	for (int32 i = 0; i < Count; ++i)
+	{
+		OutPositions[i] = FVector(ReadyShadowPositions[i]);
+	}
+
+	return true;
+}
+
+/**
+ * @brief Get shadow positions and velocities for prediction.
+ * @param OutPositions Output array of particle positions.
+ * @param OutVelocities Output array of particle velocities.
+ * @return true if valid data was retrieved.
+ */
+bool FGPUFluidSimulator::GetShadowPositionsAndVelocities(TArray<FVector>& OutPositions, TArray<FVector>& OutVelocities) const
+{
+	if (ReadyShadowPositionsFrame.load() == 0 || ReadyShadowPositions.Num() == 0)
+	{
+		OutPositions.Empty();
+		OutVelocities.Empty();
+		return false;
+	}
+
+	FScopeLock Lock(&const_cast<FCriticalSection&>(BufferLock));
+
+	const int32 Count = ReadyShadowPositions.Num();
+	OutPositions.SetNumUninitialized(Count);
+	OutVelocities.SetNumUninitialized(Count);
+
+	for (int32 i = 0; i < Count; ++i)
+	{
+		OutPositions[i] = FVector(ReadyShadowPositions[i]);
+		OutVelocities[i] = FVector(ReadyShadowVelocities[i]);
+	}
+
+	return true;
+}
+
+/**
+ * @brief Enqueue anisotropy data copy to readback buffer (non-blocking).
+ * @param RHICmdList RHI command list.
+ * @param ParticleCount Number of particles to read back.
+ */
+void FGPUFluidSimulator::EnqueueAnisotropyReadback(FRHICommandListImmediate& RHICmdList, int32 ParticleCount)
+{
+	if (!bAnisotropyReadbackEnabled.load() || ParticleCount <= 0)
+	{
+		return;
+	}
+
+	// Check if anisotropy buffers are valid
+	if (!PersistentAnisotropyAxis1Buffer.IsValid() ||
+		!PersistentAnisotropyAxis2Buffer.IsValid() ||
+		!PersistentAnisotropyAxis3Buffer.IsValid())
+	{
+		return;
+	}
+
+	// Use the same write index as position readback (they are synchronized)
+	// Note: ShadowReadbackWriteIndex was already advanced in EnqueueShadowPositionReadback
+	// So we use the previous index
+	const int32 WriteIdx = (ShadowReadbackWriteIndex + NUM_SHADOW_READBACK_BUFFERS - 1) % NUM_SHADOW_READBACK_BUFFERS;
+
+	// Calculate copy size (float4 per particle per axis)
+	const int32 CopySize = ParticleCount * sizeof(FVector4f);
+
+	// Enqueue async copy for each axis
+	FRHIBuffer* Axis1RHI = PersistentAnisotropyAxis1Buffer->GetRHI();
+	FRHIBuffer* Axis2RHI = PersistentAnisotropyAxis2Buffer->GetRHI();
+	FRHIBuffer* Axis3RHI = PersistentAnisotropyAxis3Buffer->GetRHI();
+
+	if (Axis1RHI && ShadowAnisotropyReadbacks[WriteIdx][0])
+	{
+		ShadowAnisotropyReadbacks[WriteIdx][0]->EnqueueCopy(RHICmdList, Axis1RHI, CopySize);
+	}
+	if (Axis2RHI && ShadowAnisotropyReadbacks[WriteIdx][1])
+	{
+		ShadowAnisotropyReadbacks[WriteIdx][1]->EnqueueCopy(RHICmdList, Axis2RHI, CopySize);
+	}
+	if (Axis3RHI && ShadowAnisotropyReadbacks[WriteIdx][2])
+	{
+		ShadowAnisotropyReadbacks[WriteIdx][2]->EnqueueCopy(RHICmdList, Axis3RHI, CopySize);
+	}
+}
+
+/**
+ * @brief Process anisotropy readback using the same buffer index as position readback.
+ *
+ * This function reads anisotropy data from the buffer that was just processed
+ * by ProcessShadowReadback(), ensuring position and anisotropy data are from
+ * the same simulation frame.
+ */
+void FGPUFluidSimulator::ProcessAnisotropyReadback()
+{
+	if (!bAnisotropyReadbackEnabled.load())
+	{
+		return;
+	}
+
+	// Read from the same buffer index that ProcessShadowReadback() just processed.
+	const int32 ReadIdx = LastProcessedShadowReadbackIndex;
+	if (ReadIdx < 0 || ReadIdx >= NUM_SHADOW_READBACK_BUFFERS)
+	{
+		return;
+	}
+
+	const int32 ParticleCount = ReadyShadowPositions.Num();
+	if (ParticleCount <= 0)
+	{
+		return;
+	}
+
+	// All 3 axis buffers must be ready
+	for (int32 AxisIndex = 0; AxisIndex < 3; ++AxisIndex)
+	{
+		if (ShadowAnisotropyReadbacks[ReadIdx][AxisIndex] == nullptr ||
+			!ShadowAnisotropyReadbacks[ReadIdx][AxisIndex]->IsReady())
+		{
+			return;
+		}
+	}
+
+	const int32 BufferSize = ParticleCount * sizeof(FVector4f);
+	FScopeLock Lock(&BufferLock);
+
+	// Copy all 3 axes
+	const FVector4f* Axis1Data = (const FVector4f*)ShadowAnisotropyReadbacks[ReadIdx][0]->Lock(BufferSize);
+	if (Axis1Data)
+	{
+		ReadyShadowAnisotropyAxis1.SetNumUninitialized(ParticleCount);
+		FMemory::Memcpy(ReadyShadowAnisotropyAxis1.GetData(), Axis1Data, BufferSize);
+		ShadowAnisotropyReadbacks[ReadIdx][0]->Unlock();
+	}
+
+	const FVector4f* Axis2Data = (const FVector4f*)ShadowAnisotropyReadbacks[ReadIdx][1]->Lock(BufferSize);
+	if (Axis2Data)
+	{
+		ReadyShadowAnisotropyAxis2.SetNumUninitialized(ParticleCount);
+		FMemory::Memcpy(ReadyShadowAnisotropyAxis2.GetData(), Axis2Data, BufferSize);
+		ShadowAnisotropyReadbacks[ReadIdx][1]->Unlock();
+	}
+
+	const FVector4f* Axis3Data = (const FVector4f*)ShadowAnisotropyReadbacks[ReadIdx][2]->Lock(BufferSize);
+	if (Axis3Data)
+	{
+		ReadyShadowAnisotropyAxis3.SetNumUninitialized(ParticleCount);
+		FMemory::Memcpy(ReadyShadowAnisotropyAxis3.GetData(), Axis3Data, BufferSize);
+		ShadowAnisotropyReadbacks[ReadIdx][2]->Unlock();
+	}
+
+	// Invalidate the index to prevent reading the same data again
+	LastProcessedShadowReadbackIndex = -1;
+}
+
+/**
+ * @brief Get shadow data with anisotropy for ellipsoid HISM shadows.
+ * @param OutPositions Output array of particle positions.
+ * @param OutVelocities Output array of particle velocities.
+ * @param OutAnisotropyAxis1 Output array of first ellipsoid axis (xyz=dir, w=scale).
+ * @param OutAnisotropyAxis2 Output array of second ellipsoid axis.
+ * @param OutAnisotropyAxis3 Output array of third ellipsoid axis.
+ * @return true if valid data was retrieved.
+ */
+bool FGPUFluidSimulator::GetShadowDataWithAnisotropy(
+	TArray<FVector>& OutPositions,
+	TArray<FVector>& OutVelocities,
+	TArray<FVector4>& OutAnisotropyAxis1,
+	TArray<FVector4>& OutAnisotropyAxis2,
+	TArray<FVector4>& OutAnisotropyAxis3) const
+{
+	// First get positions and velocities
+	if (!GetShadowPositionsAndVelocities(OutPositions, OutVelocities))
+	{
+		OutAnisotropyAxis1.Empty();
+		OutAnisotropyAxis2.Empty();
+		OutAnisotropyAxis3.Empty();
+		return false;
+	}
+
+	FScopeLock Lock(&const_cast<FCriticalSection&>(BufferLock));
+
+	const int32 Count = ReadyShadowPositions.Num();
+
+	// Check if anisotropy data is available and matches position count
+	if (ReadyShadowAnisotropyAxis1.Num() != Count ||
+		ReadyShadowAnisotropyAxis2.Num() != Count ||
+		ReadyShadowAnisotropyAxis3.Num() != Count)
+	{
+		// Anisotropy not available - return default (uniform sphere)
+		OutAnisotropyAxis1.SetNumUninitialized(Count);
+		OutAnisotropyAxis2.SetNumUninitialized(Count);
+		OutAnisotropyAxis3.SetNumUninitialized(Count);
+
+		for (int32 i = 0; i < Count; ++i)
+		{
+			OutAnisotropyAxis1[i] = FVector4(1.0, 0.0, 0.0, 1.0);
+			OutAnisotropyAxis2[i] = FVector4(0.0, 1.0, 0.0, 1.0);
+			OutAnisotropyAxis3[i] = FVector4(0.0, 0.0, 1.0, 1.0);
+		}
+		return true;
+	}
+
+	// Copy anisotropy data
+	OutAnisotropyAxis1.SetNumUninitialized(Count);
+	OutAnisotropyAxis2.SetNumUninitialized(Count);
+	OutAnisotropyAxis3.SetNumUninitialized(Count);
+
+	for (int32 i = 0; i < Count; ++i)
+	{
+		OutAnisotropyAxis1[i] = FVector4(ReadyShadowAnisotropyAxis1[i]);
+		OutAnisotropyAxis2[i] = FVector4(ReadyShadowAnisotropyAxis2[i]);
+		OutAnisotropyAxis3[i] = FVector4(ReadyShadowAnisotropyAxis3[i]);
+	}
+
+	return true;
 }

@@ -5,14 +5,11 @@
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "FluidRenderingParameters.h"
-#include "FluidShadowHistoryManager.h"
-#include "FluidDensityGrid.h"
 #include "RenderGraphResources.h"
 #include "FluidRendererSubsystem.generated.h"
 
 class FFluidSceneViewExtension;
 class UKawaiiFluidRenderingModule;
-class UFluidShadowProxyComponent;
 class UHierarchicalInstancedStaticMeshComponent;
 class UStaticMesh;
 
@@ -60,8 +57,6 @@ public:
 	/** View Extension 접근자 */
 	TSharedPtr<FFluidSceneViewExtension, ESPMode::ThreadSafe> GetViewExtension() const { return ViewExtension; }
 
-	/** Shadow History Manager 접근자 */
-	FFluidShadowHistoryManager* GetShadowHistoryManager() const { return ShadowHistoryManager.Get(); }
 
 	//========================================
 	// Cached Shadow Light Data (Game Thread -> Render Thread)
@@ -106,8 +101,6 @@ private:
 	/** Scene View Extension (렌더링 파이프라인 인젝션) */
 	TSharedPtr<FFluidSceneViewExtension, ESPMode::ThreadSafe> ViewExtension;
 
-	/** Shadow History Manager (이전 프레임 depth 저장) */
-	TUniquePtr<FFluidShadowHistoryManager> ShadowHistoryManager;
 
 	//========================================
 	// Cached Light Data (updated on game thread, read on render thread)
@@ -139,63 +132,29 @@ private:
 	FMatrix44f LightVPMatrix_Read = FMatrix44f::Identity;
 
 	//========================================
-	// UE5 VSM Integration (Phase 6)
+	// HISM Shadow (Instanced Mesh Shadow)
 	//========================================
 
 public:
 	/**
-	 * @brief Enable/disable UE5 VSM integration via proxy geometry.
-	 * When enabled, creates a shadow proxy component that participates in
-	 * the engine's shadow passes with ray-marched depth.
+	 * @brief Enable/disable HISM shadow via instanced spheres.
+	 * When enabled, creates sphere instances at particle positions for shadow casting.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|VSM Integration")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|HISM")
 	bool bEnableVSMIntegration = true;
-
-	/**
-	 * @brief Grid resolution for density rasterization.
-	 * Higher values = more accurate shadows, higher memory/performance cost.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|VSM Integration", meta = (ClampMin = "16", ClampMax = "256"))
-	int32 DensityGridResolution = 64;
-
-	/**
-	 * @brief Particle radius for density splatting (in world units).
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|VSM Integration", meta = (ClampMin = "1.0", ClampMax = "50.0"))
-	float DensityParticleRadius = 5.0f;
-
-	/**
-	 * @brief Surface density threshold for ray marching.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|VSM Integration", meta = (ClampMin = "0.01", ClampMax = "1.0"))
-	float SurfaceDensityThreshold = 0.5f;
-
-	/**
-	 * @brief Maximum ray march steps in shadow pass.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|VSM Integration", meta = (ClampMin = "8", ClampMax = "256"))
-	int32 MaxRayMarchSteps = 64;
-
-	/**
-	 * @brief Shadow material for the proxy component.
-	 * Must be a Masked material to cast proper shadows.
-	 * See Docs/FluidShadowMaterial.md for setup instructions.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|VSM Integration")
-	TObjectPtr<UMaterialInterface> ShadowMaterial;
 
 	/**
 	 * @brief Radius of each shadow sphere instance (in world units).
 	 * Larger values create softer, more blended shadows.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|VSM Integration", meta = (ClampMin = "1.0", ClampMax = "100.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|HISM", meta = (ClampMin = "1.0", ClampMax = "100.0"))
 	float ShadowSphereRadius = 15.0f;
 
 	/**
 	 * @brief Maximum number of shadow instances to use.
 	 * Limits performance cost. Set to 0 for unlimited.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|VSM Integration", meta = (ClampMin = "0", ClampMax = "100000"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|HISM", meta = (ClampMin = "0", ClampMax = "100000"))
 	int32 MaxShadowInstances = 10000;
 
 	/**
@@ -203,26 +162,11 @@ public:
 	 * Value of 2 means every other particle becomes an instance.
 	 * Higher values improve performance but reduce shadow detail.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|VSM Integration", meta = (ClampMin = "1", ClampMax = "10"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|HISM", meta = (ClampMin = "1", ClampMax = "10"))
 	int32 ParticleSkipFactor = 1;
 
-	/** Get the density grid for shadow rendering. */
-	FFluidDensityGrid* GetDensityGrid() { return DensityGrid.Get(); }
-
-	/** Get the shadow proxy component (may be null). */
-	UFluidShadowProxyComponent* GetShadowProxyComponent() const { return ShadowProxyComponent; }
-
 	/**
-	 * @brief Update density grid from particle positions.
-	 * Call this each frame after simulation update.
-	 * @param ParticlePositions Array of particle world positions.
-	 * @param NumParticles Number of particles.
-	 * @param FluidBounds World-space bounds of the fluid.
-	 */
-	void UpdateDensityGrid(const FVector* ParticlePositions, int32 NumParticles, const FBox& FluidBounds);
-
-	/**
-	 * @brief Create or destroy the shadow proxy component based on settings.
+	 * @brief Cleanup HISM shadow resources when disabled.
 	 */
 	void UpdateShadowProxyState();
 
@@ -234,15 +178,24 @@ public:
 	 */
 	void UpdateShadowInstances(const FVector* ParticlePositions, int32 NumParticles);
 
+	/**
+	 * @brief Update shadow instances with anisotropy data for ellipsoid shadows.
+	 * Creates oriented ellipsoid instances at particle locations.
+	 * @param ParticlePositions Array of particle world positions.
+	 * @param AnisotropyAxis1 Array of first ellipsoid axis (xyz=direction, w=scale).
+	 * @param AnisotropyAxis2 Array of second ellipsoid axis.
+	 * @param AnisotropyAxis3 Array of third ellipsoid axis.
+	 * @param NumParticles Number of particles.
+	 */
+	void UpdateShadowInstancesWithAnisotropy(
+		const FVector* ParticlePositions,
+		const FVector4* AnisotropyAxis1,
+		const FVector4* AnisotropyAxis2,
+		const FVector4* AnisotropyAxis3,
+		int32 NumParticles);
+
 private:
-	/** 3D Density Grid for VSM integration. */
-	TUniquePtr<FFluidDensityGrid> DensityGrid;
-
-	/** Shadow proxy component for engine VSM integration (legacy box approach). */
-	UPROPERTY(Transient)
-	UFluidShadowProxyComponent* ShadowProxyComponent = nullptr;
-
-	/** Actor that owns the shadow proxy component. */
+	/** Actor that owns the HISM shadow component. */
 	UPROPERTY(Transient)
 	AActor* ShadowProxyActor = nullptr;
 

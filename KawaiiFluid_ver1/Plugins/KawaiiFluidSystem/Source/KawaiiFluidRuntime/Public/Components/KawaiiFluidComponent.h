@@ -542,4 +542,29 @@ private:
 	/** Cached bounds for debug visualization (auto-computed) */
 	FVector DebugDrawBoundsMin = FVector::ZeroVector;
 	FVector DebugDrawBoundsMax = FVector::ZeroVector;
+
+	//========================================
+	// Shadow Readback Cache (GPU Mode)
+	//========================================
+
+	/** Cached shadow positions from last successful readback */
+	TArray<FVector> CachedShadowPositions;
+
+	/** Cached shadow velocities for prediction */
+	TArray<FVector> CachedShadowVelocities;
+
+	/** Cached anisotropy axis 1 (xyz=direction, w=scale) for ellipsoid shadows */
+	TArray<FVector4> CachedAnisotropyAxis1;
+
+	/** Cached anisotropy axis 2 */
+	TArray<FVector4> CachedAnisotropyAxis2;
+
+	/** Cached anisotropy axis 3 */
+	TArray<FVector4> CachedAnisotropyAxis3;
+
+	/** Frame number of last successful shadow readback */
+	uint64 LastShadowReadbackFrame = 0;
+
+	/** Time of last shadow readback (for prediction delta calculation) */
+	double LastShadowReadbackTime = 0.0;
 };

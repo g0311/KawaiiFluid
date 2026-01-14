@@ -107,13 +107,6 @@ void UKawaiiFluidMetaballRenderer::ApplySettings(const FKawaiiFluidMetaballRende
 	LocalParameters.Roughness = Settings.Roughness;
 	LocalParameters.SubsurfaceOpacity = Settings.SubsurfaceOpacity;
 
-	// Shadow parameters
-	LocalParameters.bEnableShadowCasting = Settings.bEnableShadowCasting;
-	LocalParameters.VSMResolution = Settings.VSMResolution;
-	LocalParameters.VSMBlurRadius = Settings.VSMBlurRadius;
-	LocalParameters.VSMBlurIterations = Settings.VSMBlurIterations;
-	LocalParameters.ShadowIntensity = Settings.ShadowIntensity;
-
 	// Anisotropy parameters
 	LocalParameters.AnisotropyParams = Settings.AnisotropyParams;
 

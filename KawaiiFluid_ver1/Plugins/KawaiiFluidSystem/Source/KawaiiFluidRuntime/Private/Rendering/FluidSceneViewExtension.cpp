@@ -3,11 +3,6 @@
 #include "Rendering/FluidSceneViewExtension.h"
 
 #include "FluidRendererSubsystem.h"
-#include "Rendering/FluidShadowHistoryManager.h"
-#include "Rendering/FluidShadowProjection.h"
-#include "Rendering/FluidVSMBlur.h"
-#include "Rendering/FluidShadowReceiver.h"
-#include "Rendering/FluidShadowUtils.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphEvent.h"
 #include "SceneRendering.h"
@@ -33,220 +28,6 @@
 #include "Core/KawaiiRenderParticle.h"
 #include "GPU/GPUFluidSimulator.h"
 #include "GPU/GPUFluidSimulatorShaders.h"
-
-static TRefCountPtr<IPooledRenderTarget> GFluidCompositeDebug_KeepAlive;
-
-// ==============================================================================
-// Shadow Projection Helper
-// ==============================================================================
-
-/**
- * @brief Execute fluid shadow projection pass.
- * @param GraphBuilder RDG builder.
- * @param View Scene view.
- * @param Subsystem Fluid renderer subsystem.
- * @param RenderParams Rendering parameters.
- */
-static void ExecuteFluidShadowProjection(
-	FRDGBuilder& GraphBuilder,
-	const FSceneView& View,
-	UFluidRendererSubsystem* Subsystem,
-	const FFluidRenderingParameters& RenderParams)
-{
-	// Debug: Log shadow projection entry
-	UE_LOG(LogTemp, Log,
-	       TEXT(
-		       "FluidShadow: ExecuteFluidShadowProjection called - bEnableShadowCasting=%d, Subsystem=%p"
-	       ),
-	       RenderParams.bEnableShadowCasting, Subsystem);
-
-	if (!Subsystem || !RenderParams.bEnableShadowCasting)
-	{
-		UE_LOG(LogTemp, Log,
-		       TEXT("FluidShadow: Early exit - Subsystem=%p, bEnableShadowCasting=%d"),
-		       Subsystem, RenderParams.bEnableShadowCasting);
-		return;
-	}
-
-	FFluidShadowHistoryManager* HistoryManager = Subsystem->GetShadowHistoryManager();
-	const bool bHasValidHistory = HistoryManager ? HistoryManager->HasValidHistory() : false;
-	UE_LOG(LogTemp, Log, TEXT("FluidShadow: HistoryManager=%p, HasValidHistory=%d"),
-	       HistoryManager, bHasValidHistory);
-
-	if (!HistoryManager || !bHasValidHistory)
-	{
-		UE_LOG(LogTemp, Log, TEXT("FluidShadow: No valid history - waiting for next frame"));
-		return;
-	}
-
-	RDG_EVENT_SCOPE(GraphBuilder, "FluidShadowProjection");
-
-	// Get history buffer
-	const FFluidShadowHistoryBuffer& HistoryBuffer = HistoryManager->GetPreviousFrameBuffer();
-
-	// Get cached light data from subsystem (updated on game thread in SetupViewFamily)
-	if (!Subsystem->HasValidCachedLightData())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("FluidShadow: No valid cached light data"));
-		return;
-	}
-
-	FFluidShadowLightParams LightParams;
-	LightParams.LightDirection = Subsystem->GetCachedLightDirection();
-	LightParams.LightViewProjectionMatrix = Subsystem->GetCachedLightViewProjectionMatrix();
-	LightParams.bIsValid = true;
-
-	UE_LOG(LogTemp, Log, TEXT("FluidShadow: LightDir=(%f,%f,%f)"),
-	       LightParams.LightDirection.X, LightParams.LightDirection.Y,
-	       LightParams.LightDirection.Z);
-
-	// Check if history buffer has valid depth texture
-	if (!HistoryBuffer.bIsValid || !HistoryBuffer.DepthTexture.IsValid())
-	{
-		UE_LOG(LogTemp, Warning,
-		       TEXT("FluidShadow: History buffer invalid - bIsValid=%d, DepthTexture=%d"),
-		       HistoryBuffer.bIsValid, HistoryBuffer.DepthTexture.IsValid());
-		return;
-	}
-
-	// Setup projection parameters
-	FFluidShadowProjectionParams ProjectionParams;
-	ProjectionParams.VSMResolution = FIntPoint(RenderParams.VSMResolution,
-	                                           RenderParams.VSMResolution);
-	ProjectionParams.LightViewProjectionMatrix = LightParams.LightViewProjectionMatrix;
-
-	UE_LOG(LogTemp, Log, TEXT("FluidShadow: Calling RenderFluidShadowProjection VSMRes=%dx%d"),
-	       ProjectionParams.VSMResolution.X, ProjectionParams.VSMResolution.Y);
-
-	// Execute shadow projection
-	FFluidShadowProjectionOutput ProjectionOutput;
-	RenderFluidShadowProjection(
-		GraphBuilder,
-		View,
-		HistoryBuffer,
-		ProjectionParams,
-		ProjectionOutput);
-
-	UE_LOG(LogTemp, Log, TEXT("FluidShadow: ProjectionOutput - bIsValid=%d, VSMTexture=%d"),
-	       ProjectionOutput.bIsValid, ProjectionOutput.VSMTexture != nullptr);
-
-	if (!ProjectionOutput.bIsValid || !ProjectionOutput.VSMTexture)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("FluidShadow: Projection output invalid"));
-		return;
-	}
-
-	// Apply VSM blur
-	FRDGTextureRef BlurredVSM = nullptr;
-	if (RenderParams.VSMBlurIterations > 0 && RenderParams.VSMBlurRadius > 0.0f)
-	{
-		FFluidVSMBlurParams BlurParams;
-		BlurParams.BlurRadius = RenderParams.VSMBlurRadius;
-		BlurParams.NumIterations = RenderParams.VSMBlurIterations;
-
-		RenderFluidVSMBlur(
-			GraphBuilder,
-			ProjectionOutput.VSMTexture,
-			BlurParams,
-			BlurredVSM);
-	}
-	else
-	{
-		BlurredVSM = ProjectionOutput.VSMTexture;
-	}
-
-	// Extract VSM to pooled render target for persistence (write buffer)
-	if (BlurredVSM)
-	{
-		GraphBuilder.QueueTextureExtraction(BlurredVSM, Subsystem->GetVSMTextureWritePtr());
-
-		// Store light matrix for shadow receiving (write buffer)
-		Subsystem->SetLightVPMatrixWrite(LightParams.LightViewProjectionMatrix);
-
-		UE_LOG(LogTemp, Log, TEXT("FluidShadow: VSM texture queued for extraction"));
-	}
-}
-
-// ==============================================================================
-// Shadow Receiver Helper
-// ==============================================================================
-
-/**
- * @brief Apply fluid shadows to the scene using the cached VSM.
- * @param GraphBuilder RDG builder.
- * @param View Scene view.
- * @param Subsystem Fluid renderer subsystem (for per-world VSM access).
- * @param RenderParams Rendering parameters.
- * @param SceneColorTexture Input scene color.
- * @param SceneDepthTexture Scene depth texture.
- * @param Output Output render target.
- */
-static void ApplyFluidShadowReceiver(
-	FRDGBuilder& GraphBuilder,
-	const FSceneView& View,
-	UFluidRendererSubsystem* Subsystem,
-	const FFluidRenderingParameters& RenderParams,
-	FRDGTextureRef SceneColorTexture,
-	FRDGTextureRef SceneDepthTexture,
-	FScreenPassRenderTarget& Output)
-{
-	if (!Subsystem || !RenderParams.bEnableShadowCasting)
-	{
-		return;
-	}
-
-	TRefCountPtr<IPooledRenderTarget> VSMTextureRead = Subsystem->GetVSMTextureRead();
-	UE_LOG(LogTemp, Log,
-	       TEXT(
-		       "FluidShadow: ApplyFluidShadowReceiver called - VSMTexture_Read=%d, ShadowCasting=%d"
-	       ),
-	       VSMTextureRead.IsValid(), RenderParams.bEnableShadowCasting);
-
-	// Check if we have valid VSM from previous frame (read buffer)
-	// Need to check both TRefCountPtr validity AND internal RHI resource
-	if (!VSMTextureRead.IsValid() || !VSMTextureRead->GetRHI())
-	{
-		UE_LOG(LogTemp, Log,
-		       TEXT(
-			       "FluidShadow: ApplyFluidShadowReceiver early exit - waiting for VSM from previous frame"
-		       ));
-		return;
-	}
-
-	RDG_EVENT_SCOPE(GraphBuilder, "FluidShadowReceiver");
-
-	// Import cached VSM texture into RDG (from read buffer - previous frame)
-	FRDGTextureRef VSMTexture = GraphBuilder.RegisterExternalTexture(
-		VSMTextureRead,
-		TEXT("FluidVSMTexture"));
-
-	if (!VSMTexture)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("FluidShadow: Failed to register external VSM texture"));
-		return;
-	}
-
-	// Setup receiver parameters
-	FFluidShadowReceiverParams ReceiverParams;
-	ReceiverParams.ShadowIntensity = RenderParams.ShadowIntensity;
-	ReceiverParams.ShadowBias = 0.001f;
-	ReceiverParams.MinVariance = 0.00001f;
-	ReceiverParams.LightBleedReduction = 0.2f;
-	ReceiverParams.bDebugVisualization = false;
-
-	// Apply shadow receiver pass (use read buffer's light matrix)
-	RenderFluidShadowReceiver(
-		GraphBuilder,
-		View,
-		SceneColorTexture,
-		SceneDepthTexture,
-		VSMTexture,
-		Subsystem->GetLightVPMatrixRead(),
-		ReceiverParams,
-		Output);
-
-	UE_LOG(LogTemp, Verbose, TEXT("FluidShadow: Shadow receiver applied"));
-}
 
 // ==============================================================================
 // Class Implementation
@@ -314,12 +95,6 @@ void FFluidSceneViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewFam
 
 	// Swap VSM buffers through Subsystem (per-world isolation)
 	SubsystemPtr->SwapVSMBuffers();
-
-	// Swap history buffers at the start of each frame
-	if (FFluidShadowHistoryManager* HistoryManager = SubsystemPtr->GetShadowHistoryManager())
-	{
-		HistoryManager->BeginFrame();
-	}
 	// Note: Per-frame deduplication is handled by Preset-based TMap batching
 }
 
@@ -859,7 +634,6 @@ void FFluidSceneViewExtension::PrePostProcessPass_RenderThread(
 	// - ScreenSpace: Full pipeline (depth/normal/thickness generation + shading)
 	TMap<FContextCacheKey, TArray<UKawaiiFluidMetaballRenderer*>> TranslucentBatches;
 	TMap<FContextCacheKey, TArray<UKawaiiFluidMetaballRenderer*>> ScreenSpaceBatches;
-	const FFluidRenderingParameters* ShadowRenderParams = nullptr;
 
 	const TArray<UKawaiiFluidRenderingModule*>& Modules = SubsystemPtr->GetAllRenderingModules();
 	for (UKawaiiFluidRenderingModule* Module : Modules)
@@ -884,12 +658,6 @@ void FFluidSceneViewExtension::PrePostProcessPass_RenderThread(
 			// Get rendering params from preset
 			const FFluidRenderingParameters& Params = Preset->RenderingParameters;
 
-			// Collect shadow params from first renderer with shadow casting enabled
-			if (!ShadowRenderParams && Params.bEnableShadowCasting)
-			{
-				ShadowRenderParams = &Params;
-			}
-
 			if (Params.ShadingMode == EMetaballShadingMode::Translucent)
 			{
 				TranslucentBatches.FindOrAdd(BatchKey).Add(MetaballRenderer);
@@ -906,8 +674,8 @@ void FFluidSceneViewExtension::PrePostProcessPass_RenderThread(
 		}
 	}
 
-	// Early return if nothing to render and no shadows
-	if (TranslucentBatches.Num() == 0 && ScreenSpaceBatches.Num() == 0 && !ShadowRenderParams)
+	// Early return if nothing to render
+	if (TranslucentBatches.Num() == 0 && ScreenSpaceBatches.Num() == 0)
 	{
 		return;
 	}
@@ -969,53 +737,6 @@ void FFluidSceneViewExtension::PrePostProcessPass_RenderThread(
 
 	// Copy SceneColor
 	AddCopyTexturePass(GraphBuilder, SceneColorTexture, LitSceneColorCopy);
-
-	// ============================================
-	// Shadow Processing (before fluid rendering)
-	// ============================================
-	if (ShadowRenderParams)
-	{
-		RDG_EVENT_SCOPE(GraphBuilder, "FluidShadowProcessing");
-
-		// 1. Shadow Projection - generates VSM texture from history buffer
-		{
-			RDG_EVENT_SCOPE(GraphBuilder, "ShadowProjection");
-			ExecuteFluidShadowProjection(
-				GraphBuilder,
-				View,
-				SubsystemPtr,
-				*ShadowRenderParams);
-		}
-
-		// 2. Shadow Receiver - applies shadows to scene
-		{
-			RDG_EVENT_SCOPE(GraphBuilder, "ShadowReceiver");
-			// Create a copy for shadow receiver input (can't read and write same texture)
-			FRDGTextureDesc ShadowInputDesc = SceneColorTexture->Desc;
-			ShadowInputDesc.Flags &= ~(TexCreate_Presentable | TexCreate_DepthStencilTargetable |
-				TexCreate_ResolveTargetable);
-			ShadowInputDesc.Flags |= (TexCreate_RenderTargetable | TexCreate_ShaderResource);
-			FRDGTextureRef ShadowInputCopy = GraphBuilder.CreateTexture(
-				ShadowInputDesc,
-				TEXT("FluidShadowReceiverInput_PrePostProcess"));
-			AddCopyTexturePass(GraphBuilder, SceneColorTexture, ShadowInputCopy);
-
-			ApplyFluidShadowReceiver(
-				GraphBuilder,
-				View,
-				SubsystemPtr,
-				*ShadowRenderParams,
-				ShadowInputCopy,
-				SceneDepthTexture,
-				Output);
-		}
-
-		// 3. Update scene color copy
-		{
-			RDG_EVENT_SCOPE(GraphBuilder, "UpdateSceneColorCopy");
-			AddCopyTexturePass(GraphBuilder, SceneColorTexture, LitSceneColorCopy);
-		}
-	}
 
 	// Apply TransparencyPass for each Translucent batch using Pipeline
 	// Batched by (Preset + GPUMode) - same context renders only once
@@ -1089,35 +810,6 @@ void FFluidSceneViewExtension::PrePostProcessPass_RenderThread(
 					SceneDepthTexture,
 					LitSceneColorCopy,
 					Output);
-			}
-
-			// 3. Store smoothed depth to history for shadow projection
-			{
-				RDG_EVENT_SCOPE(GraphBuilder, "StoreDepthHistory");
-				if (FFluidShadowHistoryManager* HistoryManager = SubsystemPtr->
-					GetShadowHistoryManager())
-				{
-					if (const FMetaballIntermediateTextures* IntermediateTextures = Pipeline->
-						GetCachedIntermediateTextures())
-					{
-						if (IntermediateTextures->SmoothedDepthTexture)
-						{
-							HistoryManager->StoreCurrentFrame(
-								GraphBuilder,
-								IntermediateTextures->SmoothedDepthTexture,
-								View);
-						}
-						else
-						{
-							UE_LOG(LogTemp, Warning,
-							       TEXT("KawaiiFluid: SmoothedDepthTexture is null!"));
-						}
-					}
-					else
-					{
-						UE_LOG(LogTemp, Warning, TEXT("KawaiiFluid: IntermediateTextures is null!"));
-					}
-				}
 			}
 
 			UE_LOG(LogTemp, Verbose,

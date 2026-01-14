@@ -863,6 +863,152 @@ private:
 	//=============================================================================
 
 	TUniquePtr<FGPUAdhesionManager> AdhesionManager;
+
+	//=============================================================================
+	// Shadow Position Readback (Async GPU→CPU for HISM Shadow Instances)
+	// Uses FRHIGPUBufferReadback for non-blocking readback (2-3 frame latency)
+	//=============================================================================
+
+	static constexpr int32 NUM_SHADOW_READBACK_BUFFERS = 3;  // Triple buffering
+
+	/** Async readback objects for position data */
+	FRHIGPUBufferReadback* ShadowPositionReadbacks[NUM_SHADOW_READBACK_BUFFERS] = { nullptr };
+
+	/** Current write index for ring buffer (round-robin: 0 → 1 → 2 → 0 ...) */
+	int32 ShadowReadbackWriteIndex = 0;
+
+	/**
+	 * Buffer index from the most recent ProcessShadowReadback() call.
+	 * ProcessAnisotropyReadback() uses this to read from the same buffer,
+	 * ensuring position and anisotropy data are from the same frame.
+	 * Reset to -1 after anisotropy is processed to prevent duplicate reads.
+	 */
+	int32 LastProcessedShadowReadbackIndex = -1;
+
+	/** Frame number tracking for each readback buffer */
+	uint64 ShadowReadbackFrameNumbers[NUM_SHADOW_READBACK_BUFFERS] = { 0 };
+
+	/** Particle count for each readback buffer */
+	int32 ShadowReadbackParticleCounts[NUM_SHADOW_READBACK_BUFFERS] = { 0 };
+
+	/** Ready positions (copied from completed readback) */
+	TArray<FVector3f> ReadyShadowPositions;
+
+	/** Ready velocities (copied from completed readback, for prediction) */
+	TArray<FVector3f> ReadyShadowVelocities;
+
+	/** Ready anisotropy data (copied from completed readback, for ellipsoid shadows) */
+	TArray<FVector4f> ReadyShadowAnisotropyAxis1;
+	TArray<FVector4f> ReadyShadowAnisotropyAxis2;
+	TArray<FVector4f> ReadyShadowAnisotropyAxis3;
+
+	/** Async readback objects for anisotropy data (separate from position readback) */
+	FRHIGPUBufferReadback* ShadowAnisotropyReadbacks[NUM_SHADOW_READBACK_BUFFERS][3] = { {nullptr} };
+
+	/** Frame number of ready positions */
+	std::atomic<uint64> ReadyShadowPositionsFrame{0};
+
+	/** Enable flag for shadow readback */
+	std::atomic<bool> bShadowReadbackEnabled{false};
+
+	/** Enable flag for anisotropy readback (requires bShadowReadbackEnabled) */
+	std::atomic<bool> bAnisotropyReadbackEnabled{false};
+
+public:
+	//=============================================================================
+	// Shadow Position Readback API
+	//=============================================================================
+
+	/**
+	 * Enable or disable shadow position readback
+	 * When enabled, particle positions are asynchronously read back for HISM shadows
+	 * @param bEnabled - true to enable async position readback
+	 */
+	void SetShadowReadbackEnabled(bool bEnabled) { bShadowReadbackEnabled.store(bEnabled); }
+
+	/**
+	 * Check if shadow readback is enabled
+	 */
+	bool IsShadowReadbackEnabled() const { return bShadowReadbackEnabled.load(); }
+
+	/**
+	 * Check if shadow positions are ready for use
+	 * @return true if async readback has completed and positions are available
+	 */
+	bool HasReadyShadowPositions() const { return ReadyShadowPositionsFrame.load() > 0 && ReadyShadowPositions.Num() > 0; }
+
+	/**
+	 * Get shadow positions (non-blocking, returns previously completed readback)
+	 * @param OutPositions - Output array of particle positions
+	 * @return true if valid positions were retrieved
+	 */
+	bool GetShadowPositions(TArray<FVector>& OutPositions) const;
+
+	/**
+	 * Get shadow positions and velocities (non-blocking, for prediction)
+	 * @param OutPositions - Output array of particle positions
+	 * @param OutVelocities - Output array of particle velocities
+	 * @return true if valid data was retrieved
+	 */
+	bool GetShadowPositionsAndVelocities(TArray<FVector>& OutPositions, TArray<FVector>& OutVelocities) const;
+
+	/**
+	 * Get shadow position count
+	 */
+	int32 GetShadowPositionCount() const { return ReadyShadowPositions.Num(); }
+
+	/**
+	 * Enable or disable anisotropy readback for ellipsoid shadows
+	 * Requires shadow readback to be enabled first
+	 * @param bEnabled - true to enable anisotropy readback
+	 */
+	void SetAnisotropyReadbackEnabled(bool bEnabled) { bAnisotropyReadbackEnabled.store(bEnabled); }
+
+	/**
+	 * Check if anisotropy readback is enabled
+	 */
+	bool IsAnisotropyReadbackEnabled() const { return bAnisotropyReadbackEnabled.load(); }
+
+	/**
+	 * Check if anisotropy data is ready for use
+	 * @return true if anisotropy readback has completed
+	 */
+	bool HasReadyAnisotropyData() const { return ReadyShadowAnisotropyAxis1.Num() > 0; }
+
+	/**
+	 * Get shadow data with anisotropy (non-blocking, for ellipsoid HISM shadows)
+	 * @param OutPositions - Output array of particle positions
+	 * @param OutVelocities - Output array of particle velocities
+	 * @param OutAnisotropyAxis1 - Output array of first ellipsoid axis (xyz=dir, w=scale)
+	 * @param OutAnisotropyAxis2 - Output array of second ellipsoid axis
+	 * @param OutAnisotropyAxis3 - Output array of third ellipsoid axis
+	 * @return true if valid data was retrieved
+	 */
+	bool GetShadowDataWithAnisotropy(
+		TArray<FVector>& OutPositions,
+		TArray<FVector>& OutVelocities,
+		TArray<FVector4>& OutAnisotropyAxis1,
+		TArray<FVector4>& OutAnisotropyAxis2,
+		TArray<FVector4>& OutAnisotropyAxis3) const;
+
+private:
+	/** Allocate shadow readback objects */
+	void AllocateShadowReadbackObjects(FRHICommandListImmediate& RHICmdList);
+
+	/** Release shadow readback objects */
+	void ReleaseShadowReadbackObjects();
+
+	/** Enqueue shadow position copy to readback buffer */
+	void EnqueueShadowPositionReadback(FRHICommandListImmediate& RHICmdList, FRHIBuffer* SourceBuffer, int32 ParticleCount);
+
+	/** Enqueue anisotropy data copy to readback buffer */
+	void EnqueueAnisotropyReadback(FRHICommandListImmediate& RHICmdList, int32 ParticleCount);
+
+	/** Process shadow readback (check for completion, copy to ready buffer) */
+	void ProcessShadowReadback();
+
+	/** Process anisotropy readback */
+	void ProcessAnisotropyReadback();
 };
 
 /**
