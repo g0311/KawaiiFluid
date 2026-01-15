@@ -915,6 +915,9 @@ private:
 	/** Frame number of ready positions */
 	std::atomic<uint64> ReadyShadowPositionsFrame{0};
 
+	/** Frame number of ready anisotropy (must match ReadyShadowPositionsFrame for valid ellipsoid) */
+	std::atomic<uint64> ReadyShadowAnisotropyFrame{0};
+
 	/** Enable flag for shadow readback */
 	std::atomic<bool> bShadowReadbackEnabled{false};
 

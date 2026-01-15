@@ -421,37 +421,17 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 					const float ParticleRadius = SimulationModule->GetParticleRadius();
 					FluidBounds = FluidBounds.ExpandBy(ParticleRadius * 2.0f);
 
-					// Update shadow proxy state (creates HISM if needed)
+					// Update shadow proxy state (creates HISM component if needed)
 					RendererSubsystem->UpdateShadowProxyState();
 
-					// Update HISM shadow instances from particle positions (with anisotropy for ellipsoid shadows)
-					const bool bHasAnisotropy = CachedAnisotropyAxis1.Num() == NumParticles;
-
-					static int32 ShadowDebugCounter = 0;
-					if (++ShadowDebugCounter % 60 == 1)
-					{
-						UE_LOG(LogTemp, Warning, TEXT("Shadow Update: NumParticles=%d, CachedAniso1=%d, bHasAnisotropy=%d"),
-							NumParticles, CachedAnisotropyAxis1.Num(), bHasAnisotropy ? 1 : 0);
-					}
-
-					// Use anisotropy if available (rotation disabled for now, scale only)
-					if (bHasAnisotropy)
-					{
-						RendererSubsystem->UpdateShadowInstancesWithAnisotropy(
-							Positions.GetData(),
-							CachedAnisotropyAxis1.GetData(),
-							CachedAnisotropyAxis2.GetData(),
-							CachedAnisotropyAxis3.GetData(),
-							NumParticles);
-					}
-					else
-					{
-						RendererSubsystem->UpdateShadowInstances(Positions.GetData(), NumParticles);
-					}
+					// Update HISM shadow instances with uniform spheres
+					// Note: Anisotropy-based ellipsoid shadows are disabled due to flickering
+					// caused by per-frame particle index reordering from GPU Morton sorting
+					RendererSubsystem->UpdateShadowInstances(Positions.GetData(), NumParticles);
 				}
 				else
 				{
-					// 파티클 0개일 때 shadow ISM 클리어
+					// Clear shadow instances when no particles
 					RendererSubsystem->UpdateShadowInstances(nullptr, 0);
 				}
 			}
@@ -469,7 +449,7 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 	}
 
 #if WITH_EDITOR
-	// 에디터에서 스폰 영역 시각화 (게임 월드가 아닐 때만)
+	// Visualize spawn area in editor (non-game worlds only)
 	if (!bIsGameWorld)
 	{
 		DrawSpawnAreaVisualization();

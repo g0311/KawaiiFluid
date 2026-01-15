@@ -10,7 +10,7 @@
 
 class FFluidSceneViewExtension;
 class UKawaiiFluidRenderingModule;
-class UHierarchicalInstancedStaticMeshComponent;
+class UInstancedStaticMeshComponent;
 class UStaticMesh;
 
 /**
@@ -141,7 +141,7 @@ public:
 	 * When enabled, creates sphere instances at particle positions for shadow casting.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|HISM")
-	bool bEnableVSMIntegration = false;
+	bool bEnableVSMIntegration = true;
 
 	/**
 	 * @brief Radius of each shadow sphere instance (in world units).
@@ -195,13 +195,13 @@ public:
 		int32 NumParticles);
 
 private:
-	/** Actor that owns the HISM shadow component. */
+	/** Actor that owns the ISM shadow component. */
 	UPROPERTY(Transient)
 	TObjectPtr<AActor> ShadowProxyActor = nullptr;
 
-	/** HISM component for instanced sphere shadow casting. */
+	/** ISM component for instanced sphere shadow casting. */
 	UPROPERTY(Transient)
-	TObjectPtr<UHierarchicalInstancedStaticMeshComponent> ShadowInstanceComponent = nullptr;
+	TObjectPtr<UInstancedStaticMeshComponent> ShadowInstanceComponent = nullptr;
 
 	/** Sphere mesh used for shadow instances. */
 	UPROPERTY(Transient)

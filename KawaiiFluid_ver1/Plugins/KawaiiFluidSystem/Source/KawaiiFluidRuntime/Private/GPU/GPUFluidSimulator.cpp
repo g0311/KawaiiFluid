@@ -392,8 +392,9 @@ void FGPUFluidSimulator::SimulateSubstep(const FGPUFluidSimulationParams& Params
 			{
 				const int32 ParticleCount = Self->CurrentParticleCount;
 				const int32 CopySize = ParticleCount * sizeof(FGPUFluidParticle);
+				const uint32 SourceBufferSize = Self->PersistentParticleBuffer->GetRHI()->GetSize();
 
-				if (ParticleCount > 0 && CopySize > 0)
+				if (ParticleCount > 0 && CopySize > 0 && static_cast<uint32>(CopySize) <= SourceBufferSize)
 				{
 					// Transition persistent buffer for copy
 					RHICmdList.Transition(FRHITransitionInfo(
@@ -1047,6 +1048,17 @@ void FGPUFluidSimulator::ExecutePostSimulation(
 	{
 		const int32 UpdateInterval = FMath::Max(1, CachedAnisotropyParams.UpdateInterval);
 		++AnisotropyFrameCounter;
+
+		// DEBUG: Anisotropy 계산 실행 여부 로깅
+		static int32 AnisoDebugCounter = 0;
+		const bool bWillCompute = (AnisotropyFrameCounter >= UpdateInterval || !PersistentAnisotropyAxis1Buffer.IsValid());
+		if (++AnisoDebugCounter % 30 == 1)
+		{
+			UE_LOG(LogGPUFluidSimulator, Warning,
+				TEXT("[ANISO_COMPUTE] UpdateInterval=%d, FrameCounter=%d, WillCompute=%s"),
+				UpdateInterval, AnisotropyFrameCounter, bWillCompute ? TEXT("YES") : TEXT("NO"));
+		}
+
 		if (AnisotropyFrameCounter >= UpdateInterval || !PersistentAnisotropyAxis1Buffer.IsValid())
 		{
 			AnisotropyFrameCounter = 0;
@@ -1802,6 +1814,17 @@ void FGPUFluidSimulator::EnqueueShadowPositionReadback(FRHICommandListImmediate&
 		return;
 	}
 
+	// Validate source buffer size before copying
+	const uint32 SourceBufferSize = SourceBuffer->GetSize();
+	const uint32 RequiredSize = ParticleCount * sizeof(FGPUFluidParticle);
+	if (RequiredSize > SourceBufferSize)
+	{
+		UE_LOG(LogGPUFluidSimulator, Warning,
+			TEXT("EnqueueShadowPositionReadback: CopySize (%u) exceeds SourceBuffer size (%u). ParticleCount=%d, Skipping."),
+			RequiredSize, SourceBufferSize, ParticleCount);
+		return;
+	}
+
 	// Allocate readback objects if needed
 	if (ShadowPositionReadbacks[0] == nullptr)
 	{
@@ -1972,7 +1995,7 @@ void FGPUFluidSimulator::EnqueueAnisotropyReadback(FRHICommandListImmediate& RHI
 	const int32 WriteIdx = (ShadowReadbackWriteIndex + NUM_SHADOW_READBACK_BUFFERS - 1) % NUM_SHADOW_READBACK_BUFFERS;
 
 	// Calculate copy size (float4 per particle per axis)
-	const int32 CopySize = ParticleCount * sizeof(FVector4f);
+	const uint32 RequiredSize = ParticleCount * sizeof(FVector4f);
 
 	// Enqueue async copy for each axis
 	FRHIBuffer* Axis1RHI = PersistentAnisotropyAxis1Buffer->GetRHI();
@@ -1981,15 +2004,27 @@ void FGPUFluidSimulator::EnqueueAnisotropyReadback(FRHICommandListImmediate& RHI
 
 	if (Axis1RHI && ShadowAnisotropyReadbacks[WriteIdx][0])
 	{
-		ShadowAnisotropyReadbacks[WriteIdx][0]->EnqueueCopy(RHICmdList, Axis1RHI, CopySize);
+		const uint32 BufferSize = Axis1RHI->GetSize();
+		if (RequiredSize <= BufferSize)
+		{
+			ShadowAnisotropyReadbacks[WriteIdx][0]->EnqueueCopy(RHICmdList, Axis1RHI, RequiredSize);
+		}
 	}
 	if (Axis2RHI && ShadowAnisotropyReadbacks[WriteIdx][1])
 	{
-		ShadowAnisotropyReadbacks[WriteIdx][1]->EnqueueCopy(RHICmdList, Axis2RHI, CopySize);
+		const uint32 BufferSize = Axis2RHI->GetSize();
+		if (RequiredSize <= BufferSize)
+		{
+			ShadowAnisotropyReadbacks[WriteIdx][1]->EnqueueCopy(RHICmdList, Axis2RHI, RequiredSize);
+		}
 	}
 	if (Axis3RHI && ShadowAnisotropyReadbacks[WriteIdx][2])
 	{
-		ShadowAnisotropyReadbacks[WriteIdx][2]->EnqueueCopy(RHICmdList, Axis3RHI, CopySize);
+		const uint32 BufferSize = Axis3RHI->GetSize();
+		if (RequiredSize <= BufferSize)
+		{
+			ShadowAnisotropyReadbacks[WriteIdx][2]->EnqueueCopy(RHICmdList, Axis3RHI, RequiredSize);
+		}
 	}
 }
 
@@ -2096,6 +2131,15 @@ bool FGPUFluidSimulator::GetShadowDataWithAnisotropy(
 		ReadyShadowAnisotropyAxis2.Num() != Count ||
 		ReadyShadowAnisotropyAxis3.Num() != Count)
 	{
+		// DEBUG: 개수 불일치 로깅
+		static int32 MismatchLogCounter = 0;
+		if (++MismatchLogCounter % 10 == 1)
+		{
+			UE_LOG(LogGPUFluidSimulator, Warning,
+				TEXT("[ANISO_MISMATCH] Position=%d, Aniso1=%d, Aniso2=%d, Aniso3=%d → Using default W=1.0"),
+				Count, ReadyShadowAnisotropyAxis1.Num(), ReadyShadowAnisotropyAxis2.Num(), ReadyShadowAnisotropyAxis3.Num());
+		}
+
 		// Anisotropy not available - return default (uniform sphere)
 		OutAnisotropyAxis1.SetNumUninitialized(Count);
 		OutAnisotropyAxis2.SetNumUninitialized(Count);
