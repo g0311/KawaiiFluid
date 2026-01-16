@@ -144,18 +144,11 @@ public:
 	bool bEnableVSMIntegration = true;
 
 	/**
-	 * @brief Radius of each shadow sphere instance (in world units).
-	 * Larger values create softer, more blended shadows.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|HISM", meta = (ClampMin = "1.0", ClampMax = "100.0"))
-	float ShadowSphereRadius = 15.0f;
-
-	/**
 	 * @brief Maximum number of shadow instances to use.
-	 * Limits performance cost. Set to 0 for unlimited.
+	 * Set to 0 for unlimited (default).
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|HISM", meta = (ClampMin = "0", ClampMax = "100000"))
-	int32 MaxShadowInstances = 10000;
+	int32 MaxShadowInstances = 0;
 
 	/**
 	 * @brief Skip factor for particle-to-instance conversion.
@@ -175,8 +168,9 @@ public:
 	 * Creates sphere instances at particle locations for shadow casting.
 	 * @param ParticlePositions Array of particle world positions.
 	 * @param NumParticles Number of particles.
+	 * @param ParticleRadius Radius of each particle (used for shadow sphere size).
 	 */
-	void UpdateShadowInstances(const FVector* ParticlePositions, int32 NumParticles);
+	void UpdateShadowInstances(const FVector* ParticlePositions, int32 NumParticles, float ParticleRadius);
 
 	/**
 	 * @brief Update shadow instances with anisotropy data for ellipsoid shadows.
@@ -186,13 +180,15 @@ public:
 	 * @param AnisotropyAxis2 Array of second ellipsoid axis.
 	 * @param AnisotropyAxis3 Array of third ellipsoid axis.
 	 * @param NumParticles Number of particles.
+	 * @param ParticleRadius Radius of each particle (used for shadow sphere size).
 	 */
 	void UpdateShadowInstancesWithAnisotropy(
 		const FVector* ParticlePositions,
 		const FVector4* AnisotropyAxis1,
 		const FVector4* AnisotropyAxis2,
 		const FVector4* AnisotropyAxis3,
-		int32 NumParticles);
+		int32 NumParticles,
+		float ParticleRadius);
 
 private:
 	/** Actor that owns the ISM shadow component. */

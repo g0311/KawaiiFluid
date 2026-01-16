@@ -95,14 +95,6 @@ float AttachedStretchScale;   // Perpendicular stretch (1.5 = 150%)
 // Morton code parameters (for Z-Order sorting mode)
 float3 MortonBoundsMin;       // Grid origin for Morton code calculation
 
-// Isolated particle handling params (Yu & Turk style + extensions)
-int MinNeighborsForAnisotropy;    // Threshold for isolation (default: 8)
-int bFadeIsolatedParticles;       // Enable size fade for isolated particles
-float MinIsolatedScale;           // Minimum scale when fully isolated (0 = invisible)
-int bStretchIsolatedByVelocity;   // Stretch isolated particles by velocity
-int bFadeSlowIsolated;            // Additional fade for slow isolated particles
-float IsolationFadeSpeed;         // Speed threshold for slow fade (cm/s)
-
 //-----------------------------------------------------------------------------
 // FleX / Yu & Turk Style Constants
 //-----------------------------------------------------------------------------
@@ -111,13 +103,12 @@ float IsolationFadeSpeed;         // Speed threshold for slow fade (cm/s)
 // kr = 10 means minimum scale is 10% of maximum (very flat pancakes)
 #define K_R 10.0f
 
-// Minimum neighbors for reliable covariance estimation
-#define MIN_NEIGHBORS_FOR_ANISOTROPY 3
+// Minimum neighbors for covariance calculation (PCA requires at least 4)
+#define MIN_NEIGHBORS_FOR_ANISOTROPY 4
 
-// Neighbor count range for smooth sphere-to-ellipsoid blending
-// Below MIN: pure sphere, above MAX: full ellipsoid, between: linear interpolation
-#define BLEND_NEIGHBORS_MIN 3
-#define BLEND_NEIGHBORS_MAX 8
+// Neighbor count for full anisotropy (surface particles typically have ~6+)
+// At MIN(4): sphere, At FULL(6): complete anisotropy
+#define FULL_NEIGHBORS_FOR_ANISOTROPY 6
 
 // Stretch multiplier to make ellipsoids visually elongated
 // FleX uses 1.0 (no extra multiplier) - higher values cause edge artifacts
@@ -703,19 +694,19 @@ void CalculateDensityBased(
 	LogScale2 -= LogAvg;
 	LogScale3 -= LogAvg;
 
-	// =========================================================================
-	// Smooth sphere-to-ellipsoid blending based on neighbor count
-	// Blend in log space: lerp(0, logScale, factor) preserves volume
-	// =========================================================================
-	float BlendFactor = saturate((float)(NeighborCount - BLEND_NEIGHBORS_MIN) /
-	                             (float)(BLEND_NEIGHBORS_MAX - BLEND_NEIGHBORS_MIN));
-
+	// Step 5: Neighbor-count based blending
+	// Surface particles (fewer neighbors) get partial anisotropy
+	// Internal particles (more neighbors) get full anisotropy
+	float BlendFactor = saturate(
+		(float)(NeighborCount - MIN_NEIGHBORS_FOR_ANISOTROPY) /
+		(float)(FULL_NEIGHBORS_FOR_ANISOTROPY - MIN_NEIGHBORS_FOR_ANISOTROPY)
+	);
 	// Lerp in log space: sphere has log scales of (0, 0, 0)
 	LogScale1 *= BlendFactor;
 	LogScale2 *= BlendFactor;
 	LogScale3 *= BlendFactor;
 
-	// Step 5: Convert back to linear space
+	// Step 6: Convert back to linear space
 	Scale1 = exp(LogScale1);
 	Scale2 = exp(LogScale2);
 	Scale3 = exp(LogScale3);
@@ -921,103 +912,6 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			Scale1 = exp(LogScale1);
 			Scale2 = exp(LogScale2);
 			Scale3 = exp(LogScale3);
-		}
-	}
-
-	// =========================================================================
-	// Isolated Particle Handling (Yu & Turk style + extensions)
-	// Only applies to Density-Based and Hybrid modes (where NeighborCount is available)
-	// =========================================================================
-	if (AnisotropyMode != MODE_VELOCITY_BASED)
-	{
-		// Check if particle is isolated
-		bool bIsIsolated = (NeighborCount < MinNeighborsForAnisotropy);
-
-		if (bIsIsolated)
-		{
-			// Calculate isolation factor: 0 = at threshold, 1 = fully isolated (0 neighbors)
-			float IsolationFactor = 1.0f - saturate((float)NeighborCount / (float)MinNeighborsForAnisotropy);
-
-			// -----------------------------------------------------------------
-			// Option 1: Velocity-based stretching for isolated particles
-			// Isolated particles stretch along velocity direction (splash effect)
-			// -----------------------------------------------------------------
-			if (bStretchIsolatedByVelocity)
-			{
-				float Speed = length(EffectiveVelocity);
-				if (Speed > 0.001f)
-				{
-					float3 VelDir = EffectiveVelocity / Speed;
-
-					// Build orthonormal basis from velocity direction
-					float3 VelT, VelB;
-					BuildOrthonormalBasis(VelDir, VelT, VelB);
-
-					// Replace axes with velocity-based axes
-					Axis1 = VelDir;
-					Axis2 = VelT;
-					Axis3 = VelB;
-
-					// Calculate velocity stretch (volume-preserving in log space)
-					float VelStretchFactor = Speed * VelocityStretchFactor * AnisotropyScale;
-					float LogVelStretch = log(max(1.0f + VelStretchFactor, 0.001f));
-
-					// Apply stretch only to velocity direction, compress perpendicular
-					// Volume preservation: log(s1) + log(s2) + log(s3) = 0
-					float LogScale1 = LogVelStretch;  // Stretch along velocity
-					float LogScale2 = -LogVelStretch * 0.5f;  // Compress perpendicular
-					float LogScale3 = -LogVelStretch * 0.5f;  // Compress perpendicular
-
-					// Clamp in log space
-					float LogMin = log(max(AnisotropyMin, 0.001f));
-					float LogMax = log(max(AnisotropyMax, 0.001f));
-					LogScale1 = clamp(LogScale1, LogMin, LogMax);
-					LogScale2 = clamp(LogScale2, LogMin, LogMax);
-					LogScale3 = clamp(LogScale3, LogMin, LogMax);
-
-					// Re-center logs to maintain volume = 1.0
-					float LogSum = LogScale1 + LogScale2 + LogScale3;
-					float LogAvg = LogSum / 3.0f;
-					LogScale1 -= LogAvg;
-					LogScale2 -= LogAvg;
-					LogScale3 -= LogAvg;
-
-					// Blend between current (isotropic) and velocity-based based on isolation factor
-					// More isolated = more velocity-based
-					LogScale1 *= IsolationFactor;
-					LogScale2 *= IsolationFactor;
-					LogScale3 *= IsolationFactor;
-
-					// Convert back to linear space
-					Scale1 = exp(LogScale1);
-					Scale2 = exp(LogScale2);
-					Scale3 = exp(LogScale3);
-				}
-			}
-
-			// -----------------------------------------------------------------
-			// Option 2: Size fade for isolated particles
-			// Isolated particles shrink to become less visible
-			// -----------------------------------------------------------------
-			if (bFadeIsolatedParticles)
-			{
-				// Base fade: lerp from 1.0 (threshold) to MinIsolatedScale (fully isolated)
-				float FadeScale = lerp(1.0f, MinIsolatedScale, IsolationFactor);
-
-				// Option 2b: Additional fade for slow isolated particles
-				if (bFadeSlowIsolated)
-				{
-					float Speed = length(EffectiveVelocity);
-					float SpeedFactor = saturate(Speed / IsolationFadeSpeed);
-					// Slow particles fade more: scale *= SpeedFactor when isolated
-					FadeScale *= lerp(SpeedFactor, 1.0f, 1.0f - IsolationFactor);
-				}
-
-				// Apply uniform scale reduction (preserves ellipsoid shape)
-				Scale1 *= FadeScale;
-				Scale2 *= FadeScale;
-				Scale3 *= FadeScale;
-			}
 		}
 	}
 

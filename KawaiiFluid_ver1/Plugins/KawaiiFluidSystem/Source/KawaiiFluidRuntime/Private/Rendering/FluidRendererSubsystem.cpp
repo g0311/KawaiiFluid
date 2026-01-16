@@ -213,7 +213,7 @@ void UFluidRendererSubsystem::UpdateShadowProxyState()
  * @param ParticlePositions Array of particle world positions.
  * @param NumParticles Number of particles.
  */
-void UFluidRendererSubsystem::UpdateShadowInstances(const FVector* ParticlePositions, int32 NumParticles)
+void UFluidRendererSubsystem::UpdateShadowInstances(const FVector* ParticlePositions, int32 NumParticles, float ParticleRadius)
 {
 	check(IsInGameThread());
 
@@ -328,7 +328,7 @@ void UFluidRendererSubsystem::UpdateShadowInstances(const FVector* ParticlePosit
 	// Prepare transforms
 	CachedInstanceTransforms.SetNumUninitialized(NumInstances);
 
-	const FVector SphereScale = FVector(ShadowSphereRadius / 50.0f);  // Default sphere is 100 units diameter
+	const FVector SphereScale = FVector(ParticleRadius / 50.0f);  // Default sphere is 100 units diameter
 
 	for (int32 i = 0, InstanceIdx = 0; i < NumParticles && InstanceIdx < NumInstances; i += SkipFactor, ++InstanceIdx)
 	{
@@ -402,7 +402,8 @@ void UFluidRendererSubsystem::UpdateShadowInstancesWithAnisotropy(
 	const FVector4* AnisotropyAxis1,
 	const FVector4* AnisotropyAxis2,
 	const FVector4* AnisotropyAxis3,
-	int32 NumParticles)
+	int32 NumParticles,
+	float ParticleRadius)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FluidShadow_UpdateInstancesWithAnisotropy);
 
@@ -506,7 +507,7 @@ void UFluidRendererSubsystem::UpdateShadowInstancesWithAnisotropy(
 	// Prepare transforms with anisotropy
 	CachedInstanceTransforms.SetNumUninitialized(NumInstances);
 
-	const float BaseScale = ShadowSphereRadius / 50.0f;
+	const float BaseScale = ParticleRadius / 50.0f;
 	const bool bHasAnisotropy = (AnisotropyAxis1 != nullptr && AnisotropyAxis2 != nullptr && AnisotropyAxis3 != nullptr);
 
 	{

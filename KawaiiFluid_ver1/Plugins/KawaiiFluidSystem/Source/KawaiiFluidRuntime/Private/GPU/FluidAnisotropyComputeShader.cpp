@@ -146,14 +146,6 @@ void FFluidAnisotropyPassBuilder::AddAnisotropyPass(
 	PassParameters->AttachedFlattenScale = Params.AttachedFlattenScale;
 	PassParameters->AttachedStretchScale = Params.AttachedStretchScale;
 
-	// Isolated particle handling params
-	PassParameters->MinNeighborsForAnisotropy = Params.MinNeighborsForAnisotropy;
-	PassParameters->bFadeIsolatedParticles = Params.bFadeIsolatedParticles ? 1 : 0;
-	PassParameters->MinIsolatedScale = Params.MinIsolatedScale;
-	PassParameters->bStretchIsolatedByVelocity = Params.bStretchIsolatedByVelocity ? 1 : 0;
-	PassParameters->bFadeSlowIsolated = Params.bFadeSlowIsolated ? 1 : 0;
-	PassParameters->IsolationFadeSpeed = Params.IsolationFadeSpeed;
-
 	const int32 ThreadGroupSize = FFluidAnisotropyCS::ThreadGroupSize;
 	const int32 NumGroups = FMath::DivideAndRoundUp(Params.ParticleCount, ThreadGroupSize);
 

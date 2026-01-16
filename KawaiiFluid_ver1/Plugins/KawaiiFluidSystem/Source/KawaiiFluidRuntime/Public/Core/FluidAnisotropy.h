@@ -83,39 +83,6 @@ struct KAWAIIFLUIDRUNTIME_API FFluidAnisotropyParams
 	 *  Higher values reduce GPU cost but may cause visual lag on fast movement */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anisotropy|Optimization", meta = (ClampMin = "1", ClampMax = "10", UIMin = "1", UIMax = "10"))
 	int32 UpdateInterval = 1;
-
-	//=========================================================================
-	// Isolated Particle Handling (Yu & Turk style + extensions)
-	//=========================================================================
-
-	/** Minimum neighbor count for anisotropy calculation (Yu & Turk default: 25)
-	 *  Below this threshold, particles are treated as "isolated" */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anisotropy|Isolation", meta = (ClampMin = "3", ClampMax = "30", UIMin = "3", UIMax = "30"))
-	int32 MinNeighborsForAnisotropy = 8;
-
-	/** Enable size fade for isolated particles (particles shrink as they become more isolated) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anisotropy|Isolation")
-	bool bFadeIsolatedParticles = true;
-
-	/** Minimum scale for isolated particles (0 = invisible, 1 = no fade)
-	 *  Only used when bFadeIsolatedParticles is true */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anisotropy|Isolation", meta = (ClampMin = "0", ClampMax = "1", UIMin = "0", UIMax = "1", EditCondition = "bFadeIsolatedParticles"))
-	float MinIsolatedScale = 0.3f;
-
-	/** Enable velocity-based stretching for isolated particles
-	 *  Isolated particles will stretch along velocity direction (splash effect) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anisotropy|Isolation")
-	bool bStretchIsolatedByVelocity = true;
-
-	/** Enable speed-based additional fade for isolated particles
-	 *  Slow isolated particles fade more (simulates droplet absorption) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anisotropy|Isolation", meta = (EditCondition = "bFadeIsolatedParticles"))
-	bool bFadeSlowIsolated = false;
-
-	/** Speed threshold for slow isolated particle fade (cm/s)
-	 *  Particles below this speed will fade more when isolated */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anisotropy|Isolation", meta = (ClampMin = "1", ClampMax = "100", UIMin = "1", UIMax = "100", EditCondition = "bFadeIsolatedParticles && bFadeSlowIsolated"))
-	float IsolationFadeSpeed = 10.0f;
 };
 
 // FAnisotropyComputeParams is defined in GPU/FluidAnisotropyComputeShader.h

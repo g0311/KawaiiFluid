@@ -376,6 +376,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering")
 	bool bEnableRendering = true;
 
+	/** Enable shadow casting via instanced spheres */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering")
+	bool bEnableShadow = true;
+
 	/** ISM Renderer Settings (per-Component, debug/preview purpose) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering", meta = (EditCondition = "bEnableRendering", DisplayName = "ISM Settings"))
 	FKawaiiFluidISMRendererSettings ISMSettings;

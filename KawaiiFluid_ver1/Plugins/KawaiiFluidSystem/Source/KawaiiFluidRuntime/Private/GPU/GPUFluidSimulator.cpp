@@ -1101,15 +1101,9 @@ void FGPUFluidSimulator::ExecutePostSimulation(
 				AnisotropyParams.AnisotropyMin = CachedAnisotropyParams.AnisotropyMin;
 				AnisotropyParams.AnisotropyMax = CachedAnisotropyParams.AnisotropyMax;
 				AnisotropyParams.DensityWeight = CachedAnisotropyParams.DensityWeight;
-				AnisotropyParams.MinNeighborsForAnisotropy = CachedAnisotropyParams.MinNeighborsForAnisotropy;
-				AnisotropyParams.bFadeIsolatedParticles = CachedAnisotropyParams.bFadeIsolatedParticles;
-				AnisotropyParams.MinIsolatedScale = CachedAnisotropyParams.MinIsolatedScale;
-				AnisotropyParams.bStretchIsolatedByVelocity = CachedAnisotropyParams.bStretchIsolatedByVelocity;
-				AnisotropyParams.bFadeSlowIsolated = CachedAnisotropyParams.bFadeSlowIsolated;
-				AnisotropyParams.IsolationFadeSpeed = CachedAnisotropyParams.IsolationFadeSpeed;
 
-				// Density-based anisotropy needs wider neighbor search than simulation
-				AnisotropyParams.SmoothingRadius = Params.SmoothingRadius * 2.5f;
+				// Use same radius as simulation (per Yu & Turk 2013, NVIDIA FleX)
+				AnisotropyParams.SmoothingRadius = Params.SmoothingRadius * 1.0f;
 				AnisotropyParams.CellSize = Params.CellSize;
 
 				// Morton-sorted spatial lookup (cache-friendly sequential access)

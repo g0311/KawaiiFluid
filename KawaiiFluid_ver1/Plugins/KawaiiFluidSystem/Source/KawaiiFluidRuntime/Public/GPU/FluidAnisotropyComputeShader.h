@@ -68,14 +68,6 @@ struct KAWAIIFLUIDRUNTIME_API FAnisotropyComputeParams
 	// Attached particle anisotropy params
 	float AttachedFlattenScale = 0.3f;	// How much to flatten attached particles (0.3 = 30% of original height)
 	float AttachedStretchScale = 1.5f;	// How much to stretch perpendicular to normal
-
-	// Isolated particle handling params (Yu & Turk style + extensions)
-	int32 MinNeighborsForAnisotropy = 8;	// Below this: isotropic fallback
-	bool bFadeIsolatedParticles = true;		// Enable size fade for isolated particles
-	float MinIsolatedScale = 0.3f;			// Minimum scale when fully isolated
-	bool bStretchIsolatedByVelocity = true;	// Stretch isolated particles by velocity
-	bool bFadeSlowIsolated = false;			// Additional fade for slow isolated particles
-	float IsolationFadeSpeed = 10.0f;		// Speed threshold for slow fade (cm/s)
 };
 
 // Constants (must match FluidSpatialHash.ush and FluidAnisotropyCompute.usf)
@@ -136,14 +128,6 @@ public:
 		// Attached particle anisotropy params
 		SHADER_PARAMETER(float, AttachedFlattenScale)  // How flat (0.3 = 30% height)
 		SHADER_PARAMETER(float, AttachedStretchScale)  // Perpendicular stretch
-
-		// Isolated particle handling params
-		SHADER_PARAMETER(int32, MinNeighborsForAnisotropy)  // Threshold for isolation
-		SHADER_PARAMETER(int32, bFadeIsolatedParticles)     // Enable size fade
-		SHADER_PARAMETER(float, MinIsolatedScale)           // Min scale when isolated
-		SHADER_PARAMETER(int32, bStretchIsolatedByVelocity) // Velocity stretch for isolated
-		SHADER_PARAMETER(int32, bFadeSlowIsolated)          // Slow particle fade
-		SHADER_PARAMETER(float, IsolationFadeSpeed)         // Speed threshold
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 64;

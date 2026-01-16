@@ -339,7 +339,7 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 	{
 		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
 		{
-			if (RendererSubsystem->bEnableVSMIntegration)
+			if (RendererSubsystem->bEnableVSMIntegration && bEnableShadow)
 			{
 				TArray<FVector> Positions;
 				int32 NumParticles = 0;
@@ -437,17 +437,17 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 					// Update HISM shadow instances with uniform spheres
 					// Note: Anisotropy-based ellipsoid shadows are disabled due to flickering
 					// caused by per-frame particle index reordering from GPU Morton sorting
-					RendererSubsystem->UpdateShadowInstances(Positions.GetData(), NumParticles);
+					RendererSubsystem->UpdateShadowInstances(Positions.GetData(), NumParticles, ParticleRadius);
 				}
 				else
 				{
 					// Clear shadow instances when no particles
-					RendererSubsystem->UpdateShadowInstances(nullptr, 0);
+					RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f);
 				}
 			}
 			else
 			{
-				// VSM disabled - ensure shadow readback is also disabled for GPU mode
+				// Shadow disabled (VSM off or component shadow off) - disable GPU readback
 				FGPUFluidSimulator* GPUSimulator = SimulationModule->GetGPUSimulator();
 				if (GPUSimulator != nullptr)
 				{
@@ -1070,7 +1070,7 @@ void UKawaiiFluidComponent::ClearAllParticles()
 	{
 		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
 		{
-			RendererSubsystem->UpdateShadowInstances(nullptr, 0);
+			RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f);
 		}
 	}
 }
