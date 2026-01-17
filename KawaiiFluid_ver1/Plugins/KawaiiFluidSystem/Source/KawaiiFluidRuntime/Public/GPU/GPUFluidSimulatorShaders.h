@@ -809,31 +809,32 @@ public:
 
 
 //=============================================================================
-// Despawn Particles Compute Shader
-// GPU-based particle creation from spawn requests (eliminates CPU→GPU race condition)
+// ID-Based Despawn Particles Compute Shader
+// Marks particles for removal by matching ParticleID against sorted ID list
+// Uses binary search for O(log n) lookup per particle
 //=============================================================================
-class FMarkDespawnCS : public FGlobalShader
+class FMarkDespawnByIDCS : public FGlobalShader
 {
 public:
-	DECLARE_GLOBAL_SHADER(FMarkDespawnCS);
-	SHADER_USE_PARAMETER_STRUCT(FMarkDespawnCS, FGlobalShader);
-	
-	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		// Input: Spawn requests from CPU
-		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUDespawnRequest>, DespawnRequests)
+	DECLARE_GLOBAL_SHADER(FMarkDespawnByIDCS);
+	SHADER_USE_PARAMETER_STRUCT(FMarkDespawnByIDCS, FGlobalShader);
 
-		// Output: Particle buffer to write new particles into
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		// Input: Sorted array of particle IDs to despawn
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<int>, DespawnIDs)
+
+		// Input: Particle buffer to check
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUFluidParticle>, Particles)
 
-		// Atomic counter for particle count (RWStructuredBuffer<uint>)
+		// Output: Alive mask (1 = alive, 0 = dead)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, OutAliveMask)
-	
-		// Spawn parameters
-		SHADER_PARAMETER(int32, DespawnRequestCount)
+
+		// Parameters
+		SHADER_PARAMETER(int32, DespawnIDCount)
 		SHADER_PARAMETER(int32, ParticleCount)
 	END_SHADER_PARAMETER_STRUCT()
 
-	static constexpr int32 ThreadGroupSize = 64;
+	static constexpr int32 ThreadGroupSize = 256;
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{

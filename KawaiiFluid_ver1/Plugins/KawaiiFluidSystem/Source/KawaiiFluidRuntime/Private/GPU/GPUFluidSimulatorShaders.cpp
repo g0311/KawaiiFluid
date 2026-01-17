@@ -76,9 +76,9 @@ IMPLEMENT_GLOBAL_SHADER(FSpawnParticlesCS,
 	"/Plugin/KawaiiFluidSystem/Private/FluidSpawnParticles.usf",
 	"SpawnParticlesCS", SF_Compute);
 
-IMPLEMENT_GLOBAL_SHADER(FMarkDespawnCS,
-	"/Plugin/KawaiiFluidSystem/Private/FluidDespawnParticles.usf",
-	"MarkDespawnCS", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FMarkDespawnByIDCS,
+	"/Plugin/KawaiiFluidSystem/Private/FluidDespawnByID.usf",
+	"MarkDespawnByIDCS", SF_Compute);
 
 IMPLEMENT_GLOBAL_SHADER(FPrefixSumBlockCS_RDG,
 	"/Plugin/KawaiiFluidSystem/Private/FluidPrefixSum.usf",

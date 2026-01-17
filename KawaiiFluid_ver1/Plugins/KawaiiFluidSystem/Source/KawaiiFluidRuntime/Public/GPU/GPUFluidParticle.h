@@ -747,20 +747,6 @@ struct FGPUSpawnParams
 	}
 };
 
-/*
- * GPU Despawn Request
- */
-struct FGPUDespawnRequest
-{
-	FVector3f Position;
-	float Radius;
-
-	FGPUDespawnRequest() : Position(FVector3f::ZeroVector), Radius(0.f) {}
-	FGPUDespawnRequest(const FVector3f& InPosition, float InRadius) :
-			Position(InPosition), Radius(InRadius) {}
-};
-static_assert(sizeof(FGPUDespawnRequest) == 16, "Must be 16 bytes aligned");
-
 /**
  * GPU Resources for fluid simulation
  * Manages RDG buffers for a single simulation frame

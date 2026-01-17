@@ -270,8 +270,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Fluid")
 	void SpawnParticles(FVector Location, int32 Count, float SpawnRadius);
 
-	void DespawnParticle(const FVector& WorldPos, float Radius);
-
 	/** 구형 격자 분포로 파티클 스폰 (Sphere 모드용)
 	 * @param Center 구체 중심
 	 * @param Radius 구체 반경

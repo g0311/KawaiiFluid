@@ -1,5 +1,5 @@
 // Copyright KawaiiFluid Team. All Rights Reserved.
-// Stream Compaction Shaders for Particle Despawn (shared by ID-based despawn)
+// ID-Based Despawn Shader - Marks particles for removal by ParticleID matching
 
 #include "/Engine/Public/Platform.ush"
 #include "/Engine/Private/Common.ush"
@@ -26,59 +26,69 @@ struct FGPUFluidParticle
 // Parameter Definitions
 // ===================================================================================
 
-// Shared Parameters
+// Input: Sorted array of particle IDs to despawn
+StructuredBuffer<int> DespawnIDs;
+
+// Input: Particle buffer to check
 StructuredBuffer<FGPUFluidParticle> Particles;
+
+// Output: Alive mask (1 = alive, 0 = dead)
+RWStructuredBuffer<uint> OutAliveMask;
+
+// Parameters
+int DespawnIDCount;
 int ParticleCount;
 
-// CompactParticlesCS Parameters
-StructuredBuffer<uint> MarkedFlags;
-StructuredBuffer<uint> PrefixSums;
-RWStructuredBuffer<FGPUFluidParticle> CompactedParticles;
+// ===================================================================================
+// Binary Search Function
+// Searches for targetID in sorted DespawnIDs array
+// Returns true if found, false otherwise
+// ===================================================================================
+bool BinarySearchID(int targetID)
+{
+	int left = 0;
+	int right = DespawnIDCount - 1;
 
-// WriteTotalCountCS Parameters
-RWStructuredBuffer<uint> OutTotalCount;
+	while (left <= right)
+	{
+		int mid = (left + right) >> 1;
+		int midID = DespawnIDs[mid];
+
+		if (midID == targetID)
+		{
+			return true;
+		}
+		else if (midID < targetID)
+		{
+			left = mid + 1;
+		}
+		else
+		{
+			right = mid - 1;
+		}
+	}
+
+	return false;
+}
 
 // ===================================================================================
-// Kernel: CompactParticlesCS
-// Compacts alive particles to new buffer based on prefix sums
+// Kernel: MarkDespawnByIDCS
+// Marks particles for removal if their ParticleID is in the despawn list
 // ===================================================================================
-[numthreads(256, 1, 1)]
-void CompactParticlesCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+[numthreads(THREAD_GROUP_SIZE, 1, 1)]
+void MarkDespawnByIDCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
 	const uint Index = DispatchThreadId.x;
 
 	if (Index >= (uint)ParticleCount)
 		return;
 
-	// Copy only alive particles
-	if (MarkedFlags[Index] == 1)
-	{
-		// PrefixSum value is the new index
-		uint NewIndex = PrefixSums[Index];
+	// Get this particle's ID
+	const int ParticleID = Particles[Index].ParticleID;
 
-		// Copy entire particle data
-		CompactedParticles[NewIndex] = Particles[Index];
-	}
-}
+	// Check if this ID is in the despawn list using binary search
+	bool bShouldRemove = BinarySearchID(ParticleID);
 
-// ===================================================================================
-// Kernel: WriteTotalCountCS
-// Calculates total dead count for async readback
-// ===================================================================================
-[numthreads(1, 1, 1)]
-void WriteTotalCountCS(uint3 DispatchThreadId : SV_DispatchThreadID)
-{
-	// Calculate total alive count from the last particle's PrefixSum
-	// Assumes Inclusive Scan: Last PrefixSum value = Total Count
-	if (ParticleCount > 0)
-	{
-		uint LastIndex = ParticleCount - 1;
-		uint TotalAlive = PrefixSums[LastIndex] + MarkedFlags[LastIndex];
-
-		OutTotalCount[0] = ParticleCount - TotalAlive;
-	}
-	else
-	{
-		OutTotalCount[0] = 0;
-	}
+	// Write result (1 = Alive, 0 = Dead)
+	OutAliveMask[Index] = bShouldRemove ? 0 : 1;
 }

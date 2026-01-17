@@ -64,20 +64,42 @@ public:
 	/** Check if there are pending spawn requests (lock-free) */
 	bool HasPendingSpawnRequests() const { return bHasPendingSpawnRequests.load(); }
 
-	/**
-	 * Add a despawn request (thread-safe)
-	 * @param Position - World position to despawn at
-	 * @param Radius - despawn radius
-	 */
-	void AddDespawnRequest(const FVector& Position, float Radius);
-	
-	void SwapDespawnBuffers();
-	
-	/** Get number of pending despawn requests (thread-safe) */
-	int32 GetPendingDespawnCount() const;
+	//=========================================================================
+	// ID-Based Despawn API (Thread-Safe)
+	//=========================================================================
 
-	/** Check if there are pending despawn requests (lock-free) */
-	bool HasPendingDespawnRequests() const { return !PendingDespawnRequests.IsEmpty(); }
+	/**
+	 * Add a despawn request by particle ID (thread-safe)
+	 * @param ParticleID - ID of particle to despawn
+	 */
+	void AddDespawnByIDRequest(int32 ParticleID);
+
+	/**
+	 * Add multiple despawn requests by particle IDs (thread-safe, more efficient)
+	 * @param ParticleIDs - Array of particle IDs to despawn
+	 */
+	void AddDespawnByIDRequests(const TArray<int32>& ParticleIDs);
+
+	/** Swap pending ID despawn requests to active buffer (call at start of simulation frame) */
+	void SwapDespawnByIDBuffers();
+
+	/** Get number of pending ID despawn requests (thread-safe) */
+	int32 GetPendingDespawnByIDCount() const;
+
+	/** Check if there are pending ID despawn requests (lock-free) */
+	bool HasPendingDespawnByIDRequests() const { return bHasPendingDespawnByIDRequests.load(); }
+
+	/**
+	 * Add ID-based despawn particles RDG pass
+	 * Uses binary search on sorted ID list for O(log n) lookup per particle
+	 * @param GraphBuilder - RDG builder
+	 * @param InOutParticleBuffer - Particle Buffer After Remove
+	 * @param InOutParticleCount - Particle Count After Remove
+	 */
+	void AddDespawnByIDPass(
+		FRDGBuilder& GraphBuilder,
+		FRDGBufferRef& InOutParticleBuffer,
+		int32& InOutParticleCount);
 
 	//=========================================================================
 	// Configuration
@@ -135,17 +157,6 @@ public:
 		int32 MaxParticleCount);
 
 	/**
-	 * Add despawn particles RDG pass
-	 * @param GraphBuilder - RDG builder
-	 * @param InOutParticleBuffer - Particle Buffer After Remove
-	 * @param InOutParticleCount - Particle Count After Remove
-	 */
-	void AddDespawnPass(
-	FRDGBuilder& GraphBuilder,
-	FRDGBufferRef& InOutParticleBuffer,
-	int32& InOutParticleCount);
-	
-	/**
 	 * Async Readback particle count pass
 	 */
 	int32 ProcessAsyncReadback();
@@ -175,14 +186,14 @@ private:
 	std::atomic<bool> bHasPendingSpawnRequests{false};
 
 	//=========================================================================
-	// Double-Buffered Despawn Requests
+	// Double-Buffered ID-Based Despawn Requests
 	//=========================================================================
-	TArray<FGPUDespawnRequest> PendingDespawnRequests;
-	TArray<FGPUDespawnRequest> ActiveDespawnRequests;
-	mutable FCriticalSection DespawnLock;
-	
+	TArray<int32> PendingDespawnByIDs;
+	TArray<int32> ActiveDespawnByIDs;
+	mutable FCriticalSection DespawnByIDLock;
+
 	// Lock-free flag for quick pending check
-	std::atomic<bool> bHasPendingDespawnRequests{false};
+	std::atomic<bool> bHasPendingDespawnByIDRequests{false};
 
 	//=========================================================================
 	// Async Readback Instance

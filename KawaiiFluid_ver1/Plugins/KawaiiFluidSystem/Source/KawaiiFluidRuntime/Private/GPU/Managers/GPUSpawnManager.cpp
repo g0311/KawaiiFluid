@@ -107,28 +107,52 @@ int32 FGPUSpawnManager::GetPendingSpawnCount() const
 	return PendingSpawnRequests.Num();
 }
 
-void FGPUSpawnManager::AddDespawnRequest(const FVector& Position, float Radius)
-{
-	FScopeLock Lock(&SpawnLock);
+//=============================================================================
+// ID-Based Despawn API
+//=============================================================================
 
-	PendingDespawnRequests.Add(FGPUDespawnRequest(static_cast<FVector3f>(Position), Radius));
+void FGPUSpawnManager::AddDespawnByIDRequest(int32 ParticleID)
+{
+	FScopeLock Lock(&DespawnByIDLock);
+	PendingDespawnByIDs.Add(ParticleID);
+	bHasPendingDespawnByIDRequests.store(true);
 }
 
-void FGPUSpawnManager::SwapDespawnBuffers()
+void FGPUSpawnManager::AddDespawnByIDRequests(const TArray<int32>& ParticleIDs)
 {
-	FScopeLock Lock(&DespawnLock);
-	
-	if (PendingDespawnRequests.Num() > 0)
+	if (ParticleIDs.Num() == 0)
 	{
-		ActiveDespawnRequests.Append(PendingDespawnRequests);
-		PendingDespawnRequests.Empty();
+		return;
+	}
+
+	FScopeLock Lock(&DespawnByIDLock);
+	PendingDespawnByIDs.Append(ParticleIDs);
+	bHasPendingDespawnByIDRequests.store(true);
+
+	UE_LOG(LogGPUSpawnManager, Verbose, TEXT("AddDespawnByIDRequests: Added %d IDs (total pending: %d)"),
+		ParticleIDs.Num(), PendingDespawnByIDs.Num());
+}
+
+void FGPUSpawnManager::SwapDespawnByIDBuffers()
+{
+	FScopeLock Lock(&DespawnByIDLock);
+	ActiveDespawnByIDs = MoveTemp(PendingDespawnByIDs);
+	PendingDespawnByIDs.Empty();
+	bHasPendingDespawnByIDRequests.store(false);
+
+	// Sort for binary search optimization in shader
+	if (ActiveDespawnByIDs.Num() > 0)
+	{
+		ActiveDespawnByIDs.Sort();
+		UE_LOG(LogGPUSpawnManager, Verbose, TEXT("SwapDespawnByIDBuffers: %d IDs ready for processing"),
+			ActiveDespawnByIDs.Num());
 	}
 }
 
-int32 FGPUSpawnManager::GetPendingDespawnCount() const
+int32 FGPUSpawnManager::GetPendingDespawnByIDCount() const
 {
-	FScopeLock Lock(&DespawnLock);
-	return PendingDespawnRequests.Num();
+	FScopeLock Lock(&DespawnByIDLock);
+	return PendingDespawnByIDs.Num();
 }
 
 //=============================================================================
@@ -196,31 +220,31 @@ void FGPUSpawnManager::AddSpawnParticlesPass(
 		ActiveSpawnRequests.Num(), NextParticleID.load());
 }
 
-void FGPUSpawnManager::AddDespawnPass(FRDGBuilder& GraphBuilder, FRDGBufferRef& InOutParticleBuffer,
+void FGPUSpawnManager::AddDespawnByIDPass(FRDGBuilder& GraphBuilder, FRDGBufferRef& InOutParticleBuffer,
 	int32& InOutParticleCount)
 {
-	if (ActiveDespawnRequests.Num() == 0)
+	if (ActiveDespawnByIDs.Num() == 0)
 	{
 		return;
 	}
 
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
-	TShaderMapRef<FMarkDespawnCS> MarkDespawnCS(ShaderMap);
+	TShaderMapRef<FMarkDespawnByIDCS> MarkDespawnByIDCS(ShaderMap);
 
-	FRDGBufferRef DespawnRequestsBuffer = CreateStructuredBuffer
-	(
+	// Create sorted ID buffer for GPU binary search
+	FRDGBufferRef DespawnIDsBuffer = CreateStructuredBuffer(
 		GraphBuilder,
-		TEXT("GPUFluidDespawnRequests"),
-		sizeof(FGPUDespawnRequest),
-		ActiveDespawnRequests.Num(),
-		ActiveDespawnRequests.GetData(),
-		ActiveDespawnRequests.Num() * sizeof(FGPUDespawnRequest),
+		TEXT("GPUFluidDespawnByIDs"),
+		sizeof(int32),
+		ActiveDespawnByIDs.Num(),
+		ActiveDespawnByIDs.GetData(),
+		ActiveDespawnByIDs.Num() * sizeof(int32),
 		ERDGInitialDataFlags::None
-		);
+	);
 
 	FRDGBufferRef AliveMaskBuffer = CreateStructuredBuffer(
 		GraphBuilder,
-		TEXT("GPUFluidOutAliveMask"),
+		TEXT("GPUFluidOutAliveMaskByID"),
 		sizeof(uint32),
 		InOutParticleCount,
 		nullptr,
@@ -228,36 +252,38 @@ void FGPUSpawnManager::AddDespawnPass(FRDGBuilder& GraphBuilder, FRDGBufferRef& 
 		ERDGInitialDataFlags::None
 	);
 
-	// 제거할 파티클 마크
-	FMarkDespawnCS::FParameters* MarkPassParameters = GraphBuilder.AllocParameters<FMarkDespawnCS::FParameters>();
-	MarkPassParameters->DespawnRequests = GraphBuilder.CreateSRV(DespawnRequestsBuffer);
+	// Mark particles for removal by ID matching (binary search)
+	FMarkDespawnByIDCS::FParameters* MarkPassParameters = GraphBuilder.AllocParameters<FMarkDespawnByIDCS::FParameters>();
+	MarkPassParameters->DespawnIDs = GraphBuilder.CreateSRV(DespawnIDsBuffer);
 	MarkPassParameters->Particles = GraphBuilder.CreateSRV(InOutParticleBuffer);
 	MarkPassParameters->OutAliveMask = GraphBuilder.CreateUAV(AliveMaskBuffer);
-	MarkPassParameters->DespawnRequestCount = ActiveDespawnRequests.Num();
+	MarkPassParameters->DespawnIDCount = ActiveDespawnByIDs.Num();
 	MarkPassParameters->ParticleCount = InOutParticleCount;
 
-	const uint32 MarkPassNumGroups = FMath::DivideAndRoundUp(InOutParticleCount, FMarkDespawnCS::ThreadGroupSize);
+	const uint32 MarkPassNumGroups = FMath::DivideAndRoundUp(InOutParticleCount, FMarkDespawnByIDCS::ThreadGroupSize);
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
-		RDG_EVENT_NAME("GPUFluid::Despawn_MarkDown(%d)", ActiveDespawnRequests.Num()),
-		MarkDespawnCS,
+		RDG_EVENT_NAME("GPUFluid::DespawnByID_Mark(%d IDs)", ActiveDespawnByIDs.Num()),
+		MarkDespawnByIDCS,
 		MarkPassParameters,
 		FIntVector(MarkPassNumGroups, 1, 1)
 	);
 
+	// === Stream Compaction Pipeline (reuse existing shaders) ===
+
 	FRDGBufferRef PrefixSumsBuffer = CreateStructuredBuffer(
-	GraphBuilder,
-	TEXT("PrefixSums"),
-	sizeof(uint32),
-	InOutParticleCount,
-	nullptr,
-	0,
-	ERDGInitialDataFlags::None
+		GraphBuilder,
+		TEXT("PrefixSumsByID"),
+		sizeof(uint32),
+		InOutParticleCount,
+		nullptr,
+		0,
+		ERDGInitialDataFlags::None
 	);
 
 	FRDGBufferRef BlockSumsBuffer = CreateStructuredBuffer(
 		GraphBuilder,
-		TEXT("BlockSums"),
+		TEXT("BlockSumsByID"),
 		sizeof(uint32),
 		FMath::DivideAndRoundUp(InOutParticleCount, FPrefixSumBlockCS_RDG::ThreadGroupSize),
 		nullptr,
@@ -265,7 +291,7 @@ void FGPUSpawnManager::AddDespawnPass(FRDGBuilder& GraphBuilder, FRDGBufferRef& 
 		ERDGInitialDataFlags::None
 	);
 
-	// 블록 별 프리픽스 계산
+	// Block-wise prefix sum
 	TShaderMapRef<FPrefixSumBlockCS_RDG> PrefixSumBlock(ShaderMap);
 	FPrefixSumBlockCS_RDG::FParameters* PrefixSumBlockParameters = GraphBuilder.AllocParameters<FPrefixSumBlockCS_RDG::FParameters>();
 	PrefixSumBlockParameters->MarkedFlags = GraphBuilder.CreateSRV(AliveMaskBuffer);
@@ -276,13 +302,13 @@ void FGPUSpawnManager::AddDespawnPass(FRDGBuilder& GraphBuilder, FRDGBufferRef& 
 	const int32 PrefixSumBlockNumGroups = FMath::DivideAndRoundUp(InOutParticleCount, FPrefixSumBlockCS_RDG::ThreadGroupSize);
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
-		RDG_EVENT_NAME("GPUFluid::PrefixSumBlock"),
+		RDG_EVENT_NAME("GPUFluid::DespawnByID_PrefixSumBlock"),
 		PrefixSumBlock,
 		PrefixSumBlockParameters,
 		FIntVector(PrefixSumBlockNumGroups, 1, 1)
 	);
 
-	// 블록 당 프리픽스 합 계산
+	// Scan block sums
 	TShaderMapRef<FScanBlockSumsCS_RDG> ScanBlockSums(ShaderMap);
 	FScanBlockSumsCS_RDG::FParameters* ScanBlockSumsParameters = GraphBuilder.AllocParameters<FScanBlockSumsCS_RDG::FParameters>();
 	ScanBlockSumsParameters->BlockSums = GraphBuilder.CreateUAV(BlockSumsBuffer);
@@ -291,13 +317,13 @@ void FGPUSpawnManager::AddDespawnPass(FRDGBuilder& GraphBuilder, FRDGBufferRef& 
 	const int32 ScanBlockSumsNumGroups = FMath::DivideAndRoundUp(PrefixSumBlockNumGroups, FScanBlockSumsCS_RDG::ThreadGroupSize);
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
-		RDG_EVENT_NAME("GPUFluid::ScanBlockSums"),
+		RDG_EVENT_NAME("GPUFluid::DespawnByID_ScanBlockSums"),
 		ScanBlockSums,
 		ScanBlockSumsParameters,
 		FIntVector(ScanBlockSumsNumGroups, 1, 1)
 	);
 
-	// 모든 프리픽스에 블록 합 가산
+	// Add block offsets
 	TShaderMapRef<FAddBlockOffsetsCS_RDG> AddBlockOffsets(ShaderMap);
 	FAddBlockOffsetsCS_RDG::FParameters* AddBlockOffsetsParameters = GraphBuilder.AllocParameters<FAddBlockOffsetsCS_RDG::FParameters>();
 	AddBlockOffsetsParameters->PrefixSums = GraphBuilder.CreateUAV(PrefixSumsBuffer);
@@ -307,24 +333,23 @@ void FGPUSpawnManager::AddDespawnPass(FRDGBuilder& GraphBuilder, FRDGBufferRef& 
 	const int32 AddBlockOffsetsNumGroups = FMath::DivideAndRoundUp(InOutParticleCount, FPrefixSumBlockCS_RDG::ThreadGroupSize);
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
-		RDG_EVENT_NAME("GPUFluid::AddBlockOffsets"),
+		RDG_EVENT_NAME("GPUFluid::DespawnByID_AddBlockOffsets"),
 		AddBlockOffsets,
 		AddBlockOffsetsParameters,
 		FIntVector(AddBlockOffsetsNumGroups, 1, 1)
 	);
 
-
 	FRDGBufferRef CompactedParticlesBuffer = CreateStructuredBuffer(
-	GraphBuilder,
-	TEXT("CompactedParticles"),
-	sizeof(FGPUFluidParticle),
-	InOutParticleCount,
-	nullptr,
-	0,
-	ERDGInitialDataFlags::None
+		GraphBuilder,
+		TEXT("CompactedParticlesByID"),
+		sizeof(FGPUFluidParticle),
+		InOutParticleCount,
+		nullptr,
+		0,
+		ERDGInitialDataFlags::None
 	);
 
-	// 프리픽스를 통해 파티클 버퍼 최신화
+	// Compact particles
 	TShaderMapRef<FCompactParticlesCS_RDG> Compact(ShaderMap);
 	FCompactParticlesCS_RDG::FParameters* CompactParameters = GraphBuilder.AllocParameters<FCompactParticlesCS_RDG::FParameters>();
 	CompactParameters->Particles = GraphBuilder.CreateSRV(InOutParticleBuffer);
@@ -336,21 +361,21 @@ void FGPUSpawnManager::AddDespawnPass(FRDGBuilder& GraphBuilder, FRDGBufferRef& 
 	const int32 CompactCSNumGroups = FMath::DivideAndRoundUp(InOutParticleCount, FPrefixSumBlockCS_RDG::ThreadGroupSize);
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
-		RDG_EVENT_NAME("GPUFluid::Compact"),
+		RDG_EVENT_NAME("GPUFluid::DespawnByID_Compact"),
 		Compact,
 		CompactParameters,
 		FIntVector(CompactCSNumGroups, 1, 1)
 	);
 
-	// 버퍼 업데이트
+	// Update buffer reference
 	InOutParticleBuffer = CompactedParticlesBuffer;
 
 	FRDGBufferRef TotalCountBuffer = GraphBuilder.CreateBuffer(
 		FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 1),
-		TEXT("Despawn.TotalCount")
+		TEXT("DespawnByID.TotalCount")
 	);
-	
-	// 파티클 카운트 비동기 리드백
+
+	// Write total count for async readback
 	TShaderMapRef<FWriteTotalCountCS_RDG> WriteTotalCount(ShaderMap);
 	FWriteTotalCountCS_RDG::FParameters* WriteTotalCountParameters = GraphBuilder.AllocParameters<FWriteTotalCountCS_RDG::FParameters>();
 	WriteTotalCountParameters->PrefixSums = GraphBuilder.CreateSRV(PrefixSumsBuffer);
@@ -360,7 +385,7 @@ void FGPUSpawnManager::AddDespawnPass(FRDGBuilder& GraphBuilder, FRDGBufferRef& 
 
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
-		RDG_EVENT_NAME("GPUFluid::WriteTotalCount"),
+		RDG_EVENT_NAME("GPUFluid::DespawnByID_WriteTotalCount"),
 		WriteTotalCount,
 		WriteTotalCountParameters,
 		FIntVector(1, 1, 1)
@@ -372,6 +397,12 @@ void FGPUSpawnManager::AddDespawnPass(FRDGBuilder& GraphBuilder, FRDGBufferRef& 
 	}
 	AddEnqueueCopyPass(GraphBuilder, ParticleCountReadback, TotalCountBuffer, 0);
 	bDespawnPassExecuted = true;
+
+	UE_LOG(LogGPUSpawnManager, Log, TEXT("AddDespawnByIDPass: Processing %d IDs, %d particles"),
+		ActiveDespawnByIDs.Num(), InOutParticleCount);
+
+	// Clear active IDs after processing
+	ActiveDespawnByIDs.Empty();
 }
 
 int32 FGPUSpawnManager::ProcessAsyncReadback()

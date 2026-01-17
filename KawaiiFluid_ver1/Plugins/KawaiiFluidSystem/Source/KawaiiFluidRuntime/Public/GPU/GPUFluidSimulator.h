@@ -527,11 +527,19 @@ public:
 	void AddSpawnRequests(const TArray<FGPUSpawnRequest>& Requests);
 
 	/**
-	 * Add multiple despawn requests at once (thread-safe, more efficient than individual calls)
-	 * @param WorldPos - Position to Remove Particle
-	 * @param Radius - Radius to remove Particles
+	 * Add despawn requests by particle IDs (thread-safe)
+	 * Uses binary search on GPU for O(log n) matching per particle
+	 * @param ParticleIDs - Array of particle IDs to despawn
 	 */
-	void AddDespawnRequest(const FVector& WorldPos, float Radius);
+	void AddDespawnByIDRequests(const TArray<int32>& ParticleIDs);
+
+	/**
+	 * Get readback GPU particle data (thread-safe)
+	 * Returns false if no valid GPU results available
+	 * @param OutParticles - Output array of GPU particles with ParticleID
+	 * @return true if valid data was copied
+	 */
+	bool GetReadbackGPUParticles(TArray<FGPUFluidParticle>& OutParticles);
 
 	/**
 	 * Clear all pending spawn requests

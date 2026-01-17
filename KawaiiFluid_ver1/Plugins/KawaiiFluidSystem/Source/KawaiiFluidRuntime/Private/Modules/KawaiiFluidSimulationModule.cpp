@@ -675,14 +675,6 @@ void UKawaiiFluidSimulationModule::SpawnParticles(FVector Location, int32 Count,
 	}
 }
 
-void UKawaiiFluidSimulationModule::DespawnParticle(const FVector& WorldPos, float Radius)
-{
-	if (CachedGPUSimulator)
-	{
-		CachedGPUSimulator->AddDespawnRequest(WorldPos, Radius);
-	}
-}
-
 int32 UKawaiiFluidSimulationModule::SpawnParticlesSphere(FVector Center, float Radius, float Spacing,
                                                          bool bJitter, float JitterAmount, FVector Velocity,
                                                          FRotator Rotation)

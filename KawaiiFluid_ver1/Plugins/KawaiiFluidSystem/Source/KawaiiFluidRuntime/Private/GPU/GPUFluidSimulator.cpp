@@ -705,14 +705,13 @@ FRDGBufferRef FGPUFluidSimulator::PrepareParticleBuffer(
 	}
 
 	// =====================================================
-	// Phase 3: Despawn Processing
-	// Mark dead particles on GPU and execute despawn pass
+	// Phase 3: ID-Based Despawn Processing
+	// Mark dead particles by ParticleID matching (binary search on GPU)
 	// =====================================================
-	if (SpawnManager.IsValid() && SpawnManager->HasPendingDespawnRequests())
+	if (SpawnManager.IsValid() && SpawnManager->HasPendingDespawnByIDRequests())
 	{
-		SpawnManager->SwapDespawnBuffers();
-		SpawnManager->AddDespawnPass(GraphBuilder, ParticleBuffer, CurrentParticleCount);
-		SpawnManager->ClearActiveRequests();
+		SpawnManager->SwapDespawnByIDBuffers();
+		SpawnManager->AddDespawnByIDPass(GraphBuilder, ParticleBuffer, CurrentParticleCount);
 	}
 
 	// =====================================================
@@ -1138,12 +1137,30 @@ void FGPUFluidSimulator::AddSpawnRequests(const TArray<FGPUSpawnRequest>& Reques
 	if (SpawnManager.IsValid()) { SpawnManager->AddSpawnRequests(Requests); }
 }
 
-void FGPUFluidSimulator::AddDespawnRequest(const FVector& WorldPos, float Radius)
+void FGPUFluidSimulator::AddDespawnByIDRequests(const TArray<int32>& ParticleIDs)
 {
-	if (SpawnManager.IsValid())
+	if (SpawnManager.IsValid() && ParticleIDs.Num() > 0)
 	{
-		SpawnManager->AddDespawnRequest(WorldPos, Radius);
+		SpawnManager->AddDespawnByIDRequests(ParticleIDs);
 	}
+}
+
+bool FGPUFluidSimulator::GetReadbackGPUParticles(TArray<FGPUFluidParticle>& OutParticles)
+{
+	if (!bHasValidGPUResults.load())
+	{
+		return false;
+	}
+
+	FScopeLock Lock(&BufferLock);
+
+	if (ReadbackGPUParticles.Num() == 0)
+	{
+		return false;
+	}
+
+	OutParticles = ReadbackGPUParticles;
+	return true;
 }
 
 void FGPUFluidSimulator::ClearSpawnRequests()
