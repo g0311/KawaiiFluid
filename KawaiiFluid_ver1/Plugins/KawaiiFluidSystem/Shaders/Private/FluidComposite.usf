@@ -350,18 +350,31 @@ void MainPS(
 	float EdgeMask = saturate(abs(Normal.z) * 2.0);   // Edge-based (small at edges)
 	float RefractionMask = ThicknessMask * EdgeMask;
 
-	// Calculate refraction offset (with mask applied)
+	// Calculate refraction offset (with thickness/edge mask)
 	float2 RefractOffset = Normal.xy * RefractiveIndex * RefractionScale * RefractionMask;
 	float2 RefractedUV = UV + RefractOffset;
 	RefractedUV = saturate(RefractedUV);
 
-	// Check scene depth at refracted UV (valid only if object is behind fluid)
-	float RefractedSceneDeviceZ = SceneDepthTexture.SampleLevel(InputSampler, RefractedUV, 0).r;
-	float RefractedSceneDepth = ConvertFromDeviceZ(RefractedSceneDeviceZ);
+	// Check depth at refracted UV position
+	float RefractedSceneDepth = ConvertFromDeviceZ(SceneDepthTexture.SampleLevel(InputSampler, RefractedUV, 0).r);
 
-	// Prevent invalid refraction: use original UV if refracted position is closer than fluid
-	float bValidRefraction = (RefractedSceneDepth > FluidDepth - 1.0) ? 1.0 : 0.0;
-	float2 FinalRefractUV = lerp(UV, RefractedUV, bValidRefraction);
+	// Soft refraction validity check:
+	// 1. Refracted position must be behind fluid (not sampling objects in front of fluid)
+	// 2. Refracted position should not suddenly show much closer objects than original UV
+	// 3. Fade out refraction near screen edges (avoid sampling clamped edge pixels)
+	// Using soft transitions to avoid hard edge artifacts
+	float DepthMargin = 20.0;
+	float BehindFluidFactor = saturate((RefractedSceneDepth - FluidDepth + DepthMargin) / DepthMargin);
+	float NotPullingForwardFactor = saturate((RefractedSceneDepth - SceneLinearDepth + DepthMargin) / DepthMargin);
+
+	// Screen edge fade: reduce refraction when refracted UV approaches screen boundary
+	float2 EdgeDist = min(RefractedUV, 1.0 - RefractedUV);
+	float ScreenEdgeFade = saturate(min(EdgeDist.x, EdgeDist.y) / 0.05);  // Fade over 5% of screen edge
+
+	float RefractionValidity = BehindFluidFactor * NotPullingForwardFactor * ScreenEdgeFade;
+
+	// Soft blend between original UV and refracted UV
+	float2 FinalRefractUV = lerp(UV, RefractedUV, RefractionValidity);
 
 	float3 RefractedBackground = SceneColorTexture.Sample(InputSampler, FinalRefractUV).rgb;
 
