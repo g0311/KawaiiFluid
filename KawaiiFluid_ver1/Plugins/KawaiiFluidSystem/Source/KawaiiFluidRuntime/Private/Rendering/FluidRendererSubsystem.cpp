@@ -217,13 +217,7 @@ void UFluidRendererSubsystem::UpdateShadowInstances(const FVector* ParticlePosit
 {
 	check(IsInGameThread());
 
-	// Early return if VSM integration is disabled
-	if (!bEnableVSMIntegration)
-	{
-		return;
-	}
-
-	// Clear HISM instances if no particles
+	// Clear HISM instances if no particles (do this even if VSM is disabled)
 	if (NumParticles <= 0 || !ParticlePositions)
 	{
 		if (IsValid(ShadowInstanceComponent))
@@ -231,6 +225,12 @@ void UFluidRendererSubsystem::UpdateShadowInstances(const FVector* ParticlePosit
 			ShadowInstanceComponent->ClearInstances();
 			ShadowInstanceComponent->MarkRenderStateDirty();
 		}
+		return;
+	}
+
+	// Early return if VSM integration is disabled (but clearing above still happens)
+	if (!bEnableVSMIntegration)
+	{
 		return;
 	}
 

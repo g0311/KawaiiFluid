@@ -5,7 +5,6 @@
 #include "GPU/GPUFluidSimulatorShaders.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
-#include "RHIGPUReadback.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogGPUSpawnManager, Log, All);
 DEFINE_LOG_CATEGORY(LogGPUSpawnManager);
@@ -45,16 +44,26 @@ void FGPUSpawnManager::Initialize(int32 InMaxParticleCount)
 
 void FGPUSpawnManager::Release()
 {
-	FScopeLock Lock(&SpawnLock);
+	{
+		FScopeLock Lock(&SpawnLock);
+		PendingSpawnRequests.Empty();
+		ActiveSpawnRequests.Empty();
+		bHasPendingSpawnRequests.store(false);
+	}
 
-	PendingSpawnRequests.Empty();
-	ActiveSpawnRequests.Empty();
-	bHasPendingSpawnRequests.store(false);
+	{
+		FScopeLock Lock(&DespawnByIDLock);
+		PendingDespawnByIDs.Empty();
+		ActiveDespawnByIDs.Empty();
+		AlreadyRequestedIDs.Empty();
+		bHasPendingDespawnByIDRequests.store(false);
+	}
+
 	NextParticleID.store(0);
 	bIsInitialized = false;
 	MaxParticleCapacity = 0;
 
-	UE_LOG(LogGPUSpawnManager, Log, TEXT("GPUSpawnManager released"));
+	UE_LOG(LogGPUSpawnManager, Log, TEXT("GPUSpawnManager released (all despawn state cleared)"));
 }
 
 //=============================================================================
@@ -118,7 +127,7 @@ void FGPUSpawnManager::AddDespawnByIDRequest(int32 ParticleID)
 	bHasPendingDespawnByIDRequests.store(true);
 }
 
-void FGPUSpawnManager::AddDespawnByIDRequests(const TArray<int32>& ParticleIDs)
+void FGPUSpawnManager::AddDespawnByIDRequests(const TArray<int32>& ParticleIDs, const TArray<int32>& AllCurrentReadbackIDs)
 {
 	if (ParticleIDs.Num() == 0)
 	{
@@ -126,27 +135,61 @@ void FGPUSpawnManager::AddDespawnByIDRequests(const TArray<int32>& ParticleIDs)
 	}
 
 	FScopeLock Lock(&DespawnByIDLock);
-	PendingDespawnByIDs.Append(ParticleIDs);
-	bHasPendingDespawnByIDRequests.store(true);
 
-	UE_LOG(LogGPUSpawnManager, Verbose, TEXT("AddDespawnByIDRequests: Added %d IDs (total pending: %d)"),
-		ParticleIDs.Num(), PendingDespawnByIDs.Num());
+	// Cleanup: Readback에 없는 ID는 AlreadyRequestedIDs에서 제거 (이미 GPU에서 제거됨)
+	TSet<int32> ReadbackSet(AllCurrentReadbackIDs);
+	TArray<int32> ToRemove;
+	for (int32 ID : AlreadyRequestedIDs)
+	{
+		if (!ReadbackSet.Contains(ID))  // Readback에 없음 = 이미 제거됨
+		{
+			ToRemove.Add(ID);
+		}
+	}
+	for (int32 ID : ToRemove)
+	{
+		AlreadyRequestedIDs.Remove(ID);
+	}
+
+	// 중복 필터링: 이미 제거 요청한 ID는 제외
+	int32 OriginalCount = ParticleIDs.Num();
+	int32 FilteredCount = 0;
+	for (int32 ID : ParticleIDs)
+	{
+		if (!AlreadyRequestedIDs.Contains(ID))
+		{
+			PendingDespawnByIDs.Add(ID);
+			AlreadyRequestedIDs.Add(ID);
+			FilteredCount++;
+		}
+	}
+
+	if (FilteredCount > 0)
+	{
+		bHasPendingDespawnByIDRequests.store(true);
+	}
+
+	UE_LOG(LogGPUSpawnManager, Log, TEXT("AddDespawnByIDRequests: %d requested, %d new, %d duplicates, %d cleaned (total pending: %d)"),
+		OriginalCount, FilteredCount, OriginalCount - FilteredCount, ToRemove.Num(), PendingDespawnByIDs.Num());
 }
 
-void FGPUSpawnManager::SwapDespawnByIDBuffers()
+int32 FGPUSpawnManager::SwapDespawnByIDBuffers()
 {
 	FScopeLock Lock(&DespawnByIDLock);
 	ActiveDespawnByIDs = MoveTemp(PendingDespawnByIDs);
 	PendingDespawnByIDs.Empty();
 	bHasPendingDespawnByIDRequests.store(false);
 
+	const int32 Count = ActiveDespawnByIDs.Num();
+
 	// Sort for binary search optimization in shader
-	if (ActiveDespawnByIDs.Num() > 0)
+	if (Count > 0)
 	{
 		ActiveDespawnByIDs.Sort();
-		UE_LOG(LogGPUSpawnManager, Verbose, TEXT("SwapDespawnByIDBuffers: %d IDs ready for processing"),
-			ActiveDespawnByIDs.Num());
+		UE_LOG(LogGPUSpawnManager, Verbose, TEXT("SwapDespawnByIDBuffers: %d IDs ready for processing"), Count);
 	}
+
+	return Count;
 }
 
 int32 FGPUSpawnManager::GetPendingDespawnByIDCount() const
@@ -370,54 +413,12 @@ void FGPUSpawnManager::AddDespawnByIDPass(FRDGBuilder& GraphBuilder, FRDGBufferR
 	// Update buffer reference
 	InOutParticleBuffer = CompactedParticlesBuffer;
 
-	FRDGBufferRef TotalCountBuffer = GraphBuilder.CreateBuffer(
-		FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 1),
-		TEXT("DespawnByID.TotalCount")
-	);
-
-	// Write total count for async readback
-	TShaderMapRef<FWriteTotalCountCS_RDG> WriteTotalCount(ShaderMap);
-	FWriteTotalCountCS_RDG::FParameters* WriteTotalCountParameters = GraphBuilder.AllocParameters<FWriteTotalCountCS_RDG::FParameters>();
-	WriteTotalCountParameters->PrefixSums = GraphBuilder.CreateSRV(PrefixSumsBuffer);
-	WriteTotalCountParameters->MarkedFlags = GraphBuilder.CreateSRV(AliveMaskBuffer);
-	WriteTotalCountParameters->OutTotalCount = GraphBuilder.CreateUAV(TotalCountBuffer);
-	WriteTotalCountParameters->ParticleCount = InOutParticleCount;
-
-	FComputeShaderUtils::AddPass(
-		GraphBuilder,
-		RDG_EVENT_NAME("GPUFluid::DespawnByID_WriteTotalCount"),
-		WriteTotalCount,
-		WriteTotalCountParameters,
-		FIntVector(1, 1, 1)
-	);
-
-	if (!ParticleCountReadback)
-	{
-		ParticleCountReadback = new FRHIGPUBufferReadback(TEXT("FluidParticleCountReadback"));
-	}
-	AddEnqueueCopyPass(GraphBuilder, ParticleCountReadback, TotalCountBuffer, 0);
-	bDespawnPassExecuted = true;
-
 	UE_LOG(LogGPUSpawnManager, Log, TEXT("AddDespawnByIDPass: Processing %d IDs, %d particles"),
 		ActiveDespawnByIDs.Num(), InOutParticleCount);
 
 	// Clear active IDs after processing
+	// AlreadyRequestedIDs는 AddDespawnByIDRequests에서 Readback 기반으로 cleanup됨
 	ActiveDespawnByIDs.Empty();
-}
-
-int32 FGPUSpawnManager::ProcessAsyncReadback()
-{
-	if (ParticleCountReadback && ParticleCountReadback->IsReady())
-	{
-		uint32* BufferData = static_cast<uint32*>(ParticleCountReadback->Lock(sizeof(uint32)));
-		int32 DeadCount = static_cast<int32>(BufferData[0]);
-
-		ParticleCountReadback->Unlock();
-
-		return DeadCount;
-	}
-
-	return -1;
 }
 
 void FGPUSpawnManager::OnSpawnComplete(int32 SpawnedCount)

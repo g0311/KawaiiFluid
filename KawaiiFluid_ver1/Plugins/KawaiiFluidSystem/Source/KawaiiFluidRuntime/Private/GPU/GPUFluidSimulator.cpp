@@ -655,6 +655,7 @@ FRDGBufferRef FGPUFluidSimulator::PrepareParticleBuffer(
 		CurrentParticleCount = FMath::Min(SpawnCount, MaxParticleCount);
 		PreviousParticleCount = CurrentParticleCount;
 		bNeedsFullUpload = false;
+		SpawnManager->OnSpawnComplete(CurrentParticleCount);
 		SpawnManager->ClearActiveRequests();
 	}
 	// =====================================================
@@ -692,6 +693,7 @@ FRDGBufferRef FGPUFluidSimulator::PrepareParticleBuffer(
 
 		CurrentParticleCount = FMath::Min(ExpectedParticleCount, MaxParticleCount);
 		PreviousParticleCount = CurrentParticleCount;
+		SpawnManager->OnSpawnComplete(SpawnCount);
 		SpawnManager->ClearActiveRequests();
 	}
 	// =====================================================
@@ -710,25 +712,13 @@ FRDGBufferRef FGPUFluidSimulator::PrepareParticleBuffer(
 	// =====================================================
 	if (SpawnManager.IsValid() && SpawnManager->HasPendingDespawnByIDRequests())
 	{
-		SpawnManager->SwapDespawnByIDBuffers();
+		const int32 DespawnCount = SpawnManager->SwapDespawnByIDBuffers();
 		SpawnManager->AddDespawnByIDPass(GraphBuilder, ParticleBuffer, CurrentParticleCount);
-	}
 
-	// =====================================================
-	// Phase 4: Async Readback
-	// Retrieve dead particle count from GPU and update CurrentParticleCount
-	// ProcessAsyncReadback() returns:
-	//   > 0: actual dead particle count from GPU readback
-	//   -1:  readback not ready yet (must NOT be treated as dead count!)
-	// =====================================================
-	if (SpawnManager.IsValid())
-	{
-		int32 DeadCount = SpawnManager->ProcessAsyncReadback();
-		if (DeadCount > 0)
-		{
-			CurrentParticleCount -= DeadCount;
-			PreviousParticleCount = CurrentParticleCount;
-		}
+		// GPU compaction 후 카운트 업데이트
+		CurrentParticleCount -= DespawnCount;
+		CurrentParticleCount = FMath::Max(0, CurrentParticleCount);
+		PreviousParticleCount = CurrentParticleCount;
 	}
 
 	if (SpawnManager.IsValid()) SpawnManager->ClearActiveRequests();
@@ -1195,11 +1185,12 @@ void FGPUFluidSimulator::AddSpawnRequests(const TArray<FGPUSpawnRequest>& Reques
 	if (SpawnManager.IsValid()) { SpawnManager->AddSpawnRequests(Requests); }
 }
 
-void FGPUFluidSimulator::AddDespawnByIDRequests(const TArray<int32>& ParticleIDs)
+void FGPUFluidSimulator::AddDespawnByIDRequests(const TArray<int32>& ParticleIDs, const TArray<int32>& AllCurrentReadbackIDs)
 {
 	if (SpawnManager.IsValid() && ParticleIDs.Num() > 0)
 	{
-		SpawnManager->AddDespawnByIDRequests(ParticleIDs);
+		SpawnManager->AddDespawnByIDRequests(ParticleIDs, AllCurrentReadbackIDs);
+		// 카운트 업데이트는 PrepareParticleBuffer에서 AddDespawnByIDPass 실행 후에 함
 	}
 }
 

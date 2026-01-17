@@ -17,6 +17,8 @@ void FGPUFluidSimulator::AddPredictPositionsPass(
 	FRDGBufferUAVRef ParticlesUAV,
 	const FGPUFluidSimulationParams& Params)
 {
+	if (CurrentParticleCount <= 0) return;
+
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 	TShaderMapRef<FPredictPositionsCS> ComputeShader(ShaderMap);
 
@@ -56,6 +58,8 @@ void FGPUFluidSimulator::AddExtractPositionsPass(
 	int32 ParticleCount,
 	bool bUsePredictedPosition)
 {
+	if (ParticleCount <= 0) return;
+
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 	TShaderMapRef<FExtractPositionsCS> ComputeShader(ShaderMap);
 
@@ -93,6 +97,11 @@ void FGPUFluidSimulator::AddSolveDensityPressurePass(
 	const FGPUFluidSimulationParams& Params,
 	const FSimulationSpatialData& SpatialData)
 {
+	if (CurrentParticleCount <= 0)
+	{
+		return;
+	}
+
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 
 	// Check if Z-Order sorting is enabled (both manager valid AND flag enabled)
@@ -280,6 +289,8 @@ void FGPUFluidSimulator::AddApplyViscosityPass(
 	const FGPUFluidSimulationParams& Params,
 	const FSimulationSpatialData& SpatialData)
 {
+	if (CurrentParticleCount <= 0) return;
+
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 	TShaderMapRef<FApplyViscosityCS> ComputeShader(ShaderMap);
 
@@ -448,6 +459,9 @@ void FGPUFluidSimulator::AddApplyCohesionPass(
 	FRDGBufferSRVRef InNeighborCountsSRV,
 	const FGPUFluidSimulationParams& Params)
 {
+	// Skip if no particles
+	if (CurrentParticleCount <= 0) return;
+
 	// Skip if cohesion is disabled
 	if (Params.CohesionStrength <= 0.0f)
 	{
@@ -498,6 +512,8 @@ void FGPUFluidSimulator::AddFinalizePositionsPass(
 	FRDGBufferUAVRef ParticlesUAV,
 	const FGPUFluidSimulationParams& Params)
 {
+	if (CurrentParticleCount <= 0) return;
+
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 	TShaderMapRef<FFinalizePositionsCS> ComputeShader(ShaderMap);
 

@@ -103,10 +103,21 @@ public:
 	 */
 	void ClearAllParticles()
 	{
+		FScopeLock Lock(&BufferLock);
+
 		CurrentParticleCount = 0;
 		PersistentParticleCount.store(0);
+		NewParticleCount = 0;
+		NewParticlesToAppend.Empty();
+		CachedGPUParticles.Empty();
 		bNeedsFullUpload = true;
 		InvalidatePreviousPositions();
+
+		// SpawnManager 상태도 리셋 (NextParticleID, AlreadyRequestedIDs 등)
+		if (SpawnManager)
+		{
+			SpawnManager->Reset();
+		}
 	}
 
 	//=============================================================================
@@ -540,8 +551,9 @@ public:
 	 * Add despawn requests by particle IDs (thread-safe)
 	 * Uses binary search on GPU for O(log n) matching per particle
 	 * @param ParticleIDs - Array of particle IDs to despawn
+	 * @param AllCurrentReadbackIDs - All particle IDs in current readback (for cleanup)
 	 */
-	void AddDespawnByIDRequests(const TArray<int32>& ParticleIDs);
+	void AddDespawnByIDRequests(const TArray<int32>& ParticleIDs, const TArray<int32>& AllCurrentReadbackIDs);
 
 	/**
 	 * Get readback GPU particle data (thread-safe)

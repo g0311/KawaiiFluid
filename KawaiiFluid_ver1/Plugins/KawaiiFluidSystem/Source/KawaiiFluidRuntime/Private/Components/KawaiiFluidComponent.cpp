@@ -224,6 +224,28 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 				Params.InteractionComponents.Append(Subsystem->GetGlobalInteractionComponents());
 			}
 
+			// 에디터 브러시 모드에서는 Static Boundary Particles 비활성화
+			// (에디터 Floor 등 대형 메시가 포함되어 329k+ 파티클 생성 → 프레임 드랍)
+			//Params.bEnableStaticBoundaryParticles = false;
+
+			// GPU 시뮬레이션 설정 (서브시스템과 동일하게)
+			if (Params.bUseGPUSimulation)
+			{
+				if (!Context->IsGPUSimulatorReady())
+				{
+					Context->InitializeGPUSimulator(Preset->MaxParticles);
+				}
+				if (Context->IsGPUSimulatorReady())
+				{
+					SimulationModule->SetGPUSimulator(Context->GetGPUSimulator());
+					SimulationModule->SetGPUSimulationActive(true);
+				}
+			}
+			else
+			{
+				SimulationModule->SetGPUSimulationActive(false);
+			}
+
 			float AccumulatedTime = SimulationModule->GetAccumulatedTime();
 			Context->Simulate(
 				SimulationModule->GetParticlesMutable(),
@@ -324,7 +346,8 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 
 	// Debug Draw: DrawDebugPoint 기반 Z-Order 시각화
 	// GPU 모드에서 readback 필요 - Stats Collector에 요청
-	GetFluidStatsCollector().SetDebugReadbackRequested(bEnableDebugDraw);
+	// 브러시 모드에서도 파티클 제거를 위해 readback 필요
+	GetFluidStatsCollector().SetDebugReadbackRequested(bEnableDebugDraw || bBrushModeActive);
 	if (bEnableDebugDraw)
 	{
 		DrawDebugParticles();
@@ -349,6 +372,16 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 				// Check if GPU simulation is active
 				FGPUFluidSimulator* GPUSimulator = SimulationModule->GetGPUSimulator();
 				const bool bGPUActive = SimulationModule->IsGPUSimulationActive() && GPUSimulator != nullptr;
+
+				// 파티클 수가 0이면 ISM 클리어하고 스킵
+				const int32 ActualParticleCount = bGPUActive ? GPUSimulator->GetParticleCount() : SimulationModule->GetParticleCount();
+				if (ActualParticleCount <= 0)
+				{
+					CachedShadowPositions.Empty();
+					CachedShadowVelocities.Empty();
+					RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f);
+					return;
+				}
 
 				if (bGPUActive)
 				{
@@ -1137,10 +1170,14 @@ int32 UKawaiiFluidComponent::RemoveParticlesInRadius(const FVector& WorldCenter,
 		const float RadiusSq = Radius * Radius;
 		const FVector3f WorldCenterF = FVector3f(WorldCenter);
 		TArray<int32> ParticleIDsToRemove;
+		TArray<int32> AllReadbackIDs;
 		ParticleIDsToRemove.Reserve(128);  // Pre-allocate for typical brush operation
+		AllReadbackIDs.Reserve(ReadbackParticles.Num());
 
 		for (const FGPUFluidParticle& Particle : ReadbackParticles)
 		{
+			AllReadbackIDs.Add(Particle.ParticleID);
+
 			const float DistSq = FVector3f::DistSquared(Particle.Position, WorldCenterF);
 			if (DistSq <= RadiusSq)
 			{
@@ -1148,10 +1185,10 @@ int32 UKawaiiFluidComponent::RemoveParticlesInRadius(const FVector& WorldCenter,
 			}
 		}
 
-		// Submit ID-based despawn request
+		// Submit ID-based despawn request with all readback IDs for cleanup
 		if (ParticleIDsToRemove.Num() > 0)
 		{
-			GPUSimulator->AddDespawnByIDRequests(ParticleIDsToRemove);
+			GPUSimulator->AddDespawnByIDRequests(ParticleIDsToRemove, AllReadbackIDs);
 			UE_LOG(LogTemp, Verbose, TEXT("RemoveParticlesInRadius: Found %d particles to remove by ID"), ParticleIDsToRemove.Num());
 		}
 
@@ -1182,6 +1219,15 @@ void UKawaiiFluidComponent::ClearAllParticles()
 	{
 		SimulationModule->ClearAllParticles();
 	}
+
+	// 캐시된 Shadow 데이터 클리어 (다음 Tick에서 다시 안 그려지게)
+	CachedShadowPositions.Empty();
+	CachedShadowVelocities.Empty();
+	CachedNeighborCounts.Empty();
+	CachedAnisotropyAxis1.Empty();
+	CachedAnisotropyAxis2.Empty();
+	CachedAnisotropyAxis3.Empty();
+	PrevNeighborCounts.Empty();
 
 	// 렌더링도 즉시 클리어
 	if (RenderingModule)

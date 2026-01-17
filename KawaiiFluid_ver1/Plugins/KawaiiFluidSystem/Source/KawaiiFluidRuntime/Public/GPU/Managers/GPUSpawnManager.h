@@ -37,6 +37,23 @@ public:
 	/** Check if initialized and ready */
 	bool IsReady() const { return bIsInitialized; }
 
+	/** Reset all state (clear all requests and reset NextParticleID) */
+	void Reset()
+	{
+		FScopeLock SpawnGuard(&SpawnLock);
+		FScopeLock DespawnGuard(&DespawnByIDLock);
+
+		PendingSpawnRequests.Empty();
+		ActiveSpawnRequests.Empty();
+		PendingDespawnByIDs.Empty();
+		ActiveDespawnByIDs.Empty();
+		AlreadyRequestedIDs.Empty();
+
+		bHasPendingSpawnRequests.store(false);
+		bHasPendingDespawnByIDRequests.store(false);
+		NextParticleID.store(0);
+	}
+
 	//=========================================================================
 	// Thread-Safe Public API (callable from any thread)
 	//=========================================================================
@@ -77,11 +94,14 @@ public:
 	/**
 	 * Add multiple despawn requests by particle IDs (thread-safe, more efficient)
 	 * @param ParticleIDs - Array of particle IDs to despawn
+	 * @param AllCurrentReadbackIDs - All particle IDs in current readback (for cleanup of already-removed IDs)
 	 */
-	void AddDespawnByIDRequests(const TArray<int32>& ParticleIDs);
+	void AddDespawnByIDRequests(const TArray<int32>& ParticleIDs, const TArray<int32>& AllCurrentReadbackIDs);
 
-	/** Swap pending ID despawn requests to active buffer (call at start of simulation frame) */
-	void SwapDespawnByIDBuffers();
+	/** Swap pending ID despawn requests to active buffer (call at start of simulation frame)
+	 * @return Number of IDs to despawn this frame
+	 */
+	int32 SwapDespawnByIDBuffers();
 
 	/** Get number of pending ID despawn requests (thread-safe) */
 	int32 GetPendingDespawnByIDCount() const;
@@ -157,11 +177,6 @@ public:
 		int32 MaxParticleCount);
 
 	/**
-	 * Async Readback particle count pass
-	 */
-	int32 ProcessAsyncReadback();
-	
-	/**
 	 * Update next particle ID after spawning
 	 * @param SpawnedCount - Number of particles successfully spawned
 	 */
@@ -190,19 +205,12 @@ private:
 	//=========================================================================
 	TArray<int32> PendingDespawnByIDs;
 	TArray<int32> ActiveDespawnByIDs;
+	TSet<int32> AlreadyRequestedIDs;  // 이미 제거 요청한 ID 추적 (중복 방지)
 	mutable FCriticalSection DespawnByIDLock;
 
 	// Lock-free flag for quick pending check
 	std::atomic<bool> bHasPendingDespawnByIDRequests{false};
 
-	//=========================================================================
-	// Async Readback Instance
-	//=========================================================================
-	FRHIGPUBufferReadback* ParticleCountReadback = nullptr;
-
-	// particle remove pass bool
-	bool bDespawnPassExecuted = false;
-	
 	//=========================================================================
 	// Particle ID Tracking
 	//=========================================================================
