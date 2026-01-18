@@ -13,25 +13,24 @@ float2 InverseTextureSize;
 float4x4 ProjectionMatrix;
 float4x4 InverseProjectionMatrix;
 
-// 배경 기준
+// Background depth threshold
 #define BACKGROUND_DEPTH_THRESH 3.0e30f
 
-// Lenear Depth를 활용하여 View Space Position 위치 재구성
+// Reconstruct view space position from linear depth
 float3 ReconstructViewPositionFromLinearDepth(float2 ScreenUV, float LinearDepth)
 {
-    // Clip Space 좌표 (Z는 방향만 구할 것이므로 0.5나 1.0 아무거나 상관없음)
+    // Clip space coordinates (Z value doesn't matter for direction calculation)
     float4 ClipPosition = float4(ScreenUV * 2.0 - 1.0, 0.5, 1.0);
 
-    // View Space로 역투영
+    // Inverse projection to view space
     float4 ViewPosition = mul(ClipPosition, InverseProjectionMatrix);
     ViewPosition /= ViewPosition.w;
 
-    // 방향 벡터 추출 (View Space 원점 기준)
-    // Z가 1.0이 되도록 정규화 (View Space Z축 기준 평면)
+    // Extract view ray direction (normalized so that Z = 1.0)
     float3 ViewRay = ViewPosition.xyz / ViewPosition.z;
 
-    // 실제 깊이를 곱해서 위치 확정
-    // LinearDepth는 양수 거리로 저장되어 있으므로, 음수로 변환하여 View Space Z 복원
+    // Scale by depth to get final position
+    // LinearDepth is stored as positive distance, negate to restore view space Z
     return ViewRay * (-LinearDepth);
 }
 
@@ -46,55 +45,154 @@ void ReconstructNormalCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
     float CenterDepth = InputDepthTexture.Load(int3(PixelPosition, 0));
 
-    // 배경 체크
+    // Background check
     if (CenterDepth > BACKGROUND_DEPTH_THRESH)
     {
         OutputNormalTexture[PixelPosition] = float4(0, 0, 0, 0);
         return;
     }
 
-    // UV 계산
+    // Calculate UV
     float2 UV = (float2(PixelPosition) + 0.5) * InverseTextureSize;
 
-    // 인접 픽셀 좌표 (Clamp 처리)
+    // Neighbor pixel coordinates (4 directions for central difference)
+    int2 LeftPosition = max(PixelPosition - int2(1, 0), int2(0, 0));
     int2 RightPosition = min(PixelPosition + int2(1, 0), int2(TextureSize) - 1);
+    int2 TopPosition = max(PixelPosition - int2(0, 1), int2(0, 0));
     int2 BottomPosition = min(PixelPosition + int2(0, 1), int2(TextureSize) - 1);
 
-    // 인접 Depth Load
+    // Load neighbor depths (4 directions)
+    float DepthLeft = InputDepthTexture.Load(int3(LeftPosition, 0));
     float DepthRight = InputDepthTexture.Load(int3(RightPosition, 0));
+    float DepthTop = InputDepthTexture.Load(int3(TopPosition, 0));
     float DepthBottom = InputDepthTexture.Load(int3(BottomPosition, 0));
-    
-    // View Position 재구성
+
+    // Determine validity (not background)
+    bool bLeftValid = (DepthLeft <= BACKGROUND_DEPTH_THRESH);
+    bool bRightValid = (DepthRight <= BACKGROUND_DEPTH_THRESH);
+    bool bTopValid = (DepthTop <= BACKGROUND_DEPTH_THRESH);
+    bool bBottomValid = (DepthBottom <= BACKGROUND_DEPTH_THRESH);
+
+    // Reconstruct center view position
     float3 PositionCenter = ReconstructViewPositionFromLinearDepth(UV, CenterDepth);
-    float3 PositionRight, PositionBottom;
 
-    // 배경에 접한 외곽선에서 Normal 문제를 방지하기 위한 방어 코드
-    if (DepthRight > BACKGROUND_DEPTH_THRESH) 
+    // X-axis derivative (central difference with adaptive fallback)
+    float3 ddx;
     {
-        PositionRight = PositionCenter; 
-    }
-    else 
-    {
-        float2 UVRight = (float2(RightPosition) + 0.5) * InverseTextureSize;
-        PositionRight = ReconstructViewPositionFromLinearDepth(UVRight, DepthRight);
-    }
-    
-    // 배경에 접한 외곽선에서 Normal 문제를 방지하기 위한 방어 코드
-    if (DepthBottom > BACKGROUND_DEPTH_THRESH)
-    {
-        PositionBottom = PositionCenter;
-    }
-    else
-    {
-        float2 UVBottom = (float2(BottomPosition) + 0.5) * InverseTextureSize;
-        PositionBottom = ReconstructViewPositionFromLinearDepth(UVBottom, DepthBottom);
-    }
-    
-    // 미분 연산
-    float3 ddx = PositionRight - PositionCenter;
-    float3 ddy = PositionBottom - PositionCenter;
+        float3 PositionLeft = PositionCenter;
+        float3 PositionRight = PositionCenter;
 
-    // Normal 계산 with NaN protection
+        if (bLeftValid)
+        {
+            float2 UVLeft = (float2(LeftPosition) + 0.5) * InverseTextureSize;
+            PositionLeft = ReconstructViewPositionFromLinearDepth(UVLeft, DepthLeft);
+        }
+        if (bRightValid)
+        {
+            float2 UVRight = (float2(RightPosition) + 0.5) * InverseTextureSize;
+            PositionRight = ReconstructViewPositionFromLinearDepth(UVRight, DepthRight);
+        }
+
+        if (bLeftValid && bRightValid)
+        {
+            // Central difference (both sides valid)
+            // Depth discontinuity detection: use the continuous side if one is discontinuous
+            float DepthDiffLeft = abs(DepthLeft - CenterDepth);
+            float DepthDiffRight = abs(DepthRight - CenterDepth);
+            float DepthThreshold = CenterDepth * 0.1; // 10% threshold
+
+            if (DepthDiffLeft > DepthThreshold && DepthDiffRight <= DepthThreshold)
+            {
+                // Left is discontinuous, use right (forward difference)
+                ddx = PositionRight - PositionCenter;
+            }
+            else if (DepthDiffRight > DepthThreshold && DepthDiffLeft <= DepthThreshold)
+            {
+                // Right is discontinuous, use left (backward difference)
+                ddx = PositionCenter - PositionLeft;
+            }
+            else
+            {
+                // Both valid or both discontinuous - use central difference
+                ddx = (PositionRight - PositionLeft) * 0.5;
+            }
+        }
+        else if (bRightValid)
+        {
+            // Forward difference (only right valid)
+            ddx = PositionRight - PositionCenter;
+        }
+        else if (bLeftValid)
+        {
+            // Backward difference (only left valid)
+            ddx = PositionCenter - PositionLeft;
+        }
+        else
+        {
+            // Both invalid - default
+            ddx = float3(0, 0, 0);
+        }
+    }
+
+    // Y-axis derivative (central difference with adaptive fallback)
+    float3 ddy;
+    {
+        float3 PositionTop = PositionCenter;
+        float3 PositionBottom = PositionCenter;
+
+        if (bTopValid)
+        {
+            float2 UVTop = (float2(TopPosition) + 0.5) * InverseTextureSize;
+            PositionTop = ReconstructViewPositionFromLinearDepth(UVTop, DepthTop);
+        }
+        if (bBottomValid)
+        {
+            float2 UVBottom = (float2(BottomPosition) + 0.5) * InverseTextureSize;
+            PositionBottom = ReconstructViewPositionFromLinearDepth(UVBottom, DepthBottom);
+        }
+
+        if (bTopValid && bBottomValid)
+        {
+            // Central difference (both sides valid)
+            // Depth discontinuity detection
+            float DepthDiffTop = abs(DepthTop - CenterDepth);
+            float DepthDiffBottom = abs(DepthBottom - CenterDepth);
+            float DepthThreshold = CenterDepth * 0.1; // 10% threshold
+
+            if (DepthDiffTop > DepthThreshold && DepthDiffBottom <= DepthThreshold)
+            {
+                // Top is discontinuous, use bottom (forward difference)
+                ddy = PositionBottom - PositionCenter;
+            }
+            else if (DepthDiffBottom > DepthThreshold && DepthDiffTop <= DepthThreshold)
+            {
+                // Bottom is discontinuous, use top (backward difference)
+                ddy = PositionCenter - PositionTop;
+            }
+            else
+            {
+                // Both valid or both discontinuous - use central difference
+                ddy = (PositionBottom - PositionTop) * 0.5;
+            }
+        }
+        else if (bBottomValid)
+        {
+            // Forward difference (only bottom valid)
+            ddy = PositionBottom - PositionCenter;
+        }
+        else if (bTopValid)
+        {
+            // Backward difference (only top valid)
+            ddy = PositionCenter - PositionTop;
+        }
+        else
+        {
+            // Both invalid - default
+            ddy = float3(0, 0, 0);
+        }
+    }
+
+    // Normal calculation with NaN protection
     // When ddx and ddy are parallel or zero, cross product returns zero vector
     // normalize(zero) causes division by zero, resulting in NaN
     float3 CrossProduct = cross(ddx, ddy);
@@ -111,7 +209,7 @@ void ReconstructNormalCS(uint3 DispatchThreadId : SV_DispatchThreadID)
     {
         Normal = CrossProduct / CrossLength;
 
-        // 올바른 방향으로 노멀 반전
+        // Flip normal to face camera
         if (Normal.z > 0.0)
         {
             Normal = -Normal;
@@ -124,6 +222,6 @@ void ReconstructNormalCS(uint3 DispatchThreadId : SV_DispatchThreadID)
         Normal = float3(0, 0, -1);
     }
 
-    // 저장
+    // Output
     OutputNormalTexture[PixelPosition] = float4(Normal, 1.0);
 }
