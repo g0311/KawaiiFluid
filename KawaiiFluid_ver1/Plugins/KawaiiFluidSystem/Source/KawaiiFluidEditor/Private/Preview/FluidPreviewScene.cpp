@@ -6,11 +6,12 @@
 #include "Core/SpatialHash.h"
 #include "Core/KawaiiFluidSimulationContext.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
-#include "Modules/KawaiiFluidSimulationModule.h"
+// SimulationModule removed - using GPU simulation only
 #include "Modules/KawaiiFluidRenderingModule.h"
 #include "Rendering/KawaiiFluidISMRenderer.h"
 #include "Rendering/KawaiiFluidMetaballRenderer.h"
 #include "Rendering/FluidRendererSubsystem.h"
+#include "GPU/GPUFluidSimulator.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -20,7 +21,6 @@ FFluidPreviewScene::FFluidPreviewScene(FPreviewScene::ConstructionValues CVS)
 	: FAdvancedPreviewScene(CVS)
 	, CurrentPreset(nullptr)
 	, PreviewSettingsObject(nullptr)
-	, SimulationModule(nullptr)
 	, SimulationContext(nullptr)
 	, SpawnAccumulator(0.0f)
 	, bSimulationActive(false)
@@ -32,14 +32,15 @@ FFluidPreviewScene::FFluidPreviewScene(FPreviewScene::ConstructionValues CVS)
 	// Create preview settings object
 	PreviewSettingsObject = NewObject<UFluidPreviewSettingsObject>(GetTransientPackage(), NAME_None, RF_Transient);
 
-	// Create simulation module (owns particles, SpatialHash, etc.)
-	SimulationModule = NewObject<UKawaiiFluidSimulationModule>(GetTransientPackage(), NAME_None, RF_Transient);
-
 	// Create simulation context (physics solver)
 	SimulationContext = NewObject<UKawaiiFluidSimulationContext>(GetTransientPackage(), NAME_None, RF_Transient);
 
 	// Initialize Context's RenderResource for rendering
 	SimulationContext->InitializeRenderResource();
+
+	// Initialize GPU simulator for Metaball rendering (required!)
+	constexpr int32 PreviewMaxParticles = 10000;
+	SimulationContext->InitializeGPUSimulator(PreviewMaxParticles);
 
 	// Create visualization components (including PreviewActor)
 	CreateVisualizationComponents();
@@ -101,10 +102,10 @@ FFluidPreviewScene::~FFluidPreviewScene()
 		RenderingModule->Cleanup();
 	}
 
-	// Clean up simulation module
-	if (SimulationModule)
+	// Release GPU simulator
+	if (SimulationContext)
 	{
-		SimulationModule->Shutdown();
+		SimulationContext->ReleaseGPUSimulator();
 	}
 
 	if (PreviewActor && PreviewActor->IsValidLowLevel())
@@ -120,7 +121,6 @@ void FFluidPreviewScene::AddReferencedObjects(FReferenceCollector& Collector)
 
 	Collector.AddReferencedObject(CurrentPreset);
 	Collector.AddReferencedObject(PreviewSettingsObject);
-	Collector.AddReferencedObject(SimulationModule);
 	Collector.AddReferencedObject(SimulationContext);
 	Collector.AddReferencedObject(RenderingModule);
 	Collector.AddReferencedObject(PreviewActor);
@@ -177,16 +177,11 @@ void FFluidPreviewScene::SetPreset(UKawaiiFluidPresetDataAsset* InPreset)
 
 	if (CurrentPreset)
 	{
-		// Initialize simulation module with preset
-		if (SimulationModule)
-		{
-			SimulationModule->Initialize(CurrentPreset);
-		}
-
-		// Initialize solvers in context
+		// Initialize solvers in context and cache preset for GPU simulation
 		if (SimulationContext)
 		{
 			SimulationContext->InitializeSolvers(CurrentPreset);
+			SimulationContext->SetCachedPreset(CurrentPreset);
 		}
 
 		CachedParticleRadius = CurrentPreset->ParticleRadius;
@@ -220,16 +215,11 @@ void FFluidPreviewScene::RefreshFromPreset()
 		return;
 	}
 
-	// Update simulation module preset (handles SpatialHash internally)
-	if (SimulationModule)
-	{
-		SimulationModule->SetPreset(CurrentPreset);
-	}
-
-	// Update simulation context solvers (physics parameters)
+	// Update simulation context solvers (physics parameters) and cache preset
 	if (SimulationContext)
 	{
 		SimulationContext->InitializeSolvers(CurrentPreset);
+		SimulationContext->SetCachedPreset(CurrentPreset);
 	}
 
 	CachedParticleRadius = CurrentPreset->ParticleRadius;
@@ -264,26 +254,36 @@ void FFluidPreviewScene::StopSimulation()
 
 void FFluidPreviewScene::ResetSimulation()
 {
-	// Clear existing particles via SimulationModule
-	if (SimulationModule)
+	// Clear GPU particles
+	if (SimulationContext)
 	{
-		SimulationModule->ClearAllParticles();
-		SimulationModule->SetAccumulatedTime(0.0f);
+		FGPUFluidSimulator* GPUSimulator = SimulationContext->GetGPUSimulator();
+		if (GPUSimulator)
+		{
+			GPUSimulator->ClearAllParticles();
+		}
 	}
 	SpawnAccumulator = 0.0f;
 }
 
 void FFluidPreviewScene::ContinuousSpawn(float DeltaTime)
 {
-	if (!SimulationModule)
+	if (!SimulationContext)
+	{
+		return;
+	}
+
+	FGPUFluidSimulator* GPUSimulator = SimulationContext->GetGPUSimulator();
+	if (!GPUSimulator)
 	{
 		return;
 	}
 
 	const FFluidPreviewSettings& Settings = PreviewSettingsObject->Settings;
 
-	// Check if we've reached max particle count
-	if (SimulationModule->GetParticleCount() >= Settings.MaxParticleCount)
+	// Check if we've reached max particle count (use GPU count)
+	const int32 CurrentCount = GPUSimulator->GetParticleCount();
+	if (CurrentCount >= Settings.MaxParticleCount)
 	{
 		return;
 	}
@@ -306,64 +306,68 @@ void FFluidPreviewScene::ContinuousSpawn(float DeltaTime)
 	const float SpawnRadius = Settings.SpawnRadius;
 
 	// Calculate how many we can actually spawn
-	const int32 RemainingCapacity = Settings.MaxParticleCount - SimulationModule->GetParticleCount();
+	const int32 RemainingCapacity = Settings.MaxParticleCount - CurrentCount;
 	const int32 ActualSpawnCount = FMath::Min(ParticlesToSpawn, RemainingCapacity);
 
-	// Spawn particles via SimulationModule
+	// Spawn particles via GPU simulator
 	for (int32 i = 0; i < ActualSpawnCount; ++i)
 	{
 		// Random position within sphere
 		FVector RandomOffset = FMath::VRand() * FMath::FRand() * SpawnRadius;
 		FVector Position = SpawnLocation + RandomOffset;
 
-		SimulationModule->SpawnParticle(Position, SpawnVelocity);
+		GPUSimulator->AddSpawnRequest(
+			FVector3f(Position),
+			FVector3f(SpawnVelocity),
+			1.0f  // Mass
+		);
 	}
 }
 
 void FFluidPreviewScene::TickSimulation(float DeltaTime)
 {
-	if (!bSimulationActive || !CurrentPreset || !SimulationModule)
+	if (!bSimulationActive || !CurrentPreset || !SimulationContext)
 	{
 		return;
 	}
 
-	// Continuous spawn new particles
+	FGPUFluidSimulator* GPUSimulator = SimulationContext->GetGPUSimulator();
+	if (!GPUSimulator)
+	{
+		return;
+	}
+
+	// Continuous spawn new particles (GPU spawn requests)
 	ContinuousSpawn(DeltaTime);
-
-	// Skip simulation if no particles yet
-	FSpatialHash* SpatialHash = SimulationModule->GetSpatialHash();
-	if (SimulationModule->GetParticleCount() == 0 || !SimulationContext || !SpatialHash)
-	{
-		return;
-	}
 
 	// Build simulation params
 	FKawaiiFluidSimulationParams Params;
 	Params.ExternalForce = CurrentPreset->Gravity;
 	Params.World = GetWorld();
-	Params.bUseWorldCollision = false; // We handle collision manually in preview
+	Params.bUseWorldCollision = false;
 	Params.ParticleRadius = CurrentPreset->ParticleRadius;
 
-	// Get accumulated time from module
-	float AccumulatedTime = SimulationModule->GetAccumulatedTime();
+	// Set simulation bounds for GPU collision (floor at Z=0)
+	const FVector BoundsMin(-500.0, -500.0, 0.0);
+	const FVector BoundsMax(500.0, 500.0, 500.0);
+	Params.WorldBounds = FBox(BoundsMin, BoundsMax);
+	GPUSimulator->SetSimulationBounds(FVector3f(BoundsMin), FVector3f(BoundsMax));
 
-	// Run simulation using module's particle array
+	// Run GPU simulation
+	static TArray<FFluidParticle> DummyParticles;  // GPU mode doesn't use CPU particles
+	static FSpatialHash DummySpatialHash(CurrentPreset->SmoothingRadius);
+	float AccumulatedTime = 0.0f;
+
 	SimulationContext->Simulate(
-		SimulationModule->GetParticlesMutable(),
+		DummyParticles,
 		CurrentPreset,
 		Params,
-		*SpatialHash,
+		DummySpatialHash,
 		DeltaTime,
 		AccumulatedTime
 	);
 
-	// Update accumulated time back to module
-	SimulationModule->SetAccumulatedTime(AccumulatedTime);
-
-	// Handle floor collision manually
-	HandleFloorCollision();
-
-	// Update rendering module (SSFR or ISM based on mode)
+	// Update rendering module
 	if (RenderingModule)
 	{
 		RenderingModule->UpdateRenderers();
@@ -372,38 +376,8 @@ void FFluidPreviewScene::TickSimulation(float DeltaTime)
 
 void FFluidPreviewScene::HandleFloorCollision()
 {
-	if (!SimulationModule)
-	{
-		return;
-	}
-
-	constexpr float FloorZ = 0.0f;
-	const float ParticleRadius = CurrentPreset ? CurrentPreset->ParticleRadius : 5.0f;
-	const float Restitution = CurrentPreset ? CurrentPreset->Restitution : 0.0f;
-	const float Friction = CurrentPreset ? CurrentPreset->Friction : 0.5f;
-
-	for (FFluidParticle& Particle : SimulationModule->GetParticlesMutable())
-	{
-		const float MinZ = FloorZ + ParticleRadius;
-
-		if (Particle.Position.Z < MinZ)
-		{
-			Particle.Position.Z = MinZ;
-			Particle.PredictedPosition.Z = MinZ;
-
-			// Apply friction and restitution
-			if (Particle.Velocity.Z < 0)
-			{
-				Particle.Velocity.Z *= -Restitution;
-
-				// Apply friction to horizontal velocity
-				FVector HorizontalVel(Particle.Velocity.X, Particle.Velocity.Y, 0.0f);
-				HorizontalVel *= (1.0f - Friction);
-				Particle.Velocity.X = HorizontalVel.X;
-				Particle.Velocity.Y = HorizontalVel.Y;
-			}
-		}
-	}
+	// Floor collision is handled by GPU bounds collision
+	// See TickSimulation() -> Params.WorldBounds
 }
 
 FFluidPreviewSettings& FFluidPreviewScene::GetPreviewSettings()
@@ -454,17 +428,15 @@ void FFluidPreviewScene::UpdateEnvironment()
 
 const TArray<FFluidParticle>& FFluidPreviewScene::GetParticles() const
 {
+	// GPU mode - no CPU particles available
 	static TArray<FFluidParticle> EmptyArray;
-	if (SimulationModule)
-	{
-		return SimulationModule->GetParticles();
-	}
 	return EmptyArray;
 }
 
 int32 FFluidPreviewScene::GetParticleCount() const
 {
-	return SimulationModule ? SimulationModule->GetParticleCount() : 0;
+	// Return GPU particle count
+	return GetGPUParticleCount();
 }
 
 float FFluidPreviewScene::GetParticleRadius() const
@@ -474,41 +446,56 @@ float FFluidPreviewScene::GetParticleRadius() const
 
 bool FFluidPreviewScene::IsDataValid() const
 {
-	return SimulationModule != nullptr && SimulationModule->GetParticleCount() > 0;
+	// Valid if GPU simulation is active (particles may be 0 but still valid for rendering)
+	return IsGPUSimulationActive();
 }
 
 //========================================
-// Particle Access (via SimulationModule)
+// Particle Access (GPU mode - limited access)
 //========================================
 
 TArray<FFluidParticle>& FFluidPreviewScene::GetParticlesMutable()
 {
+	// GPU mode - no mutable CPU particles available
 	static TArray<FFluidParticle> EmptyArray;
-	if (SimulationModule)
-	{
-		return SimulationModule->GetParticlesMutable();
-	}
 	return EmptyArray;
 }
 
 float FFluidPreviewScene::GetSimulationTime() const
 {
-	return SimulationModule ? SimulationModule->GetAccumulatedTime() : 0.0f;
+	// GPU simulation doesn't track accumulated time the same way
+	return 0.0f;
 }
 
 float FFluidPreviewScene::GetAverageDensity() const
 {
-	if (!SimulationModule || SimulationModule->GetParticleCount() == 0)
-	{
-		return 0.0f;
-	}
+	// GPU mode - density is computed on GPU, not easily accessible
+	return 0.0f;
+}
 
-	const TArray<FFluidParticle>& Particles = SimulationModule->GetParticles();
-	float TotalDensity = 0.0f;
-	for (const FFluidParticle& Particle : Particles)
-	{
-		TotalDensity += Particle.Density;
-	}
+//========================================
+// GPU Simulation Interface
+//========================================
 
-	return TotalDensity / Particles.Num();
+bool FFluidPreviewScene::IsGPUSimulationActive() const
+{
+	return SimulationContext && SimulationContext->IsGPUSimulatorReady();
+}
+
+int32 FFluidPreviewScene::GetGPUParticleCount() const
+{
+	if (SimulationContext)
+	{
+		FGPUFluidSimulator* GPUSimulator = SimulationContext->GetGPUSimulator();
+		if (GPUSimulator)
+		{
+			return GPUSimulator->GetParticleCount();
+		}
+	}
+	return 0;
+}
+
+FGPUFluidSimulator* FFluidPreviewScene::GetGPUSimulator() const
+{
+	return SimulationContext ? SimulationContext->GetGPUSimulator() : nullptr;
 }

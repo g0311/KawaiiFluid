@@ -9,9 +9,7 @@
 
 class UKawaiiFluidPresetDataAsset;
 class UKawaiiFluidSimulationContext;
-class UKawaiiFluidSimulationModule;
 class UKawaiiFluidRenderingModule;
-class FSpatialHash;
 struct FFluidParticle;
 
 /**
@@ -40,6 +38,11 @@ public:
 	virtual float GetParticleRadius() const override;
 	virtual bool IsDataValid() const override;
 	virtual FString GetDebugName() const override { return TEXT("FluidPreviewScene"); }
+
+	// GPU Simulation Interface (required for Metaball rendering)
+	virtual bool IsGPUSimulationActive() const override;
+	virtual int32 GetGPUParticleCount() const override;
+	virtual FGPUFluidSimulator* GetGPUSimulator() const override;
 
 	/** Get rendering module */
 	UKawaiiFluidRenderingModule* GetRenderingModule() const { return RenderingModule; }
@@ -100,20 +103,17 @@ public:
 	void UpdateEnvironment();
 
 	//========================================
-	// Particle Access (via SimulationModule)
+	// Particle Access (GPU mode - limited)
 	//========================================
 
-	/** Get mutable particles array (for simulation) */
+	/** Get mutable particles array (not available in GPU mode) */
 	TArray<FFluidParticle>& GetParticlesMutable();
 
-	/** Get average density */
+	/** Get average density (not available in GPU mode) */
 	float GetAverageDensity() const;
 
-	/** Get simulation time */
+	/** Get simulation time (not available in GPU mode) */
 	float GetSimulationTime() const;
-
-	/** Get simulation module */
-	UKawaiiFluidSimulationModule* GetSimulationModule() const { return SimulationModule; }
 
 private:
 	/** Continuous spawn particles */
@@ -140,13 +140,10 @@ private:
 	TObjectPtr<UFluidPreviewSettingsObject> PreviewSettingsObject;
 
 	//========================================
-	// Simulation Data (Module-based)
+	// Simulation Data (GPU-based)
 	//========================================
 
-	/** Simulation module - owns particles, SpatialHash, and provides API */
-	TObjectPtr<UKawaiiFluidSimulationModule> SimulationModule;
-
-	/** Simulation context - physics solver (shared with runtime) */
+	/** Simulation context - physics solver with GPU simulator */
 	TObjectPtr<UKawaiiFluidSimulationContext> SimulationContext;
 
 	/** Spawn accumulator for fractional particles (continuous spawn) */
