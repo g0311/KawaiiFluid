@@ -114,6 +114,102 @@ float2 ProjectToScreenUV(float3 ViewPos)
 	return float2(ClipPos.x * 0.5 + 0.5, -ClipPos.y * 0.5 + 0.5);
 }
 
+// -----------------------------------------------------------------------------
+// PBR Functions (Cook-Torrance BRDF)
+// -----------------------------------------------------------------------------
+
+/**
+ * GGX/Trowbridge-Reitz Normal Distribution Function.
+ * Models the statistical distribution of microfacet normals.
+ *
+ * @param NoH - Dot product of Normal and Half vector
+ * @param Roughness - Surface roughness (0 = mirror, 1 = diffuse)
+ * @return Distribution term D
+ */
+float D_GGX(float NoH, float Roughness)
+{
+	float a = Roughness * Roughness;
+	float a2 = a * a;
+	float NoH2 = NoH * NoH;
+
+	float denom = NoH2 * (a2 - 1.0) + 1.0;
+	return a2 / (PI * denom * denom + 0.0001);
+}
+
+/**
+ * Schlick-GGX Geometry Function (single direction).
+ * Models microfacet self-shadowing.
+ *
+ * @param NoX - Dot product (NoV or NoL)
+ * @param Roughness - Surface roughness
+ * @return Geometry term for one direction
+ */
+float G_SchlickGGX(float NoX, float Roughness)
+{
+	float r = Roughness + 1.0;
+	float k = (r * r) / 8.0;  // Direct lighting remapping
+
+	return NoX / (NoX * (1.0 - k) + k + 0.0001);
+}
+
+/**
+ * Smith Geometry Function (combined view and light).
+ * Combines shadowing from both view and light directions.
+ *
+ * @param NoV - Dot product of Normal and View direction
+ * @param NoL - Dot product of Normal and Light direction
+ * @param Roughness - Surface roughness
+ * @return Combined geometry term G
+ */
+float G_Smith(float NoV, float NoL, float Roughness)
+{
+	return G_SchlickGGX(NoV, Roughness) * G_SchlickGGX(NoL, Roughness);
+}
+
+/**
+ * Fresnel-Schlick approximation.
+ *
+ * @param CosTheta - Dot product of Half vector and View direction
+ * @param F0 - Reflectance at normal incidence
+ * @return Fresnel reflectance
+ */
+float3 F_Schlick(float CosTheta, float3 F0)
+{
+	return F0 + (1.0 - F0) * pow(saturate(1.0 - CosTheta), 5.0);
+}
+
+/**
+ * Cook-Torrance Specular BRDF.
+ * Combines D, G, F terms for physically-based specular reflection.
+ *
+ * @param NoV - Normal dot View
+ * @param NoL - Normal dot Light
+ * @param NoH - Normal dot Half
+ * @param HoV - Half dot View (for Fresnel)
+ * @param Roughness - Surface roughness
+ * @param F0 - Reflectance at normal incidence
+ * @param OutFresnel - Output Fresnel term (for energy conservation)
+ * @return Specular BRDF value
+ */
+float3 CookTorranceBRDF(float NoV, float NoL, float NoH, float HoV, float Roughness, float3 F0, out float3 OutFresnel)
+{
+	// Distribution
+	float D = D_GGX(NoH, Roughness);
+
+	// Geometry
+	float G = G_Smith(NoV, NoL, Roughness);
+
+	// Fresnel
+	OutFresnel = F_Schlick(HoV, F0);
+
+	// Cook-Torrance specular BRDF
+	// f_spec = DGF / (4 * NoV * NoL)
+	float3 numerator = D * G * OutFresnel;
+	float denominator = 4.0 * NoV * NoL + 0.0001;
+
+	return numerator / denominator;
+}
+
 // SSR debug global variables
 static float3 g_SSRDebugLastPos = float3(0, 0, 0);
 static float g_SSRDebugLastRayDepth = 0;
@@ -288,38 +384,50 @@ void MainPS(
 	float3 ViewPos = ReconstructViewPosition(UV, FluidDepth);
 	float3 ViewDir = normalize(-ViewPos);  // Direction toward camera
 
-	// A. Fresnel (Schlick's approximation with IOR-based F0)
+	// A. PBR Setup
 	// ========================================================================
 	// IOR to F0: F0 = ((1 - n) / (1 + n))^2
 	// Water (IOR=1.33): F0 ~ 0.02, Glass (IOR=1.5): F0 ~ 0.04
 	// FresnelStrength is additional multiplier (1.0 = physically accurate)
+	// Fluids are dielectric (non-metallic), so F0 is uniform across RGB
 	// ========================================================================
 	float NoV = saturate(dot(Normal, ViewDir));
 	float IOR_F0 = pow((1.0 - RefractiveIndex) / (1.0 + RefractiveIndex), 2.0);
-	float F0 = IOR_F0 * FresnelStrength;
-	float Fresnel = F0 + (1.0 - F0) * pow(1.0 - NoV, 5.0);
+	float3 F0 = float3(IOR_F0, IOR_F0, IOR_F0) * FresnelStrength;
 
-	// B. Diffuse + Specular (Phong Shading) - using scene's actual directional light
+	// B. PBR Lighting (Cook-Torrance BRDF) - using scene's actual directional light
 	float3 LightDir = normalize(-View.DirectionalLightDirection);
 	float3 LightColor = View.DirectionalLightColor.rgb;
 
-	// Diffuse (Lambert)
+	// Common dot products
 	float NoL = saturate(dot(Normal, LightDir));
-	float3 DiffuseLighting = NoL * LightColor;
+	float3 HalfDir = normalize(LightDir + ViewDir);
+	float NoH = saturate(dot(Normal, HalfDir));
+	float HoV = saturate(dot(HalfDir, ViewDir));
+
+	// Roughness (clamp to avoid divide by zero in GGX)
+	float Roughness = max(SpecularRoughness, 0.04);
+
+	// Cook-Torrance Specular BRDF
+	float3 SpecularFresnel;
+	float3 SpecularBRDF = CookTorranceBRDF(NoV, NoL, NoH, HoV, Roughness, F0, SpecularFresnel);
+	float3 Specular = SpecularBRDF * LightColor * NoL * SpecularStrength;
+
+	// Energy Conservation: diffuse is reduced by specular reflection
+	// kD = 1 - kS (for dielectrics, metallic = 0)
+	float3 kD = 1.0 - SpecularFresnel;
+
+	// Diffuse (Lambert with energy conservation)
+	float3 DiffuseLighting = kD * NoL * LightColor;
 
 	// Ambient (prevents completely dark surfaces)
 	float3 AmbientColor = EnvironmentLightColor.rgb * AmbientScale;
 
-	// Total Lighting
+	// Total Lighting (diffuse + ambient, specular added separately)
 	float3 TotalLighting = DiffuseLighting + AmbientColor;
 
-	// Specular (Blinn-Phong)
-	float3 HalfDir = normalize(LightDir + ViewDir);
-	float NoH = saturate(dot(Normal, HalfDir));
-
-	// Convert roughness to shininess (low roughness = high shininess = sharp highlights)
-	float Shininess = (1.0 - SpecularRoughness) * 128.0;
-	float3 Specular = pow(NoH, Shininess) * SpecularStrength * LightColor;
+	// Fresnel for reflection (use NoV-based Fresnel for environment reflections)
+	float Fresnel = F0.r + (1.0 - F0.r) * pow(1.0 - NoV, 5.0);
 
 	// C. Subsurface Scattering (SSS) - Jelly Effect
 	// ========================================================================
@@ -393,7 +501,7 @@ void MainPS(
 	// Thicker fluid shows more of its intrinsic color
 	float OverallAbsorption = 1.0 - dot(Transmittance, float3(0.333, 0.333, 0.333));
 
-	// Apply lighting to FluidColor (Phong Shading's Diffuse + Ambient)
+	// Apply lighting to FluidColor (PBR Diffuse + Ambient)
 	float3 LitFluidColor = FluidColor.rgb * TotalLighting;
 	float3 BaseColor = lerp(TransmittedBackground, LitFluidColor, saturate(OverallAbsorption));
 
