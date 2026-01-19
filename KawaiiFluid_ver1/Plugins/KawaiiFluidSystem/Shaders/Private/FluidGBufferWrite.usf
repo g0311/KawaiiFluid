@@ -151,8 +151,9 @@ FGBufferOutput MainPS(FGBufferVSToPS Input)
 	bool bInvalidNormal = any(isnan(ViewSpaceNormal)) || any(isinf(ViewSpaceNormal)) || length(ViewSpaceNormal) < 0.1f;
 	if (bInvalidNormal)
 	{
-		// Default to view-facing normal (View space: camera looks down -Z)
-		ViewSpaceNormal = float3(0, 0, -1);
+		// Default to camera-facing normal (View space: surface facing camera = +Z)
+		// Camera looks down -Z, so surface normal pointing at camera is +Z
+		ViewSpaceNormal = float3(0, 0, 1);
 	}
 	else
 	{

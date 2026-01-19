@@ -16,23 +16,7 @@ float4x4 InverseProjectionMatrix;
 // Background depth threshold
 #define BACKGROUND_DEPTH_THRESH 3.0e30f
 
-// Reconstruct view space position from linear depth
-float3 ReconstructViewPositionFromLinearDepth(float2 ScreenUV, float LinearDepth)
-{
-    // Clip space coordinates (Z value doesn't matter for direction calculation)
-    float4 ClipPosition = float4(ScreenUV * 2.0 - 1.0, 0.5, 1.0);
-
-    // Inverse projection to view space
-    float4 ViewPosition = mul(ClipPosition, InverseProjectionMatrix);
-    ViewPosition /= ViewPosition.w;
-
-    // Extract view ray direction (normalized so that Z = 1.0)
-    float3 ViewRay = ViewPosition.xyz / ViewPosition.z;
-
-    // Scale by depth to get final position
-    // LinearDepth is stored as positive distance, negate to restore view space Z
-    return ViewRay * (-LinearDepth);
-}
+// Use shared function from FluidCommon.ush: ReconstructViewPositionFromDepth
 
 [numthreads(8, 8, 1)]
 void ReconstructNormalCS(uint3 DispatchThreadId : SV_DispatchThreadID)
@@ -74,7 +58,7 @@ void ReconstructNormalCS(uint3 DispatchThreadId : SV_DispatchThreadID)
     bool bBottomValid = (DepthBottom <= BACKGROUND_DEPTH_THRESH);
 
     // Reconstruct center view position
-    float3 PositionCenter = ReconstructViewPositionFromLinearDepth(UV, CenterDepth);
+    float3 PositionCenter = ReconstructViewPositionFromDepth(UV, CenterDepth, InverseProjectionMatrix);
 
     // X-axis derivative (central difference with adaptive fallback)
     float3 ddx;
@@ -85,12 +69,12 @@ void ReconstructNormalCS(uint3 DispatchThreadId : SV_DispatchThreadID)
         if (bLeftValid)
         {
             float2 UVLeft = (float2(LeftPosition) + 0.5) * InverseTextureSize;
-            PositionLeft = ReconstructViewPositionFromLinearDepth(UVLeft, DepthLeft);
+            PositionLeft = ReconstructViewPositionFromDepth(UVLeft, DepthLeft, InverseProjectionMatrix);
         }
         if (bRightValid)
         {
             float2 UVRight = (float2(RightPosition) + 0.5) * InverseTextureSize;
-            PositionRight = ReconstructViewPositionFromLinearDepth(UVRight, DepthRight);
+            PositionRight = ReconstructViewPositionFromDepth(UVRight, DepthRight, InverseProjectionMatrix);
         }
 
         if (bLeftValid && bRightValid)
@@ -143,12 +127,12 @@ void ReconstructNormalCS(uint3 DispatchThreadId : SV_DispatchThreadID)
         if (bTopValid)
         {
             float2 UVTop = (float2(TopPosition) + 0.5) * InverseTextureSize;
-            PositionTop = ReconstructViewPositionFromLinearDepth(UVTop, DepthTop);
+            PositionTop = ReconstructViewPositionFromDepth(UVTop, DepthTop, InverseProjectionMatrix);
         }
         if (bBottomValid)
         {
             float2 UVBottom = (float2(BottomPosition) + 0.5) * InverseTextureSize;
-            PositionBottom = ReconstructViewPositionFromLinearDepth(UVBottom, DepthBottom);
+            PositionBottom = ReconstructViewPositionFromDepth(UVBottom, DepthBottom, InverseProjectionMatrix);
         }
 
         if (bTopValid && bBottomValid)
@@ -202,15 +186,18 @@ void ReconstructNormalCS(uint3 DispatchThreadId : SV_DispatchThreadID)
     if (CrossLength < 1e-8)
     {
         // Degenerate case: ddx and ddy are parallel or zero
-        // Use default view-facing normal (camera looks down -Z in view space)
-        Normal = float3(0, 0, -1);
+        // Use default camera-facing normal (camera at origin, looking down -Z)
+        // Surface normal should point toward camera = +Z direction
+        Normal = float3(0, 0, 1);
     }
     else
     {
         Normal = CrossProduct / CrossLength;
 
         // Flip normal to face camera
-        if (Normal.z > 0.0)
+        // In view space: camera at origin, PositionCenter is the vector from camera to surface
+        // If dot(Normal, PositionCenter) > 0, normal is facing away from camera -> flip it
+        if (dot(Normal, PositionCenter) > 0.0)
         {
             Normal = -Normal;
         }
@@ -219,7 +206,7 @@ void ReconstructNormalCS(uint3 DispatchThreadId : SV_DispatchThreadID)
     // Final NaN check (safety net)
     if (any(isnan(Normal)) || any(isinf(Normal)))
     {
-        Normal = float3(0, 0, -1);
+        Normal = float3(0, 0, 1);
     }
 
     // Output

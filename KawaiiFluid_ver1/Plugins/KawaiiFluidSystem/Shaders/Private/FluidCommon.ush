@@ -2,83 +2,121 @@
 
 #pragma once
 
-// 공통 유틸리티 함수들
+// Common utility functions
 
 /**
  * Sphere-Ray Intersection
- * 구형 파티클과 레이의 교차점에서의 depth 계산
+ * Calculate depth at intersection point between spherical particle and ray
  *
- * @param SphereCenter 구의 중심 위치 (View Space)
- * @param SphereRadius 구의 반지름
- * @param RayOrigin 레이 시작점 (카메라 위치)
- * @param RayDirection 정규화된 레이 방향
- * @return 교차점까지의 거리 (실패 시 -1)
+ * @param SphereCenter Sphere center position (View Space)
+ * @param SphereRadius Sphere radius
+ * @param RayOrigin Ray start point (camera position)
+ * @param RayDirection Normalized ray direction
+ * @return Distance to intersection point (-1 on failure)
  */
 float CalculateSphereDepth(float3 SphereCenter, float SphereRadius, float3 RayOrigin, float3 RayDirection)
 {
-	// 레이 원점에서 구 중심으로의 벡터
+	// Vector from ray origin to sphere center
 	float3 VectorToSphere = SphereCenter - RayOrigin;
 
-	// 구 중심과 Ray 사이의 거리를 정사영하여 최단 거리가 되는 지점까지의 길이 연산
+	// Project sphere center onto ray to find closest approach distance
 	float TimeToClosestApproach = dot(VectorToSphere, RayDirection);
 
-	// 레이가 구를 향하지 않으면 교차 없음
+	// No intersection if ray points away from sphere
 	if (TimeToClosestApproach < 0.0)
 	{
 		return -1.0;
 	}
 
-	// 직각 삼각형에서 양 변을 알고 있으니 나머지 변의 제곱을 구할 수 있음 (최단 거리 지점에서 구 중심)
+	// Calculate squared distance from closest approach point to sphere center
+	// Using Pythagorean theorem: d^2 = |V|^2 - t^2
 	float DistanceSquared = dot(VectorToSphere, VectorToSphere) - TimeToClosestApproach * TimeToClosestApproach;
 	float RadiusSquared = SphereRadius * SphereRadius;
 
-	// 레이가 구를 빗나감
+	// Ray misses the sphere
 	if (DistanceSquared > RadiusSquared)
 	{
 		return -1.0;
 	}
 
-	// 구와의 교차 현(chord)의 반 길이
+	// Half-length of the intersection chord
 	float HalfChordLength = sqrt(RadiusSquared - DistanceSquared);
 
-	// 앞쪽 교차점까지의 거리 (뒷쪽은 TimeToClosestApproach + HalfChordLength)
+	// Distance to front intersection (back intersection = TimeToClosestApproach + HalfChordLength)
 	float IntersectionDistance = TimeToClosestApproach - HalfChordLength;
 
 	return IntersectionDistance;
 }
 
 /**
- * View Space Depth를 Linear Depth로 변환
+ * Calculate View Ray Direction from Screen UV
  *
- * @param ViewSpaceZ View Space의 Z 깊이값
- * @param ProjectionMatrix 투영 행렬
- * @return Linear depth 값
- */
-float ViewDepthToLinearDepth(float ViewSpaceZ, float4x4 ProjectionMatrix)
-{
-	// TODO: 실제 변환 로직 구현 필요
-	// 현재는 View Space Z를 그대로 반환
-	return ViewSpaceZ;
-}
-
-/**
- * Screen UV에서 View Ray Direction 계산
- *
- * @param ScreenUV 화면 UV 좌표 (0~1)
- * @param InverseProjectionMatrix 역투영 행렬
- * @return 정규화된 View Space 레이 방향
+ * @param ScreenUV Screen UV coordinates (0~1)
+ * @param InverseProjectionMatrix Inverse projection matrix
+ * @return Normalized View Space ray direction
  */
 float3 CalculateViewRayDirection(float2 ScreenUV, float4x4 InverseProjectionMatrix)
 {
-	// Screen UV(0 ~ 1)를 NDC 좌표(-1 ~ 1)로 변환
+	// Convert Screen UV (0~1) to NDC coordinates (-1~1)
 	float2 NormalizedDeviceCoords = ScreenUV * 2.0 - 1.0;
 
-	// NDC를 View Space로 역변환
+	// Transform NDC to View Space
 	float4 ViewSpacePosition = mul(float4(NormalizedDeviceCoords, 1.0, 1.0), InverseProjectionMatrix);
 
-	// 동차 좌표 정규화 (perspective divide)
+	// Perspective divide (homogeneous coordinate normalization)
 	ViewSpacePosition.xyz /= ViewSpacePosition.w;
 
-	// 정규화된 방향 벡터 반환
+	// Return normalized direction vector
 	return normalize(ViewSpacePosition.xyz);
+}
+
+/**
+ * Reconstruct View Space Position from Screen UV and Linear Depth
+ *
+ * UE5 coordinate conventions:
+ * - Screen UV: (0,0) = top-left, (1,1) = bottom-right
+ * - Clip Space: (-1,-1) = bottom-left, (1,1) = top-right (Y is flipped from UV)
+ * - View Space: Z < 0 = in front of camera
+ *
+ * @param ScreenUV Screen UV coordinates (0~1)
+ * @param LinearDepth Linear depth (positive, distance from camera)
+ * @param InverseProjectionMatrix Inverse projection matrix
+ * @return View Space position (Z < 0)
+ */
+float3 ReconstructViewPositionFromDepth(float2 ScreenUV, float LinearDepth, float4x4 InverseProjectionMatrix)
+{
+	// Convert UV to Clip Space (Y-axis flip applied)
+	// UV (0,0) top-left -> Clip (-1, 1) top-left
+	float2 ClipXY = float2(ScreenUV.x * 2.0 - 1.0, 1.0 - ScreenUV.y * 2.0);
+	float4 ClipPosition = float4(ClipXY, 0.5, 1.0);
+
+	// Clip Space -> View Space
+	float4 ViewPosition = mul(ClipPosition, InverseProjectionMatrix);
+	ViewPosition /= ViewPosition.w;
+
+	// Calculate View Ray direction (normalized to Z = 1)
+	// Use abs() to ensure sign consistency
+	float3 ViewRay = ViewPosition.xyz / abs(ViewPosition.z);
+
+	// Apply Linear Depth to calculate final position
+	// In View Space, Z < 0 is in front of camera
+	// UE5's InverseProjectionMatrix outputs Z+ as forward, so X,Y must also be negated
+	float Depth = abs(LinearDepth);
+	return float3(-ViewRay.x, -ViewRay.y, -1.0) * Depth;
+}
+
+/**
+ * Project View Space Position to Screen UV
+ *
+ * @param ViewPos View Space position
+ * @param ProjectionMatrix Projection matrix
+ * @return Screen UV coordinates (0~1)
+ */
+float2 ProjectViewPositionToScreenUV(float3 ViewPos, float4x4 ProjectionMatrix)
+{
+	float4 ClipPos = mul(float4(ViewPos, 1.0), ProjectionMatrix);
+	ClipPos.xy /= ClipPos.w;
+
+	// Clip Space -> UV (Y-axis flip applied)
+	return float2(ClipPos.x * 0.5 + 0.5, -ClipPos.y * 0.5 + 0.5);
 }

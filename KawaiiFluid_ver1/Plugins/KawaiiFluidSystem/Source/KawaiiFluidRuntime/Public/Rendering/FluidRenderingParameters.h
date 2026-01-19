@@ -79,6 +79,44 @@ enum class ESSFRRenderingMode : uint8
 };
 
 /**
+ * SSR Debug visualization mode.
+ * Used to diagnose Screen Space Reflection issues at runtime.
+ */
+UENUM(BlueprintType)
+enum class ESSRDebugMode : uint8
+{
+	/** No debug visualization (normal rendering) */
+	None = 0 UMETA(DisplayName = "None"),
+
+	/** Hit/Miss - Red = hit (intensity varies), Blue = miss */
+	HitMiss = 1 UMETA(DisplayName = "Hit/Miss"),
+
+	/** Reflection Direction - RGB = XYZ (0.5 = 0) */
+	ReflectionDirection = 2 UMETA(DisplayName = "Reflection Direction"),
+
+	/** Hit Color - Direct display of hit color (Magenta = miss) */
+	HitColor = 3 UMETA(DisplayName = "Hit Color"),
+
+	/** Reflection Z - Green = into scene (SSR possible), Red = toward camera (SSR not possible) */
+	ReflectionZ = 4 UMETA(DisplayName = "Reflection Z"),
+
+	/** Depth Compare - Red = ray in front, Green = ray behind, Blue = scene depth */
+	DepthCompare = 5 UMETA(DisplayName = "Depth Compare"),
+
+	/** Exit Reason - Red = behind camera, Green = off screen, Blue = max steps, Yellow = hit */
+	ExitReason = 6 UMETA(DisplayName = "Exit Reason"),
+
+	/** Normal - Normal direction visualization (RGB = XYZ) */
+	Normal = 7 UMETA(DisplayName = "Normal"),
+
+	/** ViewDir - View direction visualization (RGB = XYZ) */
+	ViewDir = 8 UMETA(DisplayName = "ViewDir"),
+
+	/** ViewPos.z - View position Z (Blue = in front, Red = behind) */
+	ViewPosZ = 9 UMETA(DisplayName = "ViewPos.z")
+};
+
+/**
  * Depth smoothing filter type for SSFR.
  * Different filters have different characteristics for edge preservation and performance.
  */
@@ -224,15 +262,25 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	FLinearColor FluidColor = FLinearColor(0.2f, 0.5f, 0.8f, 1.0f);
 
 	/**
+	 * F0 Override (base reflectivity at normal incidence).
+	 * 0 = auto-calculate from IOR, >0 = use this value directly.
+	 * 0.02 = water, 0.04 = glass, 0.1 = artistic stylized.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float F0Override = 0.0f;
+
+	/**
 	 * Fresnel strength multiplier (applied after F0 is auto-calculated from IOR).
 	 * 1.0 = physically accurate reflection, 2.0 = exaggerated, 0.5 = weak.
 	 * F0 = ((1-IOR)/(1+IOR))^2 * FresnelStrength.
+	 * Ignored when F0Override > 0.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
 		meta = (ClampMin = "0.0", ClampMax = "5.0"))
 	float FresnelStrength = 1.0f;
 
-	/** Index of Refraction (IOR) */
+	/** Index of Refraction (IOR). Ignored when F0Override > 0. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
 		meta = (ClampMin = "1.0", ClampMax = "2.0"))
 	float RefractiveIndex = 1.33f;
@@ -376,6 +424,14 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
 		meta = (EditCondition = "bEnableSSR", ClampMin = "0.0", ClampMax = "0.5"))
 	float SSREdgeFade = 0.1f;
+
+	/**
+	 * SSR debug visualization mode.
+	 * Helps diagnose SSR issues at runtime.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
+		meta = (EditCondition = "bEnableSSR"))
+	ESSRDebugMode SSRDebugMode = ESSRDebugMode::None;
 
 	/**
 	 * Fallback Cubemap (used on SSR miss).
@@ -717,6 +773,7 @@ FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
 	Hash = HashCombine(Hash, GetTypeHash(static_cast<uint8>(Params.PipelineType)));
 	Hash = HashCombine(Hash, GetTypeHash(static_cast<uint8>(Params.ShadingMode)));
 	Hash = HashCombine(Hash, GetTypeHash(Params.FluidColor.ToString()));
+	Hash = HashCombine(Hash, GetTypeHash(Params.F0Override));
 	Hash = HashCombine(Hash, GetTypeHash(Params.FresnelStrength));
 	Hash = HashCombine(Hash, GetTypeHash(Params.RefractiveIndex));
 	Hash = HashCombine(Hash, GetTypeHash(Params.AbsorptionCoefficient));
@@ -804,6 +861,7 @@ FORCEINLINE bool operator==(const FFluidRenderingParameters& A, const FFluidRend
 		A.PipelineType == B.PipelineType &&
 		A.ShadingMode == B.ShadingMode &&
 		A.FluidColor.Equals(B.FluidColor, 0.001f) &&
+		FMath::IsNearlyEqual(A.F0Override, B.F0Override, 0.001f) &&
 		FMath::IsNearlyEqual(A.FresnelStrength, B.FresnelStrength, 0.001f) &&
 		FMath::IsNearlyEqual(A.RefractiveIndex, B.RefractiveIndex, 0.001f) &&
 		FMath::IsNearlyEqual(A.AbsorptionCoefficient, B.AbsorptionCoefficient, 0.001f) &&

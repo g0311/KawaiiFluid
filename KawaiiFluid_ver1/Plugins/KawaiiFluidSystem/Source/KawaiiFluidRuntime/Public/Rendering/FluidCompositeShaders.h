@@ -39,6 +39,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
     // Fluid Settings
     // ------------------------------------------------------
     SHADER_PARAMETER(FLinearColor, FluidColor)
+    SHADER_PARAMETER(float, F0Override)           // F0 override (0 = use IOR-based, >0 = use this value)
     SHADER_PARAMETER(float, FresnelStrength)
     SHADER_PARAMETER(float, RefractiveIndex)
     SHADER_PARAMETER(float, AbsorptionCoefficient)
@@ -80,6 +81,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
     SHADER_PARAMETER(float, SSRThickness)       // Hit detection thickness
     SHADER_PARAMETER(float, SSRIntensity)       // SSR intensity
     SHADER_PARAMETER(float, SSREdgeFade)        // Screen edge fade
+    SHADER_PARAMETER(int, SSRDebugMode)         // Debug visualization mode (0=none, 1-9=various debug views)
     SHADER_PARAMETER(FVector2f, ViewportSize)   // Viewport size (pixels)
 
     // ------------------------------------------------------

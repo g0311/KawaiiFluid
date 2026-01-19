@@ -1,5 +1,6 @@
 #include "/Engine/Public/Platform.ush"
 #include "/Engine/Private/Common.ush"
+#include "FluidCommon.ush"
 
 // -----------------------------------------------------------------------------
 // Parameters
@@ -17,6 +18,7 @@ float4x4 ProjectionMatrix;
 float4x4 ViewMatrix;
 
 float4 FluidColor;
+float F0Override;
 float FresnelStrength;
 float RefractiveIndex;
 float AbsorptionCoefficient;
@@ -50,6 +52,7 @@ float SSRStepSize;
 float SSRThickness;
 float SSRIntensity;
 float SSREdgeFade;
+int SSRDebugMode;
 float2 ViewportSize;
 
 // -----------------------------------------------------------------------------
@@ -81,37 +84,20 @@ void MainVS(
 
 /**
  * Reconstruct view space position from screen UV and linear depth.
- * UE5 View Space: camera at origin, looking down -Z axis, objects in front have Z < 0
+ * Wrapper for shared function in FluidCommon.ush using global InverseProjectionMatrix.
  */
 float3 ReconstructViewPosition(float2 ScreenUV, float LinearDepth)
 {
-	// UV to Clip Space conversion (apply Y-axis flip)
-	float2 ClipXY = float2(ScreenUV.x * 2.0 - 1.0, 1.0 - ScreenUV.y * 2.0);
-	float4 ClipPosition = float4(ClipXY, 0.5, 1.0);
-
-	// Unproject to view space
-	float4 ViewPosition = mul(ClipPosition, InverseProjectionMatrix);
-	ViewPosition /= ViewPosition.w;
-
-	// Ray direction from camera to pixel (normalized so Z=1)
-	float3 ViewRay = ViewPosition.xyz / abs(ViewPosition.z);
-
-	// Use abs() since LinearDepth might be negative
-	// Result Z is always negative (in front of camera)
-	float Depth = abs(LinearDepth);
-	return float3(ViewRay.x, ViewRay.y, -1.0) * Depth;
+	return ReconstructViewPositionFromDepth(ScreenUV, LinearDepth, InverseProjectionMatrix);
 }
 
 /**
  * Project view space position to screen UV.
- * Note: UE UV convention has Y increasing downward (top=0, bottom=1)
+ * Wrapper for shared function in FluidCommon.ush using global ProjectionMatrix.
  */
 float2 ProjectToScreenUV(float3 ViewPos)
 {
-	float4 ClipPos = mul(float4(ViewPos, 1.0), ProjectionMatrix);
-	ClipPos.xy /= ClipPos.w;
-	// Flip clip space Y for UE UV convention
-	return float2(ClipPos.x * 0.5 + 0.5, -ClipPos.y * 0.5 + 0.5);
+	return ProjectViewPositionToScreenUV(ViewPos, ProjectionMatrix);
 }
 
 // -----------------------------------------------------------------------------
@@ -215,10 +201,19 @@ static float3 g_SSRDebugLastPos = float3(0, 0, 0);
 static float g_SSRDebugLastRayDepth = 0;
 static float g_SSRDebugLastSceneDepth = 0;
 static int g_SSRDebugExitReason = 0;  // 0=max steps, 1=behind camera, 2=off screen
+static float g_SSRDebugXYDistance = 0;  // XY distance between ray and scene
+static float g_SSRDebugDepthPenetration = 0;  // How far ray penetrated past scene
 
 /**
  * Screen Space Reflection Ray March.
- * Performs 3D ray marching in view space to calculate reflections.
+ *
+ * Logic:
+ * 1. Start at fluid surface position (RayOrigin) in view space
+ * 2. March along reflection direction (RayDir)
+ * 3. At each step, project position to screen UV
+ * 4. Sample scene depth at that UV
+ * 5. If ray depth > scene depth (ray passed behind geometry), it's a HIT
+ * 6. Sample and return scene color at hit position
  *
  * @param RayOrigin - Ray start point in view space (fluid surface)
  * @param RayDir - Reflection direction in view space (normalized)
@@ -230,96 +225,144 @@ float TraceSSR(float3 RayOrigin, float3 RayDir, out float2 OutHitUV, out float3 
 {
 	OutHitUV = float2(0, 0);
 	OutHitColor = float3(0, 0, 0);
-	g_SSRDebugExitReason = 0;  // default: max steps reached
+	g_SSRDebugExitReason = 0;
 
-	// Early exit if reflection points toward camera (SSR not possible)
+	// Early exit if reflection points toward camera (can't reflect what's behind camera)
 	if (RayDir.z > 0.05)
 	{
 		g_SSRDebugExitReason = 1;
 		return 0.0;
 	}
 
-	// Calculate step size in view space units
-	// Smaller step size for more precise ray march
-	float ViewStepSize = SSRStepSize * abs(RayOrigin.z) * 0.001;
-	ViewStepSize = clamp(ViewStepSize, 0.5, 20.0);  // Clamp to 0.5~20 units
+	// Step size calculation
+	float StepSize = SSRStepSize * abs(RayOrigin.z) * 0.002;
+	StepSize = clamp(StepSize, 1.0, 50.0);
 
-	// Ray march in 3D view space
+	// Ray march
 	float3 CurrentPos = RayOrigin;
-	float3 StepDir = RayDir * ViewStepSize;
+	float3 PrevPos = RayOrigin;
+	float OriginDepth = -RayOrigin.z;
 
 	for (int i = 1; i <= SSRMaxSteps; i++)
 	{
-		// Advance one step in view space
-		CurrentPos += StepDir;
+		PrevPos = CurrentPos;
+		CurrentPos += RayDir * StepSize;
 
-		// Stop if ray goes behind camera (view space Z is negative for objects in front)
+		// Exit if behind camera
 		if (CurrentPos.z > 0.0)
 		{
 			g_SSRDebugExitReason = 1;
-			g_SSRDebugLastPos = CurrentPos;
-			return 0.0;
+			break;
 		}
 
-		// Project view space position to screen UV
+		// Project to screen UV
 		float4 ClipPos = mul(float4(CurrentPos, 1.0), ProjectionMatrix);
-
-		// Skip if W is zero (near plane)
 		if (abs(ClipPos.w) < 0.001)
 		{
 			continue;
 		}
 
-		// Flip clip space Y for UE UV convention (top=0, bottom=1)
-		float2 NDC = ClipPos.xy / ClipPos.w;
-		float2 CurrentUV = float2(NDC.x * 0.5 + 0.5, -NDC.y * 0.5 + 0.5);
+		float2 CurrentUV = float2(
+			ClipPos.x / ClipPos.w * 0.5 + 0.5,
+			-ClipPos.y / ClipPos.w * 0.5 + 0.5
+		);
 
-		// Stop if ray goes off screen
-		if (CurrentUV.x < 0.0 || CurrentUV.x > 1.0 ||
-		    CurrentUV.y < 0.0 || CurrentUV.y > 1.0)
+		// Exit if off screen
+		if (CurrentUV.x < 0.0 || CurrentUV.x > 1.0 || CurrentUV.y < 0.0 || CurrentUV.y > 1.0)
 		{
 			g_SSRDebugExitReason = 2;
-			g_SSRDebugLastPos = CurrentPos;
-			return 0.0;
+			break;
 		}
 
-		// Ray linear depth (convert view space Z to positive)
+		// Sample scene depth at projected UV
+		float SceneDeviceZ = SceneDepthTexture.SampleLevel(InputSampler, CurrentUV, 0).r;
+		float SceneDepth = ConvertFromDeviceZ(SceneDeviceZ);
 		float RayDepth = -CurrentPos.z;
 
-		// Sample scene depth
-		float SceneDeviceZ = SceneDepthTexture.SampleLevel(InputSampler, CurrentUV, 0).r;
-		float SceneLinearDepth = ConvertFromDeviceZ(SceneDeviceZ);
+		// Reconstruct scene 3D position for debug and hit test
+		float3 SceneViewPos = ReconstructViewPosition(CurrentUV, SceneDepth);
+		float XYDist = length(CurrentPos.xy - SceneViewPos.xy);
 
 		// Store debug info
 		g_SSRDebugLastPos = CurrentPos;
 		g_SSRDebugLastRayDepth = RayDepth;
-		g_SSRDebugLastSceneDepth = SceneLinearDepth;
+		g_SSRDebugLastSceneDepth = SceneDepth;
+		g_SSRDebugDepthPenetration = RayDepth - SceneDepth;
+		g_SSRDebugXYDistance = XYDist;
 
-		// Hit test: check if ray passed behind scene geometry
-		// Ray depth > Scene depth means ray is behind geometry
-		float DepthDiff = RayDepth - SceneLinearDepth;
-
-		// Check if ray passed through geometry
-		bool bBehind = DepthDiff > 0.0;
-		bool bWithinThickness = DepthDiff < SSRThickness * SceneLinearDepth * 0.1;
-
-		if (bBehind && bWithinThickness)
+		// Skip sky (very far depth)
+		if (SceneDepth > 50000.0)
 		{
-			// Hit!
-			OutHitUV = CurrentUV;
-			OutHitColor = SceneColorTexture.SampleLevel(InputSampler, CurrentUV, 0).rgb;
+			// Accelerate through empty space
+			StepSize = min(StepSize * 1.5, 100.0);
+			continue;
+		}
 
-			// Calculate screen edge fade
-			float2 EdgeDist = min(CurrentUV, 1.0 - CurrentUV);
-			float EdgeFade = saturate(min(EdgeDist.x, EdgeDist.y) / max(SSREdgeFade, 0.01));
+		// Slow down near geometry
+		float DepthDiff = SceneDepth - RayDepth;
+		if (DepthDiff > 0 && DepthDiff < RayDepth * 0.5)
+		{
+			StepSize = max(StepSize * 0.5, 1.0);
+		}
 
-			// Distance fade (weaker at longer distances)
-			float DistanceFade = saturate(1.0 - float(i) / float(SSRMaxSteps));
+		// ========================================================================
+		// HIT TEST: Ray passed behind scene geometry?
+		// ========================================================================
+		// SSR works in SCREEN SPACE: if ray projects to same UV and passes
+		// behind scene depth, that's a hit. No 3D XY comparison needed.
+		// ========================================================================
+		if (RayDepth > SceneDepth)
+		{
+			// Check thickness (don't hit if we overshot too far)
+			float Penetration = RayDepth - SceneDepth;
+			float MaxPenetration = SSRThickness * SceneDepth * 0.1;
 
-			// Grazing angle fade (weaker when reflection is parallel to screen)
-			float GrazingFade = saturate(abs(RayDir.z) * 2.0);
+			if (Penetration < MaxPenetration)
+			{
+				// Binary search refinement for accurate hit position
+				float3 Lo = PrevPos;
+				float3 Hi = CurrentPos;
+				float2 HitUV = CurrentUV;
 
-			return EdgeFade * DistanceFade * GrazingFade;
+				for (int j = 0; j < 5; j++)
+				{
+					float3 Mid = (Lo + Hi) * 0.5;
+					float4 MidClip = mul(float4(Mid, 1.0), ProjectionMatrix);
+					float2 MidUV = float2(
+						MidClip.x / MidClip.w * 0.5 + 0.5,
+						-MidClip.y / MidClip.w * 0.5 + 0.5
+					);
+
+					if (MidUV.x >= 0 && MidUV.x <= 1 && MidUV.y >= 0 && MidUV.y <= 1)
+					{
+						float MidSceneZ = ConvertFromDeviceZ(
+							SceneDepthTexture.SampleLevel(InputSampler, MidUV, 0).r
+						);
+						float MidRayZ = -Mid.z;
+
+						if (MidRayZ > MidSceneZ)
+						{
+							Hi = Mid;
+							HitUV = MidUV;
+						}
+						else
+						{
+							Lo = Mid;
+						}
+					}
+				}
+
+				// Output hit
+				OutHitUV = HitUV;
+				OutHitColor = SceneColorTexture.SampleLevel(InputSampler, HitUV, 0).rgb;
+
+				// Fade factors
+				float2 EdgeDist = min(HitUV, 1.0 - HitUV);
+				float EdgeFade = saturate(min(EdgeDist.x, EdgeDist.y) / max(SSREdgeFade, 0.01));
+				float DistFade = saturate(1.0 - float(i) / float(SSRMaxSteps));
+
+				return EdgeFade * DistFade;
+			}
 		}
 	}
 
@@ -351,9 +394,8 @@ void MainPS(
 	float SceneDeviceZ = SceneDepthTexture.SampleLevel(InputSampler, UV, 0).r;
 	float SceneLinearDepth = ConvertFromDeviceZ(SceneDeviceZ);
 
-	// 3. Occlusion test
-	// Add bias to account for precision differences between FluidDepth and SceneLinearDepth
-	if (FluidDepth > SceneLinearDepth + 2.0f)
+	// 3. Occlusion test - discard fluid pixels behind scene geometry
+	if (FluidDepth > SceneLinearDepth)
 	{
 		discard;
 		return;
@@ -364,52 +406,66 @@ void MainPS(
 	float Thickness = FluidThicknessTexture.Sample(InputSampler, UV).r;
 
 	// Normal validation with proper NaN/Inf check
-	// Note: length(NaN) returns NaN, and NaN < 0.1f is always false
-	// So we must explicitly check for NaN/Inf before length comparison
 	bool bInvalidNormal = any(isnan(Normal)) || any(isinf(Normal)) || length(Normal) < 0.1f;
 	if (bInvalidNormal)
 	{
-		// Default to view-facing normal
 		Normal = float3(0, 0, 1);
 	}
 	else
 	{
-		// FluidNormal.usf stores Normal with Z < 0 (toward camera)
-		// But our ViewDir has Z > 0 (toward camera)
-		// Negate Normal to match coordinate system
-		Normal = -Normal;
+		Normal = normalize(Normal);
 	}
 
 	// 5. Prepare lighting calculations
 	float3 ViewPos = ReconstructViewPosition(UV, FluidDepth);
-	float3 ViewDir = normalize(-ViewPos);  // Direction toward camera
+	float3 ViewDir = normalize(-ViewPos);  // Direction toward camera (positive Z)
 
-	// Grazing angle compensation:
-	// SSFR smoothing leaves residual depth bumps that become exaggerated at grazing angles.
-	// Blend normal toward view direction at extreme grazing angles to reduce artifacts.
+	// Ensure normal faces camera for lighting (dot > 0)
+	// This is needed because FluidNormal.usf may output normals facing either direction
+	if (dot(Normal, ViewDir) < 0.0)
+	{
+		Normal = -Normal;
+	}
+
+	// Grazing angle compensation for lighting stability
 	float RawNoV = saturate(dot(Normal, ViewDir));
-	float GrazingFade = smoothstep(0.0, 0.15, RawNoV);  // 0 at grazing, 1 at normal angles
-	Normal = normalize(lerp(ViewDir, Normal, GrazingFade));
+	float GrazingFade = smoothstep(0.0, 0.15, RawNoV);
+	float3 LightingNormal = normalize(lerp(ViewDir, Normal, GrazingFade));
+
+	// For SSR: Use the corrected normal directly
+	// FluidNormal.usf now uses the same coordinate convention as this shader
+	// (Y-axis flipped: UV.y=0 maps to ClipY=1)
+	float3 ReflectionNormal = Normal;
 
 	// A. PBR Setup
 	// ========================================================================
-	// IOR to F0: F0 = ((1 - n) / (1 + n))^2
+	// F0 (base reflectivity at normal incidence):
+	// - F0Override > 0: Use artist-defined value directly
+	// - F0Override = 0: Auto-calculate from IOR: F0 = ((1-n)/(1+n))^2 * FresnelStrength
 	// Water (IOR=1.33): F0 ~ 0.02, Glass (IOR=1.5): F0 ~ 0.04
-	// FresnelStrength is additional multiplier (1.0 = physically accurate)
 	// Fluids are dielectric (non-metallic), so F0 is uniform across RGB
 	// ========================================================================
-	float NoV = saturate(dot(Normal, ViewDir));
-	float IOR_F0 = pow((1.0 - RefractiveIndex) / (1.0 + RefractiveIndex), 2.0);
-	float3 F0 = float3(IOR_F0, IOR_F0, IOR_F0) * FresnelStrength;
+	float NoV = saturate(dot(LightingNormal, ViewDir));
+	float FinalF0;
+	if (F0Override > 0.0)
+	{
+		FinalF0 = F0Override;
+	}
+	else
+	{
+		float IOR_Ratio = (1.0 - RefractiveIndex) / (1.0 + RefractiveIndex);
+		FinalF0 = IOR_Ratio * IOR_Ratio * FresnelStrength;
+	}
+	float3 F0 = float3(FinalF0, FinalF0, FinalF0);
 
 	// B. PBR Lighting (Cook-Torrance BRDF) - using scene's actual directional light
 	float3 LightDir = normalize(-View.DirectionalLightDirection);
 	float3 LightColor = View.DirectionalLightColor.rgb;
 
-	// Common dot products
-	float NoL = saturate(dot(Normal, LightDir));
+	// Common dot products (use LightingNormal for stable shading)
+	float NoL = saturate(dot(LightingNormal, LightDir));
 	float3 HalfDir = normalize(LightDir + ViewDir);
-	float NoH = saturate(dot(Normal, HalfDir));
+	float NoH = saturate(dot(LightingNormal, HalfDir));
 	float HoV = saturate(dot(HalfDir, ViewDir));
 
 	// Roughness (clamp to avoid divide by zero in GGX)
@@ -434,6 +490,7 @@ void MainPS(
 	float3 TotalLighting = DiffuseLighting + AmbientColor;
 
 	// Fresnel for reflection (use NoV-based Fresnel for environment reflections)
+	// Standard Schlick Fresnel with F0 already scaled by FresnelStrength
 	float Fresnel = F0.r + (1.0 - F0.r) * pow(1.0 - NoV, 5.0);
 
 	// C. Subsurface Scattering (SSS) - Jelly Effect
@@ -517,7 +574,7 @@ void MainPS(
 	// Reflection priority: SSR Hit -> Cubemap -> Environment Color
 	// If SSR misses, fallback to Cubemap; if no Cubemap, use constant color
 	// ========================================================================
-	float3 ViewSpaceReflect = reflect(-ViewDir, Normal);
+	float3 ViewSpaceReflect = reflect(-ViewDir, ReflectionNormal);
 	float3 ReflectedColor = float3(0, 0, 0);
 	float SSRHitStrength = 0.0;
 
@@ -528,124 +585,211 @@ void MainPS(
 		float3 SSRHitColor;
 		SSRHitStrength = TraceSSR(ViewPos, ViewSpaceReflect, SSRHitUV, SSRHitColor);
 
-		// DEBUG: SSR debug visualization
+		// DEBUG: SSR debug visualization (runtime switchable via SSRDebugMode)
 		// 0 = disabled, 1 = hit/miss, 2 = reflection direction, 3 = hit sample color
 		// 4 = reflection Z direction (green=into scene, red=toward camera)
 		// 5 = ray depth vs scene depth comparison
 		// 6 = exit reason (red=behind camera, green=off screen, blue=max steps)
 		// 7 = Normal visualization, 8 = ViewDir visualization, 9 = ViewPos.z visualization
-		#define SSR_DEBUG_MODE 0
+		if (SSRDebugMode == 1)
+		{
+			// SSR hit/miss: red = hit (intensity varies), blue = miss
+			if (SSRHitStrength > 0.0)
+			{
+				OutColor = float4(SSRHitStrength, 0, 0, 1);  // Red intensity = hit strength
+			}
+			else
+			{
+				OutColor = float4(0, 0, 1, 1);  // Blue: Miss
+			}
+			return;
+		}
+		else if (SSRDebugMode == 2)
+		{
+			// Reflection vector direction as color (RGB = XYZ, 0.5 = 0)
+			OutColor = float4(ViewSpaceReflect * 0.5 + 0.5, 1.0);
+			return;
+		}
+		else if (SSRDebugMode == 3)
+		{
+			// Direct display of hit color (magenta if miss)
+			if (SSRHitStrength > 0.0)
+			{
+				OutColor = float4(SSRHitColor, 1.0);
+			}
+			else
+			{
+				OutColor = float4(1, 0, 1, 1);  // Magenta: Miss
+			}
+			return;
+		}
+		else if (SSRDebugMode == 4)
+		{
+			// Reflection direction Z component visualization
+			// Green = into scene (Z < 0, SSR possible)
+			// Red = toward camera (Z > 0, SSR not possible)
+			float ReflectZ = ViewSpaceReflect.z;
+			if (ReflectZ < 0.0)
+			{
+				// Into scene - SSR possible (green, intensity shows depth)
+				OutColor = float4(0, saturate(-ReflectZ), 0, 1);
+			}
+			else
+			{
+				// Toward camera - SSR not possible (red)
+				OutColor = float4(saturate(ReflectZ), 0, 0, 1);
+			}
+			return;
+		}
+		else if (SSRDebugMode == 5)
+		{
+			// 3D hit test visualization (new corrected logic)
+			// R = XY distance (how far ray XY is from scene XY)
+			// G = Depth penetration (positive = penetrated)
+			// B = hit (yellow if hit)
+			if (SSRHitStrength > 0.0)
+			{
+				// Hit case - yellow
+				OutColor = float4(1, 1, 0, 1);
+			}
+			else
+			{
+				float r = saturate(g_SSRDebugXYDistance / 100.0);  // XY distance
+				float g = saturate(g_SSRDebugDepthPenetration / 50.0);  // Penetration (positive = past)
+				float b = (g_SSRDebugDepthPenetration < 0.0) ? saturate(-g_SSRDebugDepthPenetration / 50.0) : 0.0;  // Not yet penetrated
+				OutColor = float4(r, g, b, 1);
+			}
+			return;
+		}
+		else if (SSRDebugMode == 6)
+		{
+			// Exit reason visualization
+			if (SSRHitStrength > 0.0)
+			{
+				OutColor = float4(1, 1, 0, 1);  // Yellow: Hit
+			}
+			else if (g_SSRDebugExitReason == 1)
+			{
+				OutColor = float4(1, 0, 0, 1);  // Red: went behind camera
+			}
+			else if (g_SSRDebugExitReason == 2)
+			{
+				OutColor = float4(0, 1, 0, 1);  // Green: went off screen
+			}
+			else
+			{
+				OutColor = float4(0, 0, 1, 1);  // Blue: max steps reached
+			}
+			return;
+		}
+		else if (SSRDebugMode == 7)
+		{
+			// Normal visualization (RGB = XYZ, 0.5 = 0)
+			OutColor = float4(Normal * 0.5 + 0.5, 1.0);
+			return;
+		}
+		else if (SSRDebugMode == 8)
+		{
+			// ViewDir visualization (RGB = XYZ, 0.5 = 0)
+			OutColor = float4(ViewDir * 0.5 + 0.5, 1.0);
+			return;
+		}
+		else if (SSRDebugMode == 9)
+		{
+			// ViewPos.z visualization (blue = in front of camera, red = behind camera)
+			if (ViewPos.z < 0.0)
+			{
+				OutColor = float4(0, 0, saturate(-ViewPos.z / 1000.0), 1);  // Blue: in front
+			}
+			else
+			{
+				OutColor = float4(saturate(ViewPos.z / 1000.0), 0, 0, 1);  // Red: behind (incorrect)
+			}
+			return;
+		}
+		else if (SSRDebugMode == 10)
+		{
+			// Fresnel value visualization (white = high fresnel, black = low)
+			OutColor = float4(Fresnel, Fresnel, Fresnel, 1.0);
+			return;
+		}
+		else if (SSRDebugMode == 11)
+		{
+			// Parameter debug: R = FresnelStrength/10, G = FresnelReflectionBlend, B = Fresnel
+			OutColor = float4(FresnelStrength / 10.0, FresnelReflectionBlend, Fresnel, 1.0);
+			return;
+		}
+		else if (SSRDebugMode == 12)
+		{
+			// Final reflection blend factor: Fresnel * FresnelReflectionBlend
+			float BlendFactor = Fresnel * FresnelReflectionBlend;
+			OutColor = float4(BlendFactor, BlendFactor, BlendFactor, 1.0);
+			return;
+		}
+		else if (SSRDebugMode == 13)
+		{
+			// SSR hit analysis (depth-only)
+			// Yellow = HIT
+			// Blue = ray in front of scene (not penetrated yet)
+			// Red = penetrated but overshot (too far past geometry)
+			// Green = sky/background (ray ended in empty space)
+			if (SSRHitStrength > 0.0)
+			{
+				OutColor = float4(1, 1, 0, 1);  // Yellow: HIT!
+			}
+			else
+			{
+				bool bIsSky = g_SSRDebugLastSceneDepth > 50000.0;
+				float Penetration = g_SSRDebugDepthPenetration;
+				float MaxPenetration = SSRThickness * g_SSRDebugLastSceneDepth * 0.1;
 
-		#if SSR_DEBUG_MODE == 1
-		// SSR hit/miss: red = hit (intensity varies), blue = miss
-		if (SSRHitStrength > 0.0)
-		{
-			OutColor = float4(SSRHitStrength, 0, 0, 1);  // Red intensity = hit strength
+				if (bIsSky)
+				{
+					OutColor = float4(0, 0.5, 0, 1);  // Dark Green: sky
+				}
+				else if (Penetration <= 0.0)
+				{
+					OutColor = float4(0, 0, 1, 1);  // Blue: not penetrated
+				}
+				else if (Penetration > MaxPenetration)
+				{
+					OutColor = float4(1, 0, 0, 1);  // Red: overshot
+				}
+				else
+				{
+					OutColor = float4(1, 0, 1, 1);  // Magenta: bug
+				}
+			}
+			return;
 		}
-		else
+		else if (SSRDebugMode == 14)
 		{
-			OutColor = float4(0, 0, 1, 1);  // Blue: Miss
+			// SSR hit UV visualization
+			// R = hit UV.x, G = hit UV.y, B = hit strength
+			// This shows WHERE the SSR is sampling from
+			if (SSRHitStrength > 0.0)
+			{
+				OutColor = float4(SSRHitUV.x, SSRHitUV.y, SSRHitStrength, 1.0);
+			}
+			else
+			{
+				// No hit - show dark blue
+				OutColor = float4(0, 0, 0.2, 1);
+			}
+			return;
 		}
-		return;
-		#elif SSR_DEBUG_MODE == 2
-		// Reflection vector direction as color (RGB = XYZ, 0.5 = 0)
-		OutColor = float4(ViewSpaceReflect * 0.5 + 0.5, 1.0);
-		return;
-		#elif SSR_DEBUG_MODE == 3
-		// Direct display of hit color (magenta if miss)
-		if (SSRHitStrength > 0.0)
-		{
-			OutColor = float4(SSRHitColor, 1.0);
-		}
-		else
-		{
-			OutColor = float4(1, 0, 1, 1);  // Magenta: Miss
-		}
-		return;
-		#elif SSR_DEBUG_MODE == 4
-		// Reflection direction Z component visualization
-		// Green = into scene (Z < 0, SSR possible)
-		// Red = toward camera (Z > 0, SSR not possible)
-		float ReflectZ = ViewSpaceReflect.z;
-		if (ReflectZ < 0.0)
-		{
-			// Into scene - SSR possible (green, intensity shows depth)
-			OutColor = float4(0, saturate(-ReflectZ), 0, 1);
-		}
-		else
-		{
-			// Toward camera - SSR not possible (red)
-			OutColor = float4(saturate(ReflectZ), 0, 0, 1);
-		}
-		return;
-		#elif SSR_DEBUG_MODE == 5
-		// Ray depth vs Scene depth comparison
-		// R = ray is in front of scene (not hit yet)
-		// G = ray is behind scene (passed through)
-		// B = scene depth / 1000 (how far the scene is)
-		if (SSRHitStrength > 0.0)
-		{
-			// Hit case - yellow
-			OutColor = float4(1, 1, 0, 1);
-		}
-		else
-		{
-			float depthDiff = g_SSRDebugLastRayDepth - g_SSRDebugLastSceneDepth;
-			float r = (depthDiff < 0.0) ? saturate(-depthDiff / 100.0) : 0.0;  // Ray in front
-			float g = (depthDiff > 0.0) ? saturate(depthDiff / 100.0) : 0.0;   // Ray behind
-			float b = saturate(g_SSRDebugLastSceneDepth / 5000.0);  // Scene depth
-			OutColor = float4(r, g, b, 1);
-		}
-		return;
-		#elif SSR_DEBUG_MODE == 6
-		// Exit reason visualization
-		if (SSRHitStrength > 0.0)
-		{
-			OutColor = float4(1, 1, 0, 1);  // Yellow: Hit
-		}
-		else if (g_SSRDebugExitReason == 1)
-		{
-			OutColor = float4(1, 0, 0, 1);  // Red: went behind camera
-		}
-		else if (g_SSRDebugExitReason == 2)
-		{
-			OutColor = float4(0, 1, 0, 1);  // Green: went off screen
-		}
-		else
-		{
-			OutColor = float4(0, 0, 1, 1);  // Blue: max steps reached
-		}
-		return;
-		#elif SSR_DEBUG_MODE == 7
-		// Normal visualization (RGB = XYZ, 0.5 = 0)
-		OutColor = float4(Normal * 0.5 + 0.5, 1.0);
-		return;
-		#elif SSR_DEBUG_MODE == 8
-		// ViewDir visualization (RGB = XYZ, 0.5 = 0)
-		OutColor = float4(ViewDir * 0.5 + 0.5, 1.0);
-		return;
-		#elif SSR_DEBUG_MODE == 9
-		// ViewPos.z visualization (blue = in front of camera, red = behind camera)
-		if (ViewPos.z < 0.0)
-		{
-			OutColor = float4(0, 0, saturate(-ViewPos.z / 1000.0), 1);  // Blue: in front
-		}
-		else
-		{
-			OutColor = float4(saturate(ViewPos.z / 1000.0), 0, 0, 1);  // Red: behind (incorrect)
-		}
-		return;
-		#endif
 
 		if (SSRHitStrength > 0.0)
 		{
-			ReflectedColor = SSRHitColor * SSRIntensity * SSRHitStrength;
+			// SSRIntensity = artist strength control
+			// SSRHitStrength used only for blend factor below (not multiplied twice)
+			ReflectedColor = SSRHitColor * SSRIntensity;
 		}
 	}
 
 	// Cubemap Fallback (SSR miss or partial hit)
-	float CubemapBlend = 1.0 - SSRHitStrength * SSRIntensity;
-	if (CubemapBlend > 0.01)
+	// SSRHitStrength determines blend: 0 = full cubemap, 1 = full SSR
+	if (SSRHitStrength < 0.99)
 	{
 		float3 CubemapColor;
 		if (bUseReflectionCubemap > 0)
@@ -662,27 +806,30 @@ void MainPS(
 		}
 		else
 		{
-			// Fallback: constant environment light color
-			CubemapColor = EnvironmentLightColor.rgb;
+			// Fallback: use a dimmed environment light color for reflection
+			// Scale down to avoid overly bright reflections when no cubemap
+			CubemapColor = EnvironmentLightColor.rgb * 0.3;
 		}
 
-		// Blend SSR with Cubemap
-		ReflectedColor = lerp(CubemapColor, ReflectedColor, SSRHitStrength * SSRIntensity);
+		// Blend SSR with Cubemap based on hit strength
+		ReflectedColor = lerp(CubemapColor, ReflectedColor, SSRHitStrength);
 	}
 
-	// Apply Fresnel
-	ReflectedColor *= Fresnel;
-
 	// 6. Blend reflection with transmission
+	// Fresnel determines how much reflection vs transmission (physically-based)
+	// FresnelReflectionBlend is artist control multiplier
 	BaseColor = lerp(BaseColor, ReflectedColor, Fresnel * FresnelReflectionBlend);
 
 	// 7. Add Specular + SSS
 	FinalColor = BaseColor + Specular + SSSContribution;
 
 	// 8. Alpha calculation
-	// Opaque when thick, opaque when reflection is strong
+	// Opaque when thick, slightly more opaque when reflection is strong (at grazing angles)
 	float Alpha = saturate(1.0 - exp(-Thickness * AlphaThicknessScale));
-	Alpha = max(Alpha, Fresnel * FresnelReflectionBlend);
+	// Only boost alpha at grazing angles (high Fresnel), not everywhere
+	// Use a softer contribution from Fresnel to avoid making thin fluid opaque
+	float FresnelAlphaBoost = Fresnel * FresnelReflectionBlend * 0.3;  // Reduced from 1.0 to 0.3
+	Alpha = max(Alpha, FresnelAlphaBoost);
 
 	// C++ BlendState uses (SrcAlpha, InvSrcAlpha)
 	// Output RGB without premultiplied alpha
