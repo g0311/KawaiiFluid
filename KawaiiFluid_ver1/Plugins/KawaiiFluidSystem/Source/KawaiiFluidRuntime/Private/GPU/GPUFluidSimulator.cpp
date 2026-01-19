@@ -244,6 +244,15 @@ void FGPUFluidSimulator::ReleaseRHI()
 	PersistentCellStartBuffer.SafeRelease();
 	PersistentCellEndBuffer.SafeRelease();
 
+	// Release neighbor cache buffers
+	NeighborListBuffer.SafeRelease();
+	NeighborCountsBuffer.SafeRelease();
+	NeighborBufferParticleCapacity = 0;
+
+	// Release particle sleeping buffers
+	SleepCountersBuffer.SafeRelease();
+	SleepCountersCapacity = 0;
+
 	// Collision cleanup is handled by CollisionManager::Release()
 }
 
