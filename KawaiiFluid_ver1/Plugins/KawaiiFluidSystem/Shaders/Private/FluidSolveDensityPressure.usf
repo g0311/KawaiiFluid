@@ -143,27 +143,20 @@ uint GetMortonCellIDFromCellCoord(int3 cellCoord)
 				float3 r = r_cm * CM_TO_M; \
 				float3 gradW = SpikyGradientFast(r, r2, h, h2); \
 				gradW *= SpikyCoeff * CM_TO_M; \
-				float3 gradC_j = -gradW / RestDensity; \
+				float3 gradC_j = -gradW * invRestDensity; \
 				sumGradC2 += dot(gradC_j, gradC_j); \
-				gradC_i += gradW / RestDensity; \
+				gradC_i += gradW * invRestDensity; \
 				if (neighborIdx != idx && r2 >= SMALL_NUMBER) \
 				{ \
 					float lambda_j_prev = neighbor.Lambda; \
-					float scorr = 0.0f; \
-					if (bEnableTensileInstability) \
-					{ \
-						float diff = h2 - r2; \
-						float W_r = diff * diff * diff; \
-						float deltaQ2 = 0.04f * h2; \
-						float diffQ = h2 - deltaQ2; \
-						float W_deltaQ = diffQ * diffQ * diffQ; \
-						float ratio = (W_deltaQ > 0.0f) ? saturate(W_r / W_deltaQ) : 0.0f; \
-						float ratio2 = ratio * ratio; \
-						float ratioN = ratio2 * ratio2; \
-						if (TensileN == 2) ratioN = ratio2; \
-						else if (TensileN == 6) ratioN = ratio2 * ratio2 * ratio2; \
-						scorr = -TensileK * ratioN; \
-					} \
+					float diff = h2 - r2; \
+					float W_r = diff * diff * diff; \
+					float ratio = saturate(W_r * InvW_DeltaQ); \
+					float ratio2 = ratio * ratio; \
+					float ratioN = ratio2; \
+					if (TensileN >= 4) ratioN *= ratio2; \
+					if (TensileN >= 6) ratioN *= ratio2; \
+					float scorr = -tensileK_scaled * ratioN; \
 					deltaP += (lambda_i_prev + lambda_j_prev + scorr) * gradW; \
 					constraintCount++; \
 				} \
@@ -207,27 +200,20 @@ uint GetMortonCellIDFromCellCoord(int3 cellCoord)
 			float3 r = r_cm * CM_TO_M; \
 			float3 gradW = SpikyGradientFast(r, r2, h, h2); \
 			gradW *= SpikyCoeff * CM_TO_M; \
-			float3 gradC_j = -gradW / RestDensity; \
+			float3 gradC_j = -gradW * invRestDensity; \
 			sumGradC2 += dot(gradC_j, gradC_j); \
-			gradC_i += gradW / RestDensity; \
+			gradC_i += gradW * invRestDensity; \
 			if (neighborIdx != idx && r2 >= SMALL_NUMBER) \
 			{ \
 				float lambda_j_prev = neighbor.Lambda; \
-				float scorr = 0.0f; \
-				if (bEnableTensileInstability) \
-				{ \
-					float diff = h2 - r2; \
-					float W_r = diff * diff * diff; \
-					float deltaQ2 = 0.04f * h2; \
-					float diffQ = h2 - deltaQ2; \
-					float W_deltaQ = diffQ * diffQ * diffQ; \
-					float ratio = (W_deltaQ > 0.0f) ? saturate(W_r / W_deltaQ) : 0.0f; \
-					float ratio2 = ratio * ratio; \
-					float ratioN = ratio2 * ratio2; \
-					if (TensileN == 2) ratioN = ratio2; \
-					else if (TensileN == 6) ratioN = ratio2 * ratio2 * ratio2; \
-					scorr = -TensileK * ratioN; \
-				} \
+				float diff = h2 - r2; \
+				float W_r = diff * diff * diff; \
+				float ratio = saturate(W_r * InvW_DeltaQ); \
+				float ratio2 = ratio * ratio; \
+				float ratioN = ratio2; \
+				if (TensileN >= 4) ratioN *= ratio2; \
+				if (TensileN >= 6) ratioN *= ratio2; \
+				float scorr = -tensileK_scaled * ratioN; \
 				deltaP += (lambda_i_prev + lambda_j_prev + scorr) * gradW; \
 				constraintCount++; \
 			} \
@@ -287,6 +273,15 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	float3 deltaP = float3(0.0f, 0.0f, 0.0f);
 	uint neighborCount = 0;
 	uint constraintCount = 0;  // Averaged Position Update: count constraints for averaging
+
+	// Pre-compute inverse RestDensity to convert divisions to multiplications
+	// Division is expensive on GPU (~20-30 cycles), multiplication is cheap (~4 cycles)
+	float invRestDensity = 1.0f / RestDensity;
+
+	// Tensile instability pre-computation (branchless optimization)
+	// When bEnableTensileInstability = 0, tensileK_scaled = 0, making scorr = 0
+	// This eliminates the branch inside neighbor loops
+	float tensileK_scaled = TensileK * (float)bEnableTensileInstability;
 
 	//=========================================================================
 	// Branch based on iteration index for neighbor caching
@@ -354,28 +349,23 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 								float3 gradW = SpikyGradientFast(r, r2, h, h2);
 								gradW *= SpikyCoeff * CM_TO_M;
 
-								float3 gradC_j = -gradW / RestDensity;
+								float3 gradC_j = -gradW * invRestDensity;
 								sumGradC2 += dot(gradC_j, gradC_j);
-								gradC_i += gradW / RestDensity;
+								gradC_i += gradW * invRestDensity;
 
 								if (neighborIdx != idx && r2 >= SMALL_NUMBER)
 								{
 									float lambda_j_prev = neighbor.Lambda;
-									float scorr = 0.0f;
-									if (bEnableTensileInstability)
-									{
-										float diff = h2 - r2;
-										float W_r = diff * diff * diff;
-										float deltaQ2 = 0.04f * h2;
-										float diffQ = h2 - deltaQ2;
-										float W_deltaQ = diffQ * diffQ * diffQ;
-										float ratio = (W_deltaQ > 0.0f) ? saturate(W_r / W_deltaQ) : 0.0f;
-										float ratio2 = ratio * ratio;
-										float ratioN = ratio2 * ratio2;
-										if (TensileN == 2) ratioN = ratio2;
-										else if (TensileN == 6) ratioN = ratio2 * ratio2 * ratio2;
-										scorr = -TensileK * ratioN;
-									}
+									// Branchless tensile instability using pre-computed tensileK_scaled
+									// When disabled, tensileK_scaled = 0, so scorr = 0
+									float diff = h2 - r2;
+									float W_r = diff * diff * diff;
+									float ratio = saturate(W_r * InvW_DeltaQ);
+									float ratio2 = ratio * ratio;
+									float ratioN = ratio2;
+									if (TensileN >= 4) ratioN *= ratio2;
+									if (TensileN >= 6) ratioN *= ratio2;
+									float scorr = -tensileK_scaled * ratioN;
 									deltaP += (lambda_i_prev + lambda_j_prev + scorr) * gradW;
 									constraintCount++;
 								}
@@ -439,34 +429,22 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 								float3 gradW = SpikyGradientFast(r, r2, h, h2);
 								gradW *= SpikyCoeff * CM_TO_M;
 
-								float3 gradC_j = -gradW / RestDensity;
+								float3 gradC_j = -gradW * invRestDensity;
 								sumGradC2 += dot(gradC_j, gradC_j);
-								gradC_i += gradW / RestDensity;
+								gradC_i += gradW * invRestDensity;
 
 								if (neighborIdx != idx && r2 >= SMALL_NUMBER)
 								{
 									float lambda_j_prev = neighbor.Lambda;
-									float scorr = 0.0f;
-									if (bEnableTensileInstability)
-									{
-										float diff = h2 - r2;
-										float W_r = diff * diff * diff;
-										float deltaQ2 = 0.04f * h2;
-										float diffQ = h2 - deltaQ2;
-										float W_deltaQ = diffQ * diffQ * diffQ;
-										float ratio = (W_deltaQ > 0.0f) ? saturate(W_r / W_deltaQ) : 0.0f;
-										float ratio2 = ratio * ratio;
-										float ratioN = ratio2 * ratio2;
-										if (TensileN == 2)
-										{
-											ratioN = ratio2;
-										}
-										else if (TensileN == 6)
-										{
-											ratioN = ratio2 * ratio2 * ratio2;
-										}
-										scorr = -TensileK * ratioN;
-									}
+									// Branchless tensile instability using pre-computed tensileK_scaled
+									float diff = h2 - r2;
+									float W_r = diff * diff * diff;
+									float ratio = saturate(W_r * InvW_DeltaQ);
+									float ratio2 = ratio * ratio;
+									float ratioN = ratio2;
+									if (TensileN >= 4) ratioN *= ratio2;
+									if (TensileN >= 6) ratioN *= ratio2;
+									float scorr = -tensileK_scaled * ratioN;
 									deltaP += (lambda_i_prev + lambda_j_prev + scorr) * gradW;
 									constraintCount++;
 								}
@@ -520,36 +498,22 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 				float3 gradW = SpikyGradientFast(r, r2, h, h2);
 				gradW *= SpikyCoeff * CM_TO_M;
 
-				float3 gradC_j = -gradW / RestDensity;
+				float3 gradC_j = -gradW * invRestDensity;
 				sumGradC2 += dot(gradC_j, gradC_j);
-				gradC_i += gradW / RestDensity;
+				gradC_i += gradW * invRestDensity;
 
 				if (neighborIdx != idx && r2 >= SMALL_NUMBER)
 				{
 					float lambda_j_prev = neighbor.Lambda;
-
-					float scorr = 0.0f;
-					if (bEnableTensileInstability)
-					{
-						float diff = h2 - r2;
-						float W_r = diff * diff * diff;
-						float deltaQ2 = 0.04f * h2;
-						float diffQ = h2 - deltaQ2;
-						float W_deltaQ = diffQ * diffQ * diffQ;
-						float ratio = (W_deltaQ > 0.0f) ? saturate(W_r / W_deltaQ) : 0.0f;
-						float ratio2 = ratio * ratio;
-						float ratioN = ratio2 * ratio2;
-						if (TensileN == 2)
-						{
-							ratioN = ratio2;
-						}
-						else if (TensileN == 6)
-						{
-							ratioN = ratio2 * ratio2 * ratio2;
-						}
-						scorr = -TensileK * ratioN;
-					}
-
+					// Branchless tensile instability using pre-computed tensileK_scaled
+					float diff = h2 - r2;
+					float W_r = diff * diff * diff;
+					float ratio = saturate(W_r * InvW_DeltaQ);
+					float ratio2 = ratio * ratio;
+					float ratioN = ratio2;
+					if (TensileN >= 4) ratioN *= ratio2;
+					if (TensileN >= 6) ratioN *= ratio2;
+					float scorr = -tensileK_scaled * ratioN;
 					deltaP += (lambda_i_prev + lambda_j_prev + scorr) * gradW;
 					constraintCount++;
 				}
@@ -710,7 +674,7 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	//=========================================
 	// Calculate NEW Lambda (XPBD formulation)
 	//=========================================
-	float C = (density / RestDensity) - 1.0f;
+	float C = (density * invRestDensity) - 1.0f;
 	float alphaTilde = Compliance / max(DeltaTimeSq, 0.00001f);
 
 	if (C > 0.0f)
@@ -725,7 +689,7 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	// PBF formula: Δp = (1/ρ₀) × Σⱼ (λᵢ + λⱼ + s_corr) × ∇W
 	// This is a SUM over neighbors, not an average
 	//=========================================
-	float3 deltaP_cm = deltaP / RestDensity;
+	float3 deltaP_cm = deltaP * invRestDensity;
 	particle.PredictedPosition += deltaP_cm;
 
 	Particles[idx] = particle;
