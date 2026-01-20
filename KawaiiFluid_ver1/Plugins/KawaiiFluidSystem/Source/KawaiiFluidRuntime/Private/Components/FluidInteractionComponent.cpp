@@ -1113,7 +1113,13 @@ FVector UFluidInteractionComponent::GetFluidImpactDirectionForBone(FName BoneNam
 
 	if (TotalFeedbackCount > 0 && !TotalVelocity.IsNearlyZero())
 	{
-		return TotalVelocity.GetSafeNormal();
+		FVector WorldDirection = TotalVelocity.GetSafeNormal();
+
+		// 캐릭터 로컬 공간으로 변환 (캐릭터 기준 앞/뒤/좌/우 판단 가능)
+		FTransform ActorTransform = Owner->GetActorTransform();
+		FVector LocalDirection = ActorTransform.InverseTransformVectorNoScale(WorldDirection);
+
+		return LocalDirection;
 	}
 
 	return FVector::ZeroVector;
