@@ -19,8 +19,8 @@ class UKawaiiFluidPresetDataAsset;
 class UFluidCollider;
 class UFluidInteractionComponent;
 class UKawaiiFluidSimulationContext;
-class UKawaiiFluidSimulationVolumeComponent;
-class AKawaiiFluidSimulationVolume;
+class UKawaiiFluidVolumeComponent;
+class AKawaiiFluidVolume;
 
 /**
  * 유체 시뮬레이션 데이터 모듈 (UObject 기반)
@@ -126,7 +126,7 @@ public:
 	 * When nullptr, the module uses its own internal volume settings configured below.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Simulation Volume", meta = (DisplayName = "Target Volume (External)"))
-	TObjectPtr<AKawaiiFluidSimulationVolume> TargetSimulationVolume = nullptr;
+	TObjectPtr<AKawaiiFluidVolume> TargetSimulationVolume = nullptr;
 
 	/**
 	 * Use uniform (cube) size for simulation volume
@@ -229,11 +229,11 @@ public:
 
 	/** Get the target simulation volume actor (can be nullptr) */
 	UFUNCTION(BlueprintPure, Category = "Fluid|Simulation Volume")
-	AKawaiiFluidSimulationVolume* GetTargetSimulationVolume() const { return TargetSimulationVolume; }
+	AKawaiiFluidVolume* GetTargetSimulationVolume() const { return TargetSimulationVolume; }
 
 	/** Set the target simulation volume at runtime */
 	UFUNCTION(BlueprintCallable, Category = "Fluid|Simulation Volume")
-	void SetTargetSimulationVolume(AKawaiiFluidSimulationVolume* NewSimulationVolume);
+	void SetTargetSimulationVolume(AKawaiiFluidVolume* NewSimulationVolume);
 
 	/** Get the effective volume size (full size, cm)
 	 * Returns UniformVolumeSize as FVector if bUniformSize is true, otherwise VolumeSize
@@ -858,13 +858,13 @@ public:
 	 * otherwise returns internal OwnedVolumeComponent
 	 */
 	UFUNCTION(BlueprintPure, Category = "Fluid|Simulation Volume")
-	UKawaiiFluidSimulationVolumeComponent* GetTargetVolumeComponent() const;
+	UKawaiiFluidVolumeComponent* GetTargetVolumeComponent() const;
 
 	/**
 	 * Get the internally owned volume component (always valid after initialization)
 	 * This is used when no external TargetSimulationVolume is set
 	 */
-	UKawaiiFluidSimulationVolumeComponent* GetOwnedVolumeComponent() const { return OwnedVolumeComponent; }
+	UKawaiiFluidVolumeComponent* GetOwnedVolumeComponent() const { return OwnedVolumeComponent; }
 
 	/**
 	 * Check if using external volume (TargetSimulationVolume is set)
@@ -897,13 +897,13 @@ private:
 	 * Created automatically during Initialize(), used when TargetSimulationVolume is nullptr
 	 */
 	UPROPERTY(Transient)
-	TObjectPtr<UKawaiiFluidSimulationVolumeComponent> OwnedVolumeComponent = nullptr;
+	TObjectPtr<UKawaiiFluidVolumeComponent> OwnedVolumeComponent = nullptr;
 
 	/**
 	 * Previously registered volume component (for editor unregistration tracking)
 	 * Used to properly unregister when TargetSimulationVolume changes in editor
 	 */
-	TWeakObjectPtr<UKawaiiFluidSimulationVolumeComponent> PreviousRegisteredVolume = nullptr;
+	TWeakObjectPtr<UKawaiiFluidVolumeComponent> PreviousRegisteredVolume = nullptr;
 
 	/** Called when the TargetSimulationVolume actor is destroyed */
 	UFUNCTION()

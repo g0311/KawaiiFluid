@@ -13,7 +13,9 @@ class UKawaiiFluidComponent;
 class UKawaiiFluidSimulationModule;
 class UKawaiiFluidSimulationContext;
 class UKawaiiFluidPresetDataAsset;
-class UKawaiiFluidSimulationVolumeComponent;
+class UKawaiiFluidVolumeComponent;
+class AKawaiiFluidVolume;
+class AKawaiiFluidEmitter;
 class UFluidCollider;
 class UFluidInteractionComponent;
 class AActor;
@@ -21,6 +23,9 @@ class ULevel;
 enum class EFluidType : uint8;
 class FSpatialHash;
 struct FFluidParticle;
+
+// Legacy typedef for backward compatibility
+using UKawaiiFluidSimulationVolumeComponent = UKawaiiFluidVolumeComponent;
 
 /**
  * Cache key for Context lookup
@@ -33,13 +38,13 @@ struct FContextCacheKey
 
 	/** Target Volume for Z-Order space bounds (nullptr = component-relative bounds) */
 	UPROPERTY()
-	TObjectPtr<UKawaiiFluidSimulationVolumeComponent> VolumeComponent = nullptr;
+	TObjectPtr<UKawaiiFluidVolumeComponent> VolumeComponent = nullptr;
 
 	UPROPERTY()
 	TObjectPtr<UKawaiiFluidPresetDataAsset> Preset = nullptr;
 
 	FContextCacheKey() = default;
-	FContextCacheKey(UKawaiiFluidSimulationVolumeComponent* InVolumeComponent, UKawaiiFluidPresetDataAsset* InPreset)
+	FContextCacheKey(UKawaiiFluidVolumeComponent* InVolumeComponent, UKawaiiFluidPresetDataAsset* InPreset)
 		: VolumeComponent(InVolumeComponent), Preset(InPreset) {}
 
 	// Legacy constructor for backward compatibility
@@ -114,17 +119,30 @@ public:
 	void ReleaseSourceID(int32 SourceID);
 
 	//========================================
-	// Volume Registration
+	// Volume Actor Registration (New Architecture)
+	//========================================
+
+	/** Register a fluid volume actor (new architecture - solver unit) */
+	void RegisterVolume(AKawaiiFluidVolume* Volume);
+
+	/** Unregister a fluid volume actor */
+	void UnregisterVolume(AKawaiiFluidVolume* Volume);
+
+	/** Get all registered volume actors */
+	const TArray<TObjectPtr<AKawaiiFluidVolume>>& GetAllVolumes() const { return AllVolumes; }
+
+	//========================================
+	// Volume Component Registration (Legacy)
 	//========================================
 
 	/** Register a simulation volume component (defines Z-Order space bounds) */
-	void RegisterVolumeComponent(UKawaiiFluidSimulationVolumeComponent* VolumeComponent);
+	void RegisterVolumeComponent(UKawaiiFluidVolumeComponent* VolumeComponent);
 
 	/** Unregister a simulation volume component */
-	void UnregisterVolumeComponent(UKawaiiFluidSimulationVolumeComponent* VolumeComponent);
+	void UnregisterVolumeComponent(UKawaiiFluidVolumeComponent* VolumeComponent);
 
 	/** Get all registered volume components */
-	const TArray<TObjectPtr<UKawaiiFluidSimulationVolumeComponent>>& GetAllVolumeComponents() const { return AllVolumeComponents; }
+	const TArray<TObjectPtr<UKawaiiFluidVolumeComponent>>& GetAllVolumeComponents() const { return AllVolumeComponents; }
 
 	//========================================
 	// Component Registration (for backward compatibility)
@@ -206,7 +224,7 @@ public:
 	 *  Same VolumeComponent = same Z-Order space = particles can interact
 	 *  Always uses GPU simulation
 	 */
-	UKawaiiFluidSimulationContext* GetOrCreateContext(UKawaiiFluidSimulationVolumeComponent* VolumeComponent, UKawaiiFluidPresetDataAsset* Preset);
+	UKawaiiFluidSimulationContext* GetOrCreateContext(UKawaiiFluidVolumeComponent* VolumeComponent, UKawaiiFluidPresetDataAsset* Preset);
 
 	/** Legacy: Get or create context without volume (uses component-relative bounds) */
 	UKawaiiFluidSimulationContext* GetOrCreateContext(UKawaiiFluidPresetDataAsset* Preset)
@@ -234,12 +252,20 @@ private:
 	int32 NextSourceIDHint = 0;
 
 	//========================================
-	// Volume Component Management
+	// Volume Actor Management (New Architecture)
 	//========================================
 
-	/** All registered simulation volume components */
+	/** All registered fluid volume actors (new architecture) */
 	UPROPERTY()
-	TArray<TObjectPtr<UKawaiiFluidSimulationVolumeComponent>> AllVolumeComponents;
+	TArray<TObjectPtr<AKawaiiFluidVolume>> AllVolumes;
+
+	//========================================
+	// Volume Component Management (Legacy)
+	//========================================
+
+	/** All registered simulation volume components (legacy) */
+	UPROPERTY()
+	TArray<TObjectPtr<UKawaiiFluidVolumeComponent>> AllVolumeComponents;
 
 	//========================================
 	// Component Management (Deprecated)

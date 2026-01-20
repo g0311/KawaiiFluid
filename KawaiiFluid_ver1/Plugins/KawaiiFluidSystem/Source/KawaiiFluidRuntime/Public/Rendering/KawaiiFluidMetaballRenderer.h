@@ -119,6 +119,9 @@ public:
 	/** Set preset reference and sync Pipeline from Preset->RenderingParameters (called from game thread) */
 	void SetPreset(UKawaiiFluidPresetDataAsset* InPreset);
 
+	/** Update Pipeline based on Preset->RenderingParameters (Pipeline handles ShadingMode internally) */
+	void UpdatePipeline();
+
 	//========================================
 	// Enable Control
 	//========================================
@@ -168,13 +171,6 @@ protected:
 	/** Cached owner component reference */
 	UPROPERTY()
 	TObjectPtr<USceneComponent> CachedOwnerComponent;
-
-	//========================================
-	// Metaball Renderer Internals
-	//========================================
-
-	/** Update Pipeline based on LocalParameters (Pipeline handles ShadingMode internally) */
-	void UpdatePipeline();
 
 private:
 	/** Cached particle positions */

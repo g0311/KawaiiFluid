@@ -1,8 +1,8 @@
 // Copyright KawaiiFluid Team. All Rights Reserved.
 
 #include "Components/KawaiiFluidComponent.h"
-#include "Components/KawaiiFluidSimulationVolumeComponent.h"
-#include "Components/KawaiiFluidSimulationVolume.h"
+#include "Components/KawaiiFluidVolumeComponent.h"
+#include "Actors/KawaiiFluidVolume.h"
 #include "Components/FluidInteractionComponent.h"
 #include "Core/KawaiiFluidSimulatorSubsystem.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
@@ -95,7 +95,7 @@ void UKawaiiFluidComponent::OnRegister()
 	);
 
 	// Volume 등록
-	if (UKawaiiFluidSimulationVolumeComponent* Volume = GetTargetVolumeComponent())
+	if (UKawaiiFluidVolumeComponent* Volume = GetTargetVolumeComponent())
 	{
 		Volume->RegisterModule(SimulationModule);
 	}
@@ -120,7 +120,7 @@ void UKawaiiFluidComponent::OnRegister()
 void UKawaiiFluidComponent::OnComponentDestroyed(bool bDestroyingOK)
 {
 	// Volume에서 등록 해제
-	if (UKawaiiFluidSimulationVolumeComponent* Volume = GetTargetVolumeComponent())
+	if (UKawaiiFluidVolumeComponent* Volume = GetTargetVolumeComponent())
 	{
 		if (SimulationModule)
 		{
@@ -1217,17 +1217,17 @@ void UKawaiiFluidComponent::UnregisterFromSubsystem()
 // Simulation Volume Access (Delegated to SimulationModule)
 //========================================
 
-AKawaiiFluidSimulationVolume* UKawaiiFluidComponent::GetTargetSimulationVolume() const
+AKawaiiFluidVolume* UKawaiiFluidComponent::GetTargetSimulationVolume() const
 {
 	return SimulationModule ? SimulationModule->GetTargetSimulationVolume() : nullptr;
 }
 
-UKawaiiFluidSimulationVolumeComponent* UKawaiiFluidComponent::GetTargetVolumeComponent() const
+UKawaiiFluidVolumeComponent* UKawaiiFluidComponent::GetTargetVolumeComponent() const
 {
 	return SimulationModule ? SimulationModule->GetTargetVolumeComponent() : nullptr;
 }
 
-void UKawaiiFluidComponent::SetTargetSimulationVolume(AKawaiiFluidSimulationVolume* NewSimulationVolume)
+void UKawaiiFluidComponent::SetTargetSimulationVolume(AKawaiiFluidVolume* NewSimulationVolume)
 {
 	if (SimulationModule)
 	{

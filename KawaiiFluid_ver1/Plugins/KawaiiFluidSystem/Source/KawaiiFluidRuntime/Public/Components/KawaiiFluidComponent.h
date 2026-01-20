@@ -12,8 +12,8 @@
 class UKawaiiFluidRenderingModule;
 class UKawaiiFluidComponent;
 class UKawaiiFluidPresetDataAsset;
-class UKawaiiFluidSimulationVolumeComponent;
-class AKawaiiFluidSimulationVolume;
+class UKawaiiFluidVolumeComponent;
+class AKawaiiFluidVolume;
 class UNiagaraSystem;
 
 /**
@@ -385,15 +385,15 @@ public:
 
 	/** Get the target simulation volume actor (from SimulationModule) */
 	UFUNCTION(BlueprintPure, Category = "Fluid|Simulation Volume")
-	AKawaiiFluidSimulationVolume* GetTargetSimulationVolume() const;
+	AKawaiiFluidVolume* GetTargetSimulationVolume() const;
 
 	/** Get the effective volume component (from SimulationModule) */
 	UFUNCTION(BlueprintPure, Category = "Fluid|Simulation Volume")
-	UKawaiiFluidSimulationVolumeComponent* GetTargetVolumeComponent() const;
+	UKawaiiFluidVolumeComponent* GetTargetVolumeComponent() const;
 
 	/** Set the target simulation volume at runtime (delegates to SimulationModule) */
 	UFUNCTION(BlueprintCallable, Category = "Fluid|Simulation Volume")
-	void SetTargetSimulationVolume(AKawaiiFluidSimulationVolume* NewSimulationVolume);
+	void SetTargetSimulationVolume(AKawaiiFluidVolume* NewSimulationVolume);
 
 	//========================================
 	// Rendering Settings

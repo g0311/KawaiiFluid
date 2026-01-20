@@ -5,7 +5,8 @@
 #include "Core/SpatialHash.h"
 #include "Data/KawaiiFluidPresetDataAsset.h"
 #include "Components/KawaiiFluidComponent.h"
-#include "Components/KawaiiFluidSimulationVolumeComponent.h"
+#include "Components/KawaiiFluidVolumeComponent.h"
+#include "Actors/KawaiiFluidVolume.h"
 #include "Modules/KawaiiFluidSimulationModule.h"
 #include "Modules/KawaiiFluidRenderingModule.h"
 #include "Rendering/KawaiiFluidMetaballRenderer.h"
@@ -77,6 +78,7 @@ void UKawaiiFluidSimulatorSubsystem::Deinitialize()
 	}
 
 	AllModules.Empty();
+	AllVolumes.Empty();
 	AllVolumeComponents.Empty();
 	AllFluidComponents.Empty();
 	GlobalColliders.Empty();
@@ -207,14 +209,27 @@ void UKawaiiFluidSimulatorSubsystem::RegisterModule(UKawaiiFluidSimulationModule
 						if (UKawaiiFluidMetaballRenderer* MR = RenderingMod->GetMetaballRenderer())
 						{
 							MR->SetSimulationContext(Context);
-							UE_LOG(LogTemp, Log, TEXT("SimulationModule: Connected MetaballRenderer to Context"));
+							UE_LOG(LogTemp, Log, TEXT("SimulationModule: Connected MetaballRenderer to Context (Component)"));
+						}
+					}
+				}
+				// Support for AKawaiiFluidVolume (new architecture)
+				else if (AKawaiiFluidVolume* OwnerVolume = Cast<AKawaiiFluidVolume>(Module->GetOuter()))
+				{
+					if (UKawaiiFluidRenderingModule* RenderingMod = OwnerVolume->GetRenderingModule())
+					{
+						if (UKawaiiFluidMetaballRenderer* MR = RenderingMod->GetMetaballRenderer())
+						{
+							MR->SetSimulationContext(Context);
+							UE_LOG(LogTemp, Log, TEXT("SimulationModule: Connected MetaballRenderer to Context (Volume)"));
 						}
 					}
 				}
 			}
 		}
 
-		UE_LOG(LogTemp, Verbose, TEXT("SimulationModule registered"));
+		UE_LOG(LogTemp, Log, TEXT("SimulationModule registered: SourceID=%d, GPUActive=%d"),
+			NewSourceID, Module->IsGPUSimulationActive() ? 1 : 0);
 	}
 }
 
@@ -297,19 +312,42 @@ void UKawaiiFluidSimulatorSubsystem::UnregisterComponent(UKawaiiFluidComponent* 
 // Volume Component Registration
 //========================================
 
-void UKawaiiFluidSimulatorSubsystem::RegisterVolumeComponent(UKawaiiFluidSimulationVolumeComponent* VolumeComponent)
+//========================================
+// Volume Actor Registration (New Architecture)
+//========================================
+
+void UKawaiiFluidSimulatorSubsystem::RegisterVolume(AKawaiiFluidVolume* Volume)
+{
+	if (Volume && !AllVolumes.Contains(Volume))
+	{
+		AllVolumes.Add(Volume);
+		UE_LOG(LogTemp, Log, TEXT("KawaiiFluidVolume registered: %s"), *Volume->GetName());
+	}
+}
+
+void UKawaiiFluidSimulatorSubsystem::UnregisterVolume(AKawaiiFluidVolume* Volume)
+{
+	AllVolumes.Remove(Volume);
+	UE_LOG(LogTemp, Log, TEXT("KawaiiFluidVolume unregistered: %s"), Volume ? *Volume->GetName() : TEXT("nullptr"));
+}
+
+//========================================
+// Volume Component Registration (Legacy)
+//========================================
+
+void UKawaiiFluidSimulatorSubsystem::RegisterVolumeComponent(UKawaiiFluidVolumeComponent* VolumeComponent)
 {
 	if (VolumeComponent && !AllVolumeComponents.Contains(VolumeComponent))
 	{
 		AllVolumeComponents.Add(VolumeComponent);
-		UE_LOG(LogTemp, Log, TEXT("SimulationVolumeComponent registered: %s"), *VolumeComponent->GetName());
+		UE_LOG(LogTemp, Log, TEXT("VolumeComponent registered: %s"), *VolumeComponent->GetName());
 	}
 }
 
-void UKawaiiFluidSimulatorSubsystem::UnregisterVolumeComponent(UKawaiiFluidSimulationVolumeComponent* VolumeComponent)
+void UKawaiiFluidSimulatorSubsystem::UnregisterVolumeComponent(UKawaiiFluidVolumeComponent* VolumeComponent)
 {
 	AllVolumeComponents.Remove(VolumeComponent);
-	UE_LOG(LogTemp, Log, TEXT("SimulationVolumeComponent unregistered: %s"), VolumeComponent ? *VolumeComponent->GetName() : TEXT("nullptr"));
+	UE_LOG(LogTemp, Log, TEXT("VolumeComponent unregistered: %s"), VolumeComponent ? *VolumeComponent->GetName() : TEXT("nullptr"));
 }
 
 //========================================
@@ -443,7 +481,7 @@ UKawaiiFluidSimulationModule* UKawaiiFluidSimulatorSubsystem::GetModuleBySourceI
 //========================================
 
 UKawaiiFluidSimulationContext* UKawaiiFluidSimulatorSubsystem::GetOrCreateContext(
-	UKawaiiFluidSimulationVolumeComponent* VolumeComponent, UKawaiiFluidPresetDataAsset* Preset)
+	UKawaiiFluidVolumeComponent* VolumeComponent, UKawaiiFluidPresetDataAsset* Preset)
 {
 	if (!Preset)
 	{

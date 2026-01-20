@@ -1,12 +1,12 @@
 // Copyright KawaiiFluid Team. All Rights Reserved.
 
-#include "Components/KawaiiFluidSimulationVolumeComponent.h"
+#include "Components/KawaiiFluidVolumeComponent.h"
 #include "Core/KawaiiFluidSimulatorSubsystem.h"
 #include "Modules/KawaiiFluidSimulationModule.h"
-#include "GPU/GPUFluidSimulatorShaders.h"
+#include "Data/KawaiiFluidPresetDataAsset.h"
 #include "DrawDebugHelpers.h"
 
-UKawaiiFluidSimulationVolumeComponent::UKawaiiFluidSimulationVolumeComponent()
+UKawaiiFluidVolumeComponent::UKawaiiFluidVolumeComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = true;
@@ -25,32 +25,32 @@ UKawaiiFluidSimulationVolumeComponent::UKawaiiFluidSimulationVolumeComponent()
 	RecalculateBounds();
 }
 
-void UKawaiiFluidSimulationVolumeComponent::OnRegister()
+void UKawaiiFluidVolumeComponent::OnRegister()
 {
 	Super::OnRegister();
 	RecalculateBounds();
 }
 
-void UKawaiiFluidSimulationVolumeComponent::OnUnregister()
+void UKawaiiFluidVolumeComponent::OnUnregister()
 {
 	UnregisterFromSubsystem();
 	Super::OnUnregister();
 }
 
-void UKawaiiFluidSimulationVolumeComponent::BeginPlay()
+void UKawaiiFluidVolumeComponent::BeginPlay()
 {
 	Super::BeginPlay();
 	RegisterToSubsystem();
 	RecalculateBounds();
 }
 
-void UKawaiiFluidSimulationVolumeComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+void UKawaiiFluidVolumeComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	UnregisterFromSubsystem();
 	Super::EndPlay(EndPlayReason);
 }
 
-void UKawaiiFluidSimulationVolumeComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+void UKawaiiFluidVolumeComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
@@ -69,7 +69,7 @@ void UKawaiiFluidSimulationVolumeComponent::TickComponent(float DeltaTime, ELeve
 }
 
 #if WITH_EDITOR
-void UKawaiiFluidSimulationVolumeComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+void UKawaiiFluidVolumeComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
 
@@ -77,7 +77,7 @@ void UKawaiiFluidSimulationVolumeComponent::PostEditChangeProperty(FPropertyChan
 		PropertyChangedEvent.Property->GetFName() : NAME_None;
 
 	// Sync size values when toggling Uniform Size mode
-	if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationVolumeComponent, bUniformSize))
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidVolumeComponent, bUniformSize))
 	{
 		if (bUniformSize)
 		{
@@ -92,7 +92,7 @@ void UKawaiiFluidSimulationVolumeComponent::PostEditChangeProperty(FPropertyChan
 	}
 
 	// When CellSize changes, recalculate volume size to maintain Medium preset
-	if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationVolumeComponent, CellSize))
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidVolumeComponent, CellSize))
 	{
 		const float MediumGridResolution = static_cast<float>(GridResolutionPresetHelper::GetGridResolution(EGridResolutionPreset::Medium));
 		const float NewDefaultSize = MediumGridResolution * CellSize;
@@ -101,10 +101,10 @@ void UKawaiiFluidSimulationVolumeComponent::PostEditChangeProperty(FPropertyChan
 	}
 
 	// Handle size-related property changes
-	if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationVolumeComponent, bUniformSize) ||
-		PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationVolumeComponent, UniformVolumeSize) ||
-		PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationVolumeComponent, VolumeSize) ||
-		PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationVolumeComponent, CellSize))
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidVolumeComponent, bUniformSize) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidVolumeComponent, UniformVolumeSize) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidVolumeComponent, VolumeSize) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidVolumeComponent, CellSize))
 	{
 		RecalculateBounds();
 
@@ -120,7 +120,7 @@ void UKawaiiFluidSimulationVolumeComponent::PostEditChangeProperty(FPropertyChan
 }
 #endif
 
-void UKawaiiFluidSimulationVolumeComponent::RecalculateBounds()
+void UKawaiiFluidVolumeComponent::RecalculateBounds()
 {
 	// Ensure valid CellSize
 	CellSize = FMath::Max(CellSize, 1.0f);
@@ -151,20 +151,20 @@ void UKawaiiFluidSimulationVolumeComponent::RecalculateBounds()
 	WorldBoundsMax = ComponentLocation + FVector(ActualHalfExtent, ActualHalfExtent, ActualHalfExtent);
 }
 
-bool UKawaiiFluidSimulationVolumeComponent::IsPositionInBounds(const FVector& WorldPosition) const
+bool UKawaiiFluidVolumeComponent::IsPositionInBounds(const FVector& WorldPosition) const
 {
 	return WorldPosition.X >= WorldBoundsMin.X && WorldPosition.X <= WorldBoundsMax.X &&
 	       WorldPosition.Y >= WorldBoundsMin.Y && WorldPosition.Y <= WorldBoundsMax.Y &&
 	       WorldPosition.Z >= WorldBoundsMin.Z && WorldPosition.Z <= WorldBoundsMax.Z;
 }
 
-void UKawaiiFluidSimulationVolumeComponent::GetSimulationBounds(FVector& OutMin, FVector& OutMax) const
+void UKawaiiFluidVolumeComponent::GetSimulationBounds(FVector& OutMin, FVector& OutMax) const
 {
 	OutMin = WorldBoundsMin;
 	OutMax = WorldBoundsMax;
 }
 
-void UKawaiiFluidSimulationVolumeComponent::RegisterModule(UKawaiiFluidSimulationModule* Module)
+void UKawaiiFluidVolumeComponent::RegisterModule(UKawaiiFluidSimulationModule* Module)
 {
 	if (Module && !RegisteredModules.Contains(Module))
 	{
@@ -172,7 +172,7 @@ void UKawaiiFluidSimulationVolumeComponent::RegisterModule(UKawaiiFluidSimulatio
 	}
 }
 
-void UKawaiiFluidSimulationVolumeComponent::UnregisterModule(UKawaiiFluidSimulationModule* Module)
+void UKawaiiFluidVolumeComponent::UnregisterModule(UKawaiiFluidSimulationModule* Module)
 {
 	if (Module)
 	{
@@ -180,7 +180,7 @@ void UKawaiiFluidSimulationVolumeComponent::UnregisterModule(UKawaiiFluidSimulat
 	}
 }
 
-void UKawaiiFluidSimulationVolumeComponent::RegisterToSubsystem()
+void UKawaiiFluidVolumeComponent::RegisterToSubsystem()
 {
 	if (UWorld* World = GetWorld())
 	{
@@ -191,7 +191,7 @@ void UKawaiiFluidSimulationVolumeComponent::RegisterToSubsystem()
 	}
 }
 
-void UKawaiiFluidSimulationVolumeComponent::UnregisterFromSubsystem()
+void UKawaiiFluidVolumeComponent::UnregisterFromSubsystem()
 {
 	if (UWorld* World = GetWorld())
 	{
@@ -202,7 +202,7 @@ void UKawaiiFluidSimulationVolumeComponent::UnregisterFromSubsystem()
 	}
 }
 
-void UKawaiiFluidSimulationVolumeComponent::DrawBoundsVisualization()
+void UKawaiiFluidVolumeComponent::DrawBoundsVisualization()
 {
 	UWorld* World = GetWorld();
 	if (!World)
@@ -254,11 +254,60 @@ void UKawaiiFluidSimulationVolumeComponent::DrawBoundsVisualization()
 	{
 		const FVector EffectiveSize = GetEffectiveVolumeSize();
 		const FString InfoText = FString::Printf(
-			TEXT("Size: %.0f×%.0f×%.0f cm\nBounce: %.1f, Friction: %.1f"),
+			TEXT("Size: %.0fx%.0fx%.0f cm\nBounce: %.1f, Friction: %.1f"),
 			EffectiveSize.X, EffectiveSize.Y, EffectiveSize.Z,
 			WallBounce, WallFriction
 		);
 		DrawDebugString(World, ComponentLocation + FVector(0, 0, UserExtent.Z + 50.0f), InfoText, nullptr, DrawColor, -1.0f, true);
 	}
 #endif
+}
+
+//========================================
+// Preset & Simulation
+//========================================
+
+void UKawaiiFluidVolumeComponent::SetFluidType(EFluidType InFluidType)
+{
+	FluidType = InFluidType;
+
+	// Forward to all registered modules
+	for (TWeakObjectPtr<UKawaiiFluidSimulationModule>& WeakModule : RegisteredModules)
+	{
+		if (UKawaiiFluidSimulationModule* Module = WeakModule.Get())
+		{
+			Module->SetFluidType(InFluidType);
+		}
+	}
+}
+
+float UKawaiiFluidVolumeComponent::GetParticleSpacing() const
+{
+	if (Preset)
+	{
+		return Preset->ParticleRadius * 2.0f;
+	}
+	return 10.0f;  // Default fallback
+}
+
+//========================================
+// Debug Methods
+//========================================
+
+void UKawaiiFluidVolumeComponent::SetDebugVisualization(EFluidDebugVisualization Mode)
+{
+	DebugDrawMode = Mode;
+	bEnableDebugDraw = (Mode != EFluidDebugVisualization::None);
+}
+
+void UKawaiiFluidVolumeComponent::EnableDebugDraw(EFluidDebugVisualization Mode, float PointSize)
+{
+	bEnableDebugDraw = true;
+	DebugDrawMode = Mode;
+	DebugPointSize = PointSize;
+}
+
+void UKawaiiFluidVolumeComponent::DisableDebugDraw()
+{
+	bEnableDebugDraw = false;
 }

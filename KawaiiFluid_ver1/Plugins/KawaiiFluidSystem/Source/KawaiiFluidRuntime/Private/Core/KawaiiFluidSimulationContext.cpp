@@ -3,7 +3,7 @@
 #include "Core/KawaiiFluidSimulationContext.h"
 #include "Core/SpatialHash.h"
 #include "Core/KawaiiFluidSimulationStats.h"
-#include "Components/KawaiiFluidSimulationVolumeComponent.h"
+#include "Components/KawaiiFluidVolumeComponent.h"
 #include "Data/KawaiiFluidPresetDataAsset.h"
 #include "Physics/DensityConstraint.h"
 #include "Physics/ViscositySolver.h"
@@ -442,7 +442,7 @@ FGPUFluidSimulationParams UKawaiiFluidSimulationContext::BuildGPUSimParams(
 
 	// Spatial hash cell size - must match the Volume's CellSize for Morton code consistency
 	// Priority: TargetVolumeComponent's CellSize > Fallback to SmoothingRadius
-	if (UKawaiiFluidSimulationVolumeComponent* Volume = TargetVolumeComponent.Get())
+	if (UKawaiiFluidVolumeComponent* Volume = TargetVolumeComponent.Get())
 	{
 		GPUParams.CellSize = Volume->CellSize;
 	}
@@ -641,7 +641,7 @@ void UKawaiiFluidSimulationContext::SimulateGPU(
 	FVector3f WorldBoundsMin, WorldBoundsMax;
 	EGridResolutionPreset GridPreset = Params.GridResolutionPreset;
 
-	if (UKawaiiFluidSimulationVolumeComponent* Volume = TargetVolumeComponent.Get())
+	if (UKawaiiFluidVolumeComponent* Volume = TargetVolumeComponent.Get())
 	{
 		// Use Volume's world-space bounds and GridResolutionPreset
 		WorldBoundsMin = FVector3f(Volume->GetWorldBoundsMin());

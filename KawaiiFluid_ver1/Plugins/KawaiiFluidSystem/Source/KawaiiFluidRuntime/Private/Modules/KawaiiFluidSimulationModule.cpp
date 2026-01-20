@@ -6,8 +6,8 @@
 #include "Collision/FluidCollider.h"
 #include "Components/FluidInteractionComponent.h"
 #include "Components/KawaiiFluidComponent.h"
-#include "Components/KawaiiFluidSimulationVolumeComponent.h"
-#include "Components/KawaiiFluidSimulationVolume.h"
+#include "Components/KawaiiFluidVolumeComponent.h"
+#include "Actors/KawaiiFluidVolume.h"
 #include "Data/KawaiiFluidPresetDataAsset.h"
 #include "GPU/GPUFluidSimulator.h"
 #include "GPU/GPUFluidSimulatorShaders.h"  // For GPU_MORTON_GRID_AXIS_BITS
@@ -280,7 +280,7 @@ void UKawaiiFluidSimulationModule::PostEditChangeProperty(FPropertyChangedEvent&
 		UnbindFromVolumeDestroyedEvent();
 
 		// Unregister from previous volume
-		if (UKawaiiFluidSimulationVolumeComponent* PrevVolume = PreviousRegisteredVolume.Get())
+		if (UKawaiiFluidVolumeComponent* PrevVolume = PreviousRegisteredVolume.Get())
 		{
 			PrevVolume->UnregisterModule(this);
 		}
@@ -288,7 +288,7 @@ void UKawaiiFluidSimulationModule::PostEditChangeProperty(FPropertyChangedEvent&
 		// Register with new volume and update tracking
 		if (TargetSimulationVolume)
 		{
-			if (UKawaiiFluidSimulationVolumeComponent* NewVolume = TargetSimulationVolume->GetVolumeComponent())
+			if (UKawaiiFluidVolumeComponent* NewVolume = TargetSimulationVolume->GetVolumeComponent())
 			{
 				NewVolume->RegisterModule(this);
 				PreviousRegisteredVolume = NewVolume;
@@ -405,7 +405,7 @@ void UKawaiiFluidSimulationModule::Initialize(UKawaiiFluidPresetDataAsset* InPre
 	// Create owned volume component for internal bounds
 	if (!OwnedVolumeComponent)
 	{
-		OwnedVolumeComponent = NewObject<UKawaiiFluidSimulationVolumeComponent>(this, NAME_None, RF_Transient);
+		OwnedVolumeComponent = NewObject<UKawaiiFluidVolumeComponent>(this, NAME_None, RF_Transient);
 		OwnedVolumeComponent->CellSize = CellSize;
 		OwnedVolumeComponent->bShowBoundsInEditor = false;  // Module controls its own visualization
 		OwnedVolumeComponent->bShowBoundsAtRuntime = false;
@@ -486,7 +486,7 @@ FKawaiiFluidSimulationParams UKawaiiFluidSimulationModule::BuildSimulationParams
 	Params.IgnoreActor = GetOwnerActor();
 	Params.bUseWorldCollision = bUseWorldCollision;
 
-	// Get owner component for simulation origin
+	// Get owner component for simulation origin and static boundary settings
 	if (UKawaiiFluidComponent* OwnerComp = Cast<UKawaiiFluidComponent>(GetOuter()))
 	{
 		// Set simulation origin for bounds offset (preset bounds are relative to component)
@@ -496,10 +496,26 @@ FKawaiiFluidSimulationParams UKawaiiFluidSimulationModule::BuildSimulationParams
 		Params.bEnableStaticBoundaryParticles = OwnerComp->bEnableStaticBoundaryParticles;
 		Params.StaticBoundaryParticleSpacing = OwnerComp->StaticBoundaryParticleSpacing;
 	}
+	else if (UKawaiiFluidVolumeComponent* VolumeComp = GetTargetVolumeComponent())
+	{
+		// Volume-based simulation: use VolumeComponent's static boundary settings
+		Params.SimulationOrigin = VolumeComp->GetComponentLocation();
+
+		// Static boundary particles (Akinci 2012) - density contribution from walls/floors
+		// Default is false due to known issue with particles flying around chaotically
+		Params.bEnableStaticBoundaryParticles = VolumeComp->IsStaticBoundaryParticlesEnabled();
+		Params.StaticBoundaryParticleSpacing = VolumeComp->GetStaticBoundaryParticleSpacing();
+	}
+	else
+	{
+		// Fallback: disable static boundary particles by default
+		Params.bEnableStaticBoundaryParticles = false;
+		Params.StaticBoundaryParticleSpacing = 5.0f;
+	}
 
 	// Unified Simulation Volume for containment collision (always enabled)
 	// Check if using external volume
-	if (UKawaiiFluidSimulationVolumeComponent* ExternalVolume = GetTargetVolumeComponent())
+	if (UKawaiiFluidVolumeComponent* ExternalVolume = GetTargetVolumeComponent())
 	{
 		if (IsUsingExternalVolume())
 		{
@@ -1926,7 +1942,7 @@ void UKawaiiFluidSimulationModule::ResolveVolumeBoundaryCollisions()
 	float EffectiveBounce;
 	float EffectiveFriction;
 
-	if (UKawaiiFluidSimulationVolumeComponent* ExternalVolume = GetTargetVolumeComponent())
+	if (UKawaiiFluidVolumeComponent* ExternalVolume = GetTargetVolumeComponent())
 	{
 		if (IsUsingExternalVolume())
 		{
@@ -2073,7 +2089,7 @@ void UKawaiiFluidSimulationModule::SetSourceID(int32 InSourceID)
 // Simulation Volume
 //========================================
 
-UKawaiiFluidSimulationVolumeComponent* UKawaiiFluidSimulationModule::GetTargetVolumeComponent() const
+UKawaiiFluidVolumeComponent* UKawaiiFluidSimulationModule::GetTargetVolumeComponent() const
 {
 	// If external volume actor is set, use its component
 	if (TargetSimulationVolume)
@@ -2085,7 +2101,7 @@ UKawaiiFluidSimulationVolumeComponent* UKawaiiFluidSimulationModule::GetTargetVo
 	return OwnedVolumeComponent;
 }
 
-void UKawaiiFluidSimulationModule::SetTargetSimulationVolume(AKawaiiFluidSimulationVolume* NewSimulationVolume)
+void UKawaiiFluidSimulationModule::SetTargetSimulationVolume(AKawaiiFluidVolume* NewSimulationVolume)
 {
 	if (TargetSimulationVolume == NewSimulationVolume)
 	{
@@ -2098,7 +2114,7 @@ void UKawaiiFluidSimulationModule::SetTargetSimulationVolume(AKawaiiFluidSimulat
 	// Unregister from old volume
 	if (TargetSimulationVolume)
 	{
-		if (UKawaiiFluidSimulationVolumeComponent* OldVolume = TargetSimulationVolume->GetVolumeComponent())
+		if (UKawaiiFluidVolumeComponent* OldVolume = TargetSimulationVolume->GetVolumeComponent())
 		{
 			OldVolume->UnregisterModule(this);
 		}
@@ -2109,7 +2125,7 @@ void UKawaiiFluidSimulationModule::SetTargetSimulationVolume(AKawaiiFluidSimulat
 	// Register to new volume and update tracking
 	if (TargetSimulationVolume)
 	{
-		if (UKawaiiFluidSimulationVolumeComponent* NewVolume = TargetSimulationVolume->GetVolumeComponent())
+		if (UKawaiiFluidVolumeComponent* NewVolume = TargetSimulationVolume->GetVolumeComponent())
 		{
 			NewVolume->RegisterModule(this);
 			PreviousRegisteredVolume = NewVolume;
@@ -2273,7 +2289,7 @@ void UKawaiiFluidSimulationModule::UpdateVolumeInfoDisplay()
 	if (TargetSimulationVolume)
 	{
 		// Read info from external volume
-		if (UKawaiiFluidSimulationVolumeComponent* ExternalVolume = TargetSimulationVolume->GetVolumeComponent())
+		if (UKawaiiFluidVolumeComponent* ExternalVolume = TargetSimulationVolume->GetVolumeComponent())
 		{
 			// Copy all info from external volume (preset is controlled by external)
 			GridResolutionPreset = ExternalVolume->GridResolutionPreset;
@@ -2320,7 +2336,7 @@ void UKawaiiFluidSimulationModule::OnTargetVolumeDestroyed(AActor* DestroyedActo
 	if (DestroyedActor == TargetSimulationVolume)
 	{
 		// Unregister from the volume component before it's destroyed
-		if (UKawaiiFluidSimulationVolumeComponent* VolumeComp = PreviousRegisteredVolume.Get())
+		if (UKawaiiFluidVolumeComponent* VolumeComp = PreviousRegisteredVolume.Get())
 		{
 			VolumeComp->UnregisterModule(this);
 		}
