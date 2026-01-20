@@ -597,22 +597,23 @@ for (UKawaiiFluidSimulationModule* Module : TargetSubsystem->GetAllModules())
 				FVector ParticleVelocity(Feedback.ParticleVelocity.X, Feedback.ParticleVelocity.Y, Feedback.ParticleVelocity.Z);
 				FVector ParticleVelocityInMS = ParticleVelocity * 0.01f;
 
-				// 상대 속도: v_rel = u_fluid - v_body
-				FVector RelativeVelocity = ParticleVelocityInMS - BodyVelocityInMS;
-				float RelativeSpeed = RelativeVelocity.Size();
+				// 절대 속도 기반 충격력 (상대 속도 아님)
+				// 이유: 캐릭터가 빠르게 움직여도 정지한 물에서는 넘어지지 않아야 함
+				// 오직 빠르게 움직이는 유체만 캐릭터를 밀어낼 수 있음
+				float ParticleSpeed = ParticleVelocityInMS.Size();  // Absolute velocity
 
 				DensitySum += Feedback.Density;
 				ForceContactCount++;
 
-				if (RelativeSpeed < SMALL_NUMBER)
+				if (ParticleSpeed < SMALL_NUMBER)
 				{
 					continue;
 				}
 
-				// 항력 공식: F = ½ρCdA|v|²
-				float DragMagnitude = 0.5f * Feedback.Density * DragCoefficient * AreaInM2 * RelativeSpeed * RelativeSpeed;
-				FVector DragDirection = RelativeVelocity / RelativeSpeed;
-				ForceAccum += DragDirection * DragMagnitude;
+				// 충격력 공식: F = ½ρCdA|v|² (v는 유체의 절대 속도)
+				float ImpactMagnitude = 0.5f * Feedback.Density * DragCoefficient * AreaInM2 * ParticleSpeed * ParticleSpeed;
+				FVector ImpactDirection = ParticleVelocityInMS.GetSafeNormal();
+				ForceAccum += ImpactDirection * ImpactMagnitude;
 			}
 
 			// 힘을 cm 단위로 변환
@@ -644,6 +645,12 @@ for (UKawaiiFluidSimulationModule* Module : TargetSubsystem->GetAllModules())
 	if (OnFluidForceUpdate.IsBound())
 	{
 		OnFluidForceUpdate.Broadcast(CurrentFluidForce, CurrentAveragePressure, CurrentContactCount);
+	}
+
+	// 본별 충격 모니터링 (자동 이벤트)
+	if (bEnableBoneImpactMonitoring && OnBoneFluidImpact.IsBound())
+	{
+		CheckBoneImpacts();
 	}
 
 	// 유체 태그 이벤트 업데이트 (OnFluidEnter/OnFluidExit)
@@ -693,6 +700,95 @@ void UFluidInteractionComponent::UpdateFluidTagEvents()
 	}
 }
 
+void UFluidInteractionComponent::CheckBoneImpacts()
+{
+	// MonitoredBones가 비어있으면 체크 안 함
+	if (MonitoredBones.Num() == 0)
+	{
+		return;
+	}
+
+	// [디버깅] 실제로 충돌된 모든 BoneIndex 수집
+	TSet<int32> ActualCollidedBones;
+	if (TargetSubsystem)
+	{
+		for (UKawaiiFluidSimulationModule* Module : TargetSubsystem->GetAllModules())
+		{
+			if (!Module) continue;
+
+			FGPUFluidSimulator* GPUSimulator = Module->GetGPUSimulator();
+			if (!GPUSimulator) continue;
+
+			TArray<FGPUCollisionFeedback> CollisionFeedbacks;
+			int32 FeedbackCount = 0;
+			GPUSimulator->GetAllCollisionFeedback(CollisionFeedbacks, FeedbackCount);
+
+			for (const FGPUCollisionFeedback& Feedback : CollisionFeedbacks)
+			{
+				ActualCollidedBones.Add(Feedback.BoneIndex);
+			}
+		}
+	}
+
+	// [디버깅] 충돌된 BoneIndex와 ColliderIndex 출력
+	if (ActualCollidedBones.Num() > 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[BoneImpact] 실제 충돌된 BoneIndex: %s"), *FString::JoinBy(ActualCollidedBones, TEXT(", "), [](int32 Idx) { return FString::FromInt(Idx); }));
+
+		// ColliderIndex도 출력
+		for (UKawaiiFluidSimulationModule* Module : TargetSubsystem->GetAllModules())
+		{
+			if (!Module) continue;
+
+			FGPUFluidSimulator* GPUSimulator = Module->GetGPUSimulator();
+			if (!GPUSimulator) continue;
+
+			TArray<FGPUCollisionFeedback> CollisionFeedbacks;
+			int32 FeedbackCount = 0;
+			GPUSimulator->GetAllCollisionFeedback(CollisionFeedbacks, FeedbackCount);
+
+			for (const FGPUCollisionFeedback& Feedback : CollisionFeedbacks)
+			{
+				if (ActualCollidedBones.Contains(Feedback.BoneIndex))
+				{
+					UE_LOG(LogTemp, Warning, TEXT("[BoneImpact]   ColliderIndex=%d, ColliderType=%d → BoneIndex=%d"),
+						Feedback.ColliderIndex, Feedback.ColliderType, Feedback.BoneIndex);
+					break;  // 첫 번째만 출력
+				}
+			}
+			break;  // 첫 번째 모듈만
+		}
+	}
+
+	// SkeletalMesh 가져오기
+	AActor* Owner = GetOwner();
+	USkeletalMeshComponent* SkelMesh = Owner ? Owner->FindComponentByClass<USkeletalMeshComponent>() : nullptr;
+
+	// 각 모니터링 본을 체크
+	for (const FName& BoneName : MonitoredBones)
+	{
+		// [디버깅] BoneName → BoneIndex 변환 로그
+		int32 ExpectedBoneIndex = SkelMesh ? SkelMesh->GetBoneIndex(BoneName) : INDEX_NONE;
+		UE_LOG(LogTemp, Warning, TEXT("[BoneImpact] MonitoredBone: %s → BoneIndex: %d"), *BoneName.ToString(), ExpectedBoneIndex);
+
+		// 본별 충격 데이터 가져오기
+		float ImpactSpeed = GetFluidImpactSpeedForBone(BoneName);
+
+		// 임계값 초과 시 이벤트 발생
+		if (ImpactSpeed > BoneImpactSpeedThreshold)
+		{
+			float ImpactForce = GetFluidImpactForceMagnitudeForBone(BoneName);
+			FVector ImpactDirection = GetFluidImpactDirectionForBone(BoneName);
+
+			// [디버깅] 이벤트 발생 로그
+			UE_LOG(LogTemp, Warning, TEXT("[BoneImpact] 이벤트 발생 - BoneName: %s, Speed: %.1f, Force: %.1f"), *BoneName.ToString(), ImpactSpeed, ImpactForce);
+
+			// 이벤트 브로드캐스트
+			OnBoneFluidImpact.Broadcast(BoneName, ImpactSpeed, ImpactForce, ImpactDirection);
+		}
+	}
+}
+
 void UFluidInteractionComponent::ApplyFluidForceToCharacterMovement(float ForceScale)
 {
 	AActor* Owner = GetOwner();
@@ -719,6 +815,296 @@ bool UFluidInteractionComponent::IsCollidingWithFluidTag(FName FluidTag) const
 {
 	const bool* bIsColliding = PreviousFluidTagStates.Find(FluidTag);
 	return bIsColliding && *bIsColliding;
+}
+
+float UFluidInteractionComponent::GetFluidImpactSpeed() const
+{
+	if (!TargetSubsystem)
+	{
+		return 0.0f;
+	}
+
+	float TotalSpeed = 0.0f;
+	int32 TotalFeedbackCount = 0;
+
+	for (UKawaiiFluidSimulationModule* Module : TargetSubsystem->GetAllModules())
+	{
+		if (!Module) continue;
+
+		FGPUFluidSimulator* GPUSimulator = Module->GetGPUSimulator();
+		if (!GPUSimulator) continue;
+
+		TArray<FGPUCollisionFeedback> CollisionFeedbacks;
+		int32 FeedbackCount = 0;
+		GPUSimulator->GetAllCollisionFeedback(CollisionFeedbacks, FeedbackCount);
+
+		for (const FGPUCollisionFeedback& Feedback : CollisionFeedbacks)
+		{
+			// 파티클 속도 (절대 속도, cm/s)
+			FVector ParticleVelocity(Feedback.ParticleVelocity.X, Feedback.ParticleVelocity.Y, Feedback.ParticleVelocity.Z);
+			float Speed = ParticleVelocity.Size();
+			TotalSpeed += Speed;
+			TotalFeedbackCount++;
+		}
+	}
+
+	return (TotalFeedbackCount > 0) ? (TotalSpeed / TotalFeedbackCount) : 0.0f;
+}
+
+float UFluidInteractionComponent::GetFluidImpactForceMagnitude() const
+{
+	if (!TargetSubsystem)
+	{
+		return 0.0f;
+	}
+
+	const float LocalDragCoefficient = 1.0f;  // Sphere drag coefficient
+	const float AreaInM2 = 0.01f;  // 100 cm² = 0.01 m²
+	float TotalForceMagnitude = 0.0f;
+
+	for (UKawaiiFluidSimulationModule* Module : TargetSubsystem->GetAllModules())
+	{
+		if (!Module) continue;
+
+		FGPUFluidSimulator* GPUSimulator = Module->GetGPUSimulator();
+		if (!GPUSimulator) continue;
+
+		TArray<FGPUCollisionFeedback> CollisionFeedbacks;
+		int32 FeedbackCount = 0;
+		GPUSimulator->GetAllCollisionFeedback(CollisionFeedbacks, FeedbackCount);
+
+		for (const FGPUCollisionFeedback& Feedback : CollisionFeedbacks)
+		{
+			// 파티클 속도 (cm/s → m/s)
+			FVector ParticleVelocity(Feedback.ParticleVelocity.X, Feedback.ParticleVelocity.Y, Feedback.ParticleVelocity.Z);
+			float ParticleSpeed = ParticleVelocity.Size() * 0.01f;  // cm/s → m/s
+
+			// 충격력 공식: F = ½ρCdA|v|² (v는 유체의 절대 속도)
+			float ImpactMagnitude = 0.5f * Feedback.Density * LocalDragCoefficient * AreaInM2 * ParticleSpeed * ParticleSpeed;
+			TotalForceMagnitude += ImpactMagnitude;
+		}
+	}
+
+	return TotalForceMagnitude;
+}
+
+FVector UFluidInteractionComponent::GetFluidImpactDirection() const
+{
+	if (!TargetSubsystem)
+	{
+		return FVector::ZeroVector;
+	}
+
+	FVector TotalVelocity = FVector::ZeroVector;
+	int32 TotalFeedbackCount = 0;
+
+	for (UKawaiiFluidSimulationModule* Module : TargetSubsystem->GetAllModules())
+	{
+		if (!Module) continue;
+
+		FGPUFluidSimulator* GPUSimulator = Module->GetGPUSimulator();
+		if (!GPUSimulator) continue;
+
+		TArray<FGPUCollisionFeedback> CollisionFeedbacks;
+		int32 FeedbackCount = 0;
+		GPUSimulator->GetAllCollisionFeedback(CollisionFeedbacks, FeedbackCount);
+
+		for (const FGPUCollisionFeedback& Feedback : CollisionFeedbacks)
+		{
+			// 파티클 속도 (절대 속도, cm/s)
+			FVector ParticleVelocity(Feedback.ParticleVelocity.X, Feedback.ParticleVelocity.Y, Feedback.ParticleVelocity.Z);
+			TotalVelocity += ParticleVelocity;
+			TotalFeedbackCount++;
+		}
+	}
+
+	if (TotalFeedbackCount > 0 && !TotalVelocity.IsNearlyZero())
+	{
+		return TotalVelocity.GetSafeNormal();
+	}
+
+	return FVector::ZeroVector;
+}
+
+float UFluidInteractionComponent::GetFluidImpactSpeedForBone(FName BoneName) const
+{
+	if (!TargetSubsystem)
+	{
+		return 0.0f;
+	}
+
+	// BoneName → BoneIndex 변환
+	AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		return 0.0f;
+	}
+
+	USkeletalMeshComponent* SkelMesh = Owner->FindComponentByClass<USkeletalMeshComponent>();
+	if (!SkelMesh)
+	{
+		return 0.0f;
+	}
+
+	int32 TargetBoneIndex = SkelMesh->GetBoneIndex(BoneName);
+	if (TargetBoneIndex == INDEX_NONE)
+	{
+		return 0.0f;  // 본이 존재하지 않음
+	}
+
+	// 해당 본에 충돌한 파티클만 필터링
+	float TotalSpeed = 0.0f;
+	int32 TotalFeedbackCount = 0;
+
+	for (UKawaiiFluidSimulationModule* Module : TargetSubsystem->GetAllModules())
+	{
+		if (!Module) continue;
+
+		FGPUFluidSimulator* GPUSimulator = Module->GetGPUSimulator();
+		if (!GPUSimulator) continue;
+
+		TArray<FGPUCollisionFeedback> CollisionFeedbacks;
+		int32 FeedbackCount = 0;
+		GPUSimulator->GetAllCollisionFeedback(CollisionFeedbacks, FeedbackCount);
+
+		for (const FGPUCollisionFeedback& Feedback : CollisionFeedbacks)
+		{
+			// BoneIndex 필터링
+			if (Feedback.BoneIndex != TargetBoneIndex)
+			{
+				continue;
+			}
+
+			FVector ParticleVelocity(Feedback.ParticleVelocity.X, Feedback.ParticleVelocity.Y, Feedback.ParticleVelocity.Z);
+			float Speed = ParticleVelocity.Size();
+			TotalSpeed += Speed;
+			TotalFeedbackCount++;
+		}
+	}
+
+	return (TotalFeedbackCount > 0) ? (TotalSpeed / TotalFeedbackCount) : 0.0f;
+}
+
+float UFluidInteractionComponent::GetFluidImpactForceMagnitudeForBone(FName BoneName) const
+{
+	if (!TargetSubsystem)
+	{
+		return 0.0f;
+	}
+
+	// BoneName → BoneIndex 변환
+	AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		return 0.0f;
+	}
+
+	USkeletalMeshComponent* SkelMesh = Owner->FindComponentByClass<USkeletalMeshComponent>();
+	if (!SkelMesh)
+	{
+		return 0.0f;
+	}
+
+	int32 TargetBoneIndex = SkelMesh->GetBoneIndex(BoneName);
+	if (TargetBoneIndex == INDEX_NONE)
+	{
+		return 0.0f;
+	}
+
+	const float LocalDragCoefficient = 1.0f;
+	const float AreaInM2 = 0.01f;
+	float TotalForceMagnitude = 0.0f;
+
+	for (UKawaiiFluidSimulationModule* Module : TargetSubsystem->GetAllModules())
+	{
+		if (!Module) continue;
+
+		FGPUFluidSimulator* GPUSimulator = Module->GetGPUSimulator();
+		if (!GPUSimulator) continue;
+
+		TArray<FGPUCollisionFeedback> CollisionFeedbacks;
+		int32 FeedbackCount = 0;
+		GPUSimulator->GetAllCollisionFeedback(CollisionFeedbacks, FeedbackCount);
+
+		for (const FGPUCollisionFeedback& Feedback : CollisionFeedbacks)
+		{
+			// BoneIndex 필터링
+			if (Feedback.BoneIndex != TargetBoneIndex)
+			{
+				continue;
+			}
+
+			FVector ParticleVelocity(Feedback.ParticleVelocity.X, Feedback.ParticleVelocity.Y, Feedback.ParticleVelocity.Z);
+			float ParticleSpeed = ParticleVelocity.Size() * 0.01f;  // cm/s → m/s
+
+			float ImpactMagnitude = 0.5f * Feedback.Density * LocalDragCoefficient * AreaInM2 * ParticleSpeed * ParticleSpeed;
+			TotalForceMagnitude += ImpactMagnitude;
+		}
+	}
+
+	return TotalForceMagnitude;
+}
+
+FVector UFluidInteractionComponent::GetFluidImpactDirectionForBone(FName BoneName) const
+{
+	if (!TargetSubsystem)
+	{
+		return FVector::ZeroVector;
+	}
+
+	// BoneName → BoneIndex 변환
+	AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		return FVector::ZeroVector;
+	}
+
+	USkeletalMeshComponent* SkelMesh = Owner->FindComponentByClass<USkeletalMeshComponent>();
+	if (!SkelMesh)
+	{
+		return FVector::ZeroVector;
+	}
+
+	int32 TargetBoneIndex = SkelMesh->GetBoneIndex(BoneName);
+	if (TargetBoneIndex == INDEX_NONE)
+	{
+		return FVector::ZeroVector;
+	}
+
+	FVector TotalVelocity = FVector::ZeroVector;
+	int32 TotalFeedbackCount = 0;
+
+	for (UKawaiiFluidSimulationModule* Module : TargetSubsystem->GetAllModules())
+	{
+		if (!Module) continue;
+
+		FGPUFluidSimulator* GPUSimulator = Module->GetGPUSimulator();
+		if (!GPUSimulator) continue;
+
+		TArray<FGPUCollisionFeedback> CollisionFeedbacks;
+		int32 FeedbackCount = 0;
+		GPUSimulator->GetAllCollisionFeedback(CollisionFeedbacks, FeedbackCount);
+
+		for (const FGPUCollisionFeedback& Feedback : CollisionFeedbacks)
+		{
+			// BoneIndex 필터링
+			if (Feedback.BoneIndex != TargetBoneIndex)
+			{
+				continue;
+			}
+
+			FVector ParticleVelocity(Feedback.ParticleVelocity.X, Feedback.ParticleVelocity.Y, Feedback.ParticleVelocity.Z);
+			TotalVelocity += ParticleVelocity;
+			TotalFeedbackCount++;
+		}
+	}
+
+	if (TotalFeedbackCount > 0 && !TotalVelocity.IsNearlyZero())
+	{
+		return TotalVelocity.GetSafeNormal();
+	}
+
+	return FVector::ZeroVector;
 }
 
 void UFluidInteractionComponent::EnableGPUCollisionFeedbackIfNeeded()
@@ -840,26 +1226,34 @@ void UFluidInteractionComponent::ProcessPerBoneForces(float DeltaTime, const TAr
 		FVector ParticleVelocity(Feedback.ParticleVelocity.X, Feedback.ParticleVelocity.Y, Feedback.ParticleVelocity.Z);
 		FVector ParticleVelocityInMS = ParticleVelocity * 0.01f;
 
-		// 상대 속도
-		FVector RelativeVelocity = ParticleVelocityInMS - BodyVelocityInMS;
-		float RelativeSpeed = RelativeVelocity.Size();
+		// =====================================================================
+		// 절대 속도 사용 (넘어짐 판정용 충격력)
+		// =====================================================================
+		// 기존: RelativeVelocity = ParticleVel - BodyVel (저항력)
+		// 변경: ParticleVel만 사용 (충격력)
+		//
+		// 이유: 플레이어가 정지된 물속을 달려도 충격으로 간주하지 않기 위함
+		//       유체가 빠르게 움직일 때만 충격으로 판정
+		// =====================================================================
 
-		if (RelativeSpeed < SMALL_NUMBER)
+		float ParticleSpeed = ParticleVelocityInMS.Size();  // 절대 속도
+
+		if (ParticleSpeed < SMALL_NUMBER)
 		{
 			continue;
 		}
 
-		// 항력 공식: F = ½ρCdA|v|²
-		float DragMagnitude = 0.5f * Feedback.Density * DragCoefficient * AreaInM2 * RelativeSpeed * RelativeSpeed;
-		FVector DragDirection = RelativeVelocity / RelativeSpeed;
-		FVector DragForce = DragDirection * DragMagnitude;
+		// 충격력 공식: F = ½ρCdA|v_fluid|² (절대 속도)
+		float ImpactMagnitude = 0.5f * Feedback.Density * DragCoefficient * AreaInM2 * ParticleSpeed * ParticleSpeed;
+		FVector ImpactDirection = ParticleVelocityInMS.GetSafeNormal();
+		FVector ImpactForce = ImpactDirection * ImpactMagnitude;
 
 		// cm 단위로 변환 후 배율 적용
-		DragForce *= 100.0f * PerBoneForceMultiplier;
+		ImpactForce *= 100.0f * PerBoneForceMultiplier;
 
 		// 본별 힘 누적
 		FVector& BoneForce = RawBoneForces.FindOrAdd(Feedback.BoneIndex, FVector::ZeroVector);
-		BoneForce += DragForce;
+		BoneForce += ImpactForce;
 
 		int32& ContactCount = BoneContactCounts.FindOrAdd(Feedback.BoneIndex, 0);
 		ContactCount++;
@@ -1396,8 +1790,20 @@ void UFluidInteractionComponent::GenerateBoundaryParticles()
 				continue;
 			}
 
+			// [디버깅] BodySetup의 BoneName과 BoneIndex 출력
+			int32 ParticlesBeforeSampling = BoundaryParticleLocalPositions.Num();
+
 			// AggGeom에서 모든 프리미티브 샘플링
 			SampleAggGeomSurfaces(BodySetup->AggGeom, BoneIndex);
+
+			int32 ParticlesAfterSampling = BoundaryParticleLocalPositions.Num();
+			int32 GeneratedParticles = ParticlesAfterSampling - ParticlesBeforeSampling;
+
+			if (GeneratedParticles > 0)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[BoundaryInit] BodySetup: '%s' (BoneIndex: %d) → Generated %d particles"),
+					*BodySetup->BoneName.ToString(), BoneIndex, GeneratedParticles);
+			}
 		}
 
 		UE_LOG(LogTemp, Log, TEXT("FluidInteraction: Generated %d boundary particles from PhysicsAsset '%s' (%d bodies)"),

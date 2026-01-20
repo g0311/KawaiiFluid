@@ -199,6 +199,12 @@ void UMeshFluidCollider::CacheSkeletalMeshCollision(USkeletalMeshComponent* Skel
 			CachedCap.BoneName = BodySetup->BoneName;
 			CachedCap.BoneTransform = BoneTransform;
 			CachedCap.BoneIndex = BoneIndex;  // 본 인덱스 설정
+
+			// [디버깅] 캐시 시점의 BoneIndex 확인
+			int32 CachedIndex = CachedCapsules.Num();
+			UE_LOG(LogTemp, Warning, TEXT("[CapsuleCache] Idx=%d, BoneName='%s', BoneIndex=%d"),
+				CachedIndex, *BodySetup->BoneName.ToString(), BoneIndex);
+
 			CachedCapsules.Add(CachedCap);
 
 			CachedBounds += CachedCap.Start;
@@ -1259,6 +1265,7 @@ void UMeshFluidCollider::ExportToGPUPrimitives(
 	}
 
 	// Export spheres
+	static bool bLoggedSpheres = false;
 	for (const FCachedSphere& Sph : CachedSpheres)
 	{
 		FGPUCollisionSphere GPUSphere;
@@ -1268,12 +1275,28 @@ void UMeshFluidCollider::ExportToGPUPrimitives(
 		GPUSphere.Restitution = InRestitution;
 		GPUSphere.BoneIndex = Sph.BoneIndex;  // 캐시된 본 인덱스 사용
 		GPUSphere.OwnerID = InOwnerID;
+
+		// [디버깅] GPU Collider 추가 로그 (첫 번째 호출에만)
+		if (!bLoggedSpheres)
+		{
+			int32 ColliderArrayIndex = OutSpheres.Num();
+			UE_LOG(LogTemp, Warning, TEXT("[GPUCollider] Sphere[%d]: BoneName='%s', BoneIndex=%d, OwnerID=%d"),
+				ColliderArrayIndex, *Sph.BoneName.ToString(), Sph.BoneIndex, InOwnerID);
+		}
+
 		OutSpheres.Add(GPUSphere);
 	}
+	if (!bLoggedSpheres) bLoggedSpheres = true;
 
 	// Export capsules
+	static int32 ExportCallCount = 0;
+	ExportCallCount++;
+	bool bShouldLog = (ExportCallCount <= 1);  // 첫 번째 호출만 로그
+
 	for (const FCachedCapsule& Cap : CachedCapsules)
 	{
+		int32 ColliderArrayIndex = OutCapsules.Num();
+
 		FGPUCollisionCapsule GPUCapsule;
 		GPUCapsule.Start = FVector3f(Cap.Start);
 		GPUCapsule.End = FVector3f(Cap.End);
@@ -1282,6 +1305,14 @@ void UMeshFluidCollider::ExportToGPUPrimitives(
 		GPUCapsule.Restitution = InRestitution;
 		GPUCapsule.BoneIndex = Cap.BoneIndex;  // 캐시된 본 인덱스 사용
 		GPUCapsule.OwnerID = InOwnerID;
+
+		// [디버깅] GPU Export 시 BoneIndex 확인
+		if (bShouldLog)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[GPUExport] Capsule[%d]: BoneName='%s', BoneIndex=%d, OwnerID=%d"),
+				ColliderArrayIndex, *Cap.BoneName.ToString(), Cap.BoneIndex, InOwnerID);
+		}
+
 		OutCapsules.Add(GPUCapsule);
 	}
 
@@ -1399,8 +1430,12 @@ void UMeshFluidCollider::ExportToGPUPrimitivesWithBones(
 		GPUSphere.Radius = Sph.Radius;
 		GPUSphere.Friction = InFriction;
 		GPUSphere.Restitution = InRestitution;
-		GPUSphere.BoneIndex = GetOrCreateBoneIndex(Sph.BoneName, Sph.BoneTransform);
+		GPUSphere.BoneIndex = Sph.BoneIndex;  // Skeleton BoneIndex 직접 사용 (BUG FIX)
 		GPUSphere.OwnerID = InOwnerID;
+
+		// BoneTransforms 배열 업데이트 (속도 계산용)
+		GetOrCreateBoneIndex(Sph.BoneName, Sph.BoneTransform);
+
 		OutSpheres.Add(GPUSphere);
 	}
 
@@ -1413,8 +1448,12 @@ void UMeshFluidCollider::ExportToGPUPrimitivesWithBones(
 		GPUCapsule.Radius = Cap.Radius;
 		GPUCapsule.Friction = InFriction;
 		GPUCapsule.Restitution = InRestitution;
-		GPUCapsule.BoneIndex = GetOrCreateBoneIndex(Cap.BoneName, Cap.BoneTransform);
+		GPUCapsule.BoneIndex = Cap.BoneIndex;  // Skeleton BoneIndex 직접 사용 (BUG FIX)
 		GPUCapsule.OwnerID = InOwnerID;
+
+		// BoneTransforms 배열 업데이트 (속도 계산용)
+		GetOrCreateBoneIndex(Cap.BoneName, Cap.BoneTransform);
+
 		OutCapsules.Add(GPUCapsule);
 	}
 
@@ -1432,8 +1471,12 @@ void UMeshFluidCollider::ExportToGPUPrimitivesWithBones(
 		);
 		GPUBox.Friction = InFriction;
 		GPUBox.Restitution = InRestitution;
-		GPUBox.BoneIndex = GetOrCreateBoneIndex(Box.BoneName, Box.BoneTransform);
+		GPUBox.BoneIndex = Box.BoneIndex;  // Skeleton BoneIndex 직접 사용 (BUG FIX)
 		GPUBox.OwnerID = InOwnerID;
+
+		// BoneTransforms 배열 업데이트 (속도 계산용)
+		GetOrCreateBoneIndex(Box.BoneName, Box.BoneTransform);
+
 		OutBoxes.Add(GPUBox);
 	}
 
@@ -1447,8 +1490,12 @@ void UMeshFluidCollider::ExportToGPUPrimitivesWithBones(
 		GPUConvex.PlaneCount = Cvx.Planes.Num();
 		GPUConvex.Friction = InFriction;
 		GPUConvex.Restitution = InRestitution;
-		GPUConvex.BoneIndex = GetOrCreateBoneIndex(Cvx.BoneName, Cvx.BoneTransform);
+		GPUConvex.BoneIndex = Cvx.BoneIndex;  // Skeleton BoneIndex 직접 사용 (BUG FIX)
 		GPUConvex.OwnerID = InOwnerID;
+
+		// BoneTransforms 배열 업데이트 (속도 계산용)
+		GetOrCreateBoneIndex(Cvx.BoneName, Cvx.BoneTransform);
+
 		OutConvexes.Add(GPUConvex);
 
 		// Add planes to the plane buffer

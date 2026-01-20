@@ -82,6 +82,16 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnFluidForceUpdate, FVector, For
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_SixParams(FOnBoneParticleCollision, int32, BoneIndex, FName, BoneName, int32, ContactCount, FVector, AverageVelocity, FName, FluidName, FVector, ImpactOffset);
 
 /**
+ * 모니터링 중인 본에 임계값 이상의 충격이 들어왔을 때 발생 (자동 이벤트)
+ * 매 틱마다 MonitoredBones 리스트를 체크하여 BoneImpactSpeedThreshold 초과 시 발생
+ * @param BoneName 충격받은 본 이름
+ * @param ImpactSpeed 유체의 절대 속도 (cm/s)
+ * @param ImpactForce 충격력 (Newton)
+ * @param ImpactDirection 충격 방향 (정규화된 벡터)
+ */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FOnBoneFluidImpact, FName, BoneName, float, ImpactSpeed, float, ImpactForce, FVector, ImpactDirection);
+
+/**
  * 유체 상호작용 컴포넌트
  * 캐릭터/오브젝트에 붙여서 유체와 상호작용
  */
@@ -289,6 +299,45 @@ public:
 	FOnFluidForceUpdate OnFluidForceUpdate;
 
 	//========================================
+	// Bone Impact Monitoring (자동 이벤트)
+	//========================================
+
+	/**
+	 * 본별 충격 모니터링 활성화
+	 * 활성화 시 MonitoredBones 리스트의 본들을 매 틱마다 체크하여
+	 * BoneImpactSpeedThreshold를 초과하면 OnBoneFluidImpact 이벤트 발생
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Interaction|Bone Impact Monitoring",
+	          meta = (ToolTip = "본별 충격 자동 감지 활성화.\n모니터링할 본들을 매 틱마다 체크하여 임계값 초과 시 이벤트를 발생시킵니다."))
+	bool bEnableBoneImpactMonitoring = false;
+
+	/**
+	 * 모니터링할 본 목록
+	 * 이 리스트의 본들을 매 틱마다 체크
+	 * 예: "head", "spine_03", "thigh_l"
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Interaction|Bone Impact Monitoring",
+	          meta = (EditCondition = "bEnableBoneImpactMonitoring",
+	                  ToolTip = "모니터링할 본 이름 리스트.\n스켈레톤 에디터에서 본 이름을 확인하여 추가하세요.\n예: head, spine_03, thigh_l"))
+	TArray<FName> MonitoredBones;
+
+	/**
+	 * 본 충격 감지 임계값 (cm/s)
+	 * 유체의 절대 속도가 이 값을 초과하면 OnBoneFluidImpact 이벤트 발생
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Interaction|Bone Impact Monitoring",
+	          meta = (EditCondition = "bEnableBoneImpactMonitoring", ClampMin = "0.0", ClampMax = "5000.0",
+	                  ToolTip = "충격 감지 임계값 (cm/s).\n유체 속도가 이 값을 초과하면 이벤트가 발생합니다.\n권장값: 500-1000"))
+	float BoneImpactSpeedThreshold = 500.0f;
+
+	/**
+	 * 본별 충격 이벤트
+	 * MonitoredBones의 본이 BoneImpactSpeedThreshold를 초과하는 충격을 받으면 발생
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "Fluid Interaction|Events")
+	FOnBoneFluidImpact OnBoneFluidImpact;
+
+	//========================================
 	// Per-Bone Force Feedback (for Additive Animation / Spring)
 	//========================================
 
@@ -467,6 +516,54 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Fluid Interaction|Force Feedback")
 	bool IsCollidingWithFluidTag(FName FluidTag) const;
 
+	/**
+	 * 현재 충돌 중인 유체의 평균 절대 속도 반환 (cm/s)
+	 * 캐릭터 넘어짐 판정 등에 사용 - 캐릭터 속도와 무관하게 유체 자체의 속도만 측정
+	 * @return 유체의 평균 절대 속도 (cm/s). 충돌 중이 아니면 0
+	 */
+	UFUNCTION(BlueprintPure, Category = "Fluid Interaction|Force Feedback")
+	float GetFluidImpactSpeed() const;
+
+	/**
+	 * 특정 본에 충돌한 유체의 평균 절대 속도 반환 (cm/s)
+	 * @param BoneName 필터링할 본 이름 (예: "head", "spine_01", "pelvis")
+	 * @return 해당 본에 충돌한 유체의 평균 속도 (cm/s). 충돌 중이 아니면 0
+	 */
+	UFUNCTION(BlueprintPure, Category = "Fluid Interaction|Force Feedback")
+	float GetFluidImpactSpeedForBone(FName BoneName) const;
+
+	/**
+	 * 현재 충돌 중인 유체의 충격력 크기 반환 (N)
+	 * F = ½ρCdA|v|² 공식 기반 (v는 유체의 절대 속도)
+	 * @return 총 충격력 크기 (Newton). 충돌 중이 아니면 0
+	 */
+	UFUNCTION(BlueprintPure, Category = "Fluid Interaction|Force Feedback")
+	float GetFluidImpactForceMagnitude() const;
+
+	/**
+	 * 특정 본에 충돌한 유체의 충격력 크기 반환 (N)
+	 * @param BoneName 필터링할 본 이름 (예: "head", "spine_01", "pelvis")
+	 * @return 해당 본에 충돌한 유체의 충격력 (Newton). 충돌 중이 아니면 0
+	 */
+	UFUNCTION(BlueprintPure, Category = "Fluid Interaction|Force Feedback")
+	float GetFluidImpactForceMagnitudeForBone(FName BoneName) const;
+
+	/**
+	 * 현재 충돌 중인 유체의 충격 방향 반환 (정규화된 벡터)
+	 * 여러 파티클의 속도를 평균하여 계산
+	 * @return 정규화된 충격 방향 벡터. 충돌 중이 아니면 ZeroVector
+	 */
+	UFUNCTION(BlueprintPure, Category = "Fluid Interaction|Force Feedback")
+	FVector GetFluidImpactDirection() const;
+
+	/**
+	 * 특정 본에 충돌한 유체의 충격 방향 반환 (정규화된 벡터)
+	 * @param BoneName 필터링할 본 이름 (예: "head", "spine_01", "pelvis")
+	 * @return 해당 본에 충돌한 유체의 방향 벡터. 충돌 중이 아니면 ZeroVector
+	 */
+	UFUNCTION(BlueprintPure, Category = "Fluid Interaction|Force Feedback")
+	FVector GetFluidImpactDirectionForBone(FName BoneName) const;
+
 	UFUNCTION(BlueprintCallable, Category = "Fluid Interaction")
 	int32 GetAttachedParticleCount() const { return AttachedParticleCount; }
 
@@ -576,6 +673,9 @@ private:
 
 	/** 유체 태그 이벤트 업데이트 (Enter/Exit) */
 	void UpdateFluidTagEvents();
+
+	/** 본별 충격 모니터링 및 이벤트 발생 */
+	void CheckBoneImpacts();
 
 	/** GPU Collision Feedback 자동 활성화 */
 	void EnableGPUCollisionFeedbackIfNeeded();
