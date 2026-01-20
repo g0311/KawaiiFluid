@@ -404,7 +404,16 @@ UKawaiiFluidSimulationModule* UKawaiiFluidSimulatorSubsystem::GetModuleBySourceI
 		return nullptr;
 	}
 
-	// 방법 1: AllFluidComponents에서 찾기
+	// 방법 1: SourceID 슬롯 매칭 (AllocateSourceID 결과)
+	for (UKawaiiFluidSimulationModule* Module : AllModules)
+	{
+		if (Module && Module->GetSourceID() == SourceID)
+		{
+			return Module;
+		}
+	}
+
+	// 방법 2: AllFluidComponents에서 찾기 (레거시 UniqueID 매칭)
 	for (UKawaiiFluidComponent* Component : AllFluidComponents)
 	{
 		if (Component && Component->GetUniqueID() == SourceID)
@@ -413,7 +422,7 @@ UKawaiiFluidSimulationModule* UKawaiiFluidSimulatorSubsystem::GetModuleBySourceI
 		}
 	}
 
-	// 방법 2: AllModules의 Outer(Component)에서 찾기
+	// 방법 3: AllModules의 Outer(Component)에서 찾기 (레거시 UniqueID 매칭)
 	for (UKawaiiFluidSimulationModule* Module : AllModules)
 	{
 		if (Module)

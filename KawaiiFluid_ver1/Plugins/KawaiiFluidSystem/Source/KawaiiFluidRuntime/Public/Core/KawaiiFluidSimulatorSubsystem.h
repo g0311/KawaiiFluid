@@ -185,7 +185,7 @@ public:
 
 	/**
 	 * Get Preset by SourceID (for collision event filtering)
-	 * @param SourceID Particle source ID (from FGPUCollisionFeedback::ParticleSourceID)
+	 * @param SourceID Particle source slot ID (AllocateSourceID, 0~MaxSourceCount-1)
 	 * @return Preset of the module that owns this source, or nullptr if not found
 	 */
 	UFUNCTION(BlueprintPure, Category = "KawaiiFluid|Query")
@@ -193,7 +193,7 @@ public:
 
 	/**
 	 * Get Module by SourceID
-	 * @param SourceID Particle source ID
+	 * @param SourceID Particle source slot ID (AllocateSourceID, 0~MaxSourceCount-1)
 	 * @return Module that owns this source, or nullptr if not found
 	 */
 	UKawaiiFluidSimulationModule* GetModuleBySourceID(int32 SourceID) const;
