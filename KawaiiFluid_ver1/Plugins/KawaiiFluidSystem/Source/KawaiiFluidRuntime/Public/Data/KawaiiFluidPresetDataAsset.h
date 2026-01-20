@@ -203,9 +203,23 @@ public:
 	// Adhesion Parameters
 	//========================================
 
-	/** Adhesion strength - stickiness to surfaces (characters, walls) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Adhesion", meta = (ClampMin = "0.0", ClampMax = "200.0"))
-	float AdhesionStrength = 0.5f;
+	/**
+	 * Adhesion Force Strength (Akinci 2013)
+	 * Actual force pulling fluid toward boundary surfaces
+	 * Higher values = stronger "sticking" to walls/characters
+	 * 0 = no adhesion force, 10+ = very sticky
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Adhesion", meta = (ClampMin = "0.0", ClampMax = "50.0"))
+	float AdhesionForceStrength = 5.0f;
+
+	/**
+	 * Adhesion Velocity Transfer Strength
+	 * How much fluid velocity follows moving boundary velocity
+	 * Higher values = fluid follows moving characters better
+	 * 0 = no following, 1 = full velocity match
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Adhesion", meta = (ClampMin = "0.0", ClampMax = "5.0"))
+	float AdhesionVelocityStrength = 0.5f;
 
 	/** Adhesion radius (cm) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Adhesion", meta = (ClampMin = "0.1"))
@@ -224,18 +238,7 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Adhesion", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float AdhesionBoneVelocityScale = 1.0f;
-
-	/** Detach distance threshold (cm) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Adhesion", meta = (ClampMin = "0.0"))
-	float AdhesionDetachDistance = 15.0f;
-
-	/** Detach acceleration threshold (cm/s^2) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Adhesion", meta = (ClampMin = "0.0"))
-	float AdhesionDetachAcceleration = 1000.0f;
-
-	/** Detach threshold (force above this causes detachment) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Adhesion", meta = (ClampMin = "0.0"))
-	float DetachThreshold = 500.0f;
+	
 
 	//========================================
 	// Boundary Interaction (Moving Characters/Objects)

@@ -337,8 +337,9 @@ public:
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoundaryParticle>, BoundaryParticles)
 		SHADER_PARAMETER(int32, BoundaryParticleCount)
 		SHADER_PARAMETER(int32, bUseBoundaryViscosity)
-		SHADER_PARAMETER(float, AdhesionStrength)  // 0~10, normalized for boundary viscosity
-		SHADER_PARAMETER(float, AdhesionRadius)    // Boundary viscosity influence radius (cm)
+		SHADER_PARAMETER(float, AdhesionForceStrength)     // Akinci 2013 adhesion force (0~50)
+		SHADER_PARAMETER(float, AdhesionVelocityStrength)  // Velocity transfer strength (0~5)
+		SHADER_PARAMETER(float, AdhesionRadius)            // Boundary adhesion influence radius (cm)
 		// Z-Order sorted boundary particles (same pattern as FSolveDensityPressureCS)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoundaryParticle>, SortedBoundaryParticles)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, BoundaryCellStart)
@@ -1759,7 +1760,7 @@ public:
 		SHADER_PARAMETER(FVector3f, MortonBoundsMin)
 		SHADER_PARAMETER(float, CellSize)
 		// Adhesion parameters
-		SHADER_PARAMETER(float, AdhesionStrength)
+		SHADER_PARAMETER(float, AdhesionForceStrength)
 		SHADER_PARAMETER(float, AdhesionRadius)
 		SHADER_PARAMETER(float, CohesionStrength)
 		SHADER_PARAMETER(float, SmoothingRadius)

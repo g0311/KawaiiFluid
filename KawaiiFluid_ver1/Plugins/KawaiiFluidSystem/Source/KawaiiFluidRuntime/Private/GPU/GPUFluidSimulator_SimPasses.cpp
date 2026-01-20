@@ -348,16 +348,18 @@ void FGPUFluidSimulator::AddApplyViscosityPass(
 		PassParameters->bUseBoundaryViscosity = 0;
 	}
 
-	// AdhesionStrength and AdhesionRadius for boundary viscosity
+	// Hybrid Adhesion parameters for boundary viscosity
 	if (BoundarySkinningManager.IsValid())
 	{
 		const FGPUBoundaryAdhesionParams& AdhesionParams = BoundarySkinningManager->GetBoundaryAdhesionParams();
-		PassParameters->AdhesionStrength = AdhesionParams.AdhesionStrength;
+		PassParameters->AdhesionForceStrength = AdhesionParams.AdhesionForceStrength;
+		PassParameters->AdhesionVelocityStrength = AdhesionParams.AdhesionVelocityStrength;
 		PassParameters->AdhesionRadius = AdhesionParams.AdhesionRadius;
 	}
 	else
 	{
-		PassParameters->AdhesionStrength = 0.0f;
+		PassParameters->AdhesionForceStrength = 0.0f;
+		PassParameters->AdhesionVelocityStrength = 0.0f;
 		PassParameters->AdhesionRadius = 0.0f;
 	}
 
@@ -425,13 +427,14 @@ void FGPUFluidSimulator::AddApplyViscosityPass(
 	ViscosityDebugCounter++;
 	if (ViscosityDebugCounter % 120 == 1)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[ViscosityDebug] BoundaryCount=%d, bUseBoundaryViscosity=%d, bUseZOrder=%d, SkinnedZOrder=%d, StaticZOrder=%d, AdhesionStrength=%.2f, AdhesionRadius=%.1f"),
+		UE_LOG(LogTemp, Warning, TEXT("[ViscosityDebug] BoundaryCount=%d, bUseBoundaryViscosity=%d, bUseZOrder=%d, SkinnedZOrder=%d, StaticZOrder=%d, ForceStr=%.2f, VelStr=%.2f, Radius=%.1f"),
 			PassParameters->BoundaryParticleCount,
 			PassParameters->bUseBoundaryViscosity,
 			PassParameters->bUseBoundaryZOrder,
 			bUseSkinnedZOrder ? 1 : 0,
 			bUseStaticZOrder ? 1 : 0,
-			PassParameters->AdhesionStrength,
+			PassParameters->AdhesionForceStrength,
+			PassParameters->AdhesionVelocityStrength,
 			PassParameters->AdhesionRadius);
 	}
 
@@ -571,7 +574,7 @@ void FGPUFluidSimulator::AddApplyViscosityAndCohesionPass(
 	if (BoundarySkinningManager.IsValid())
 	{
 		const FGPUBoundaryAdhesionParams& AdhesionParams = BoundarySkinningManager->GetBoundaryAdhesionParams();
-		PassParameters->AdhesionStrength = AdhesionParams.AdhesionStrength;
+		PassParameters->AdhesionStrength = AdhesionParams.AdhesionForceStrength;
 		PassParameters->AdhesionRadius = AdhesionParams.AdhesionRadius;
 	}
 	else

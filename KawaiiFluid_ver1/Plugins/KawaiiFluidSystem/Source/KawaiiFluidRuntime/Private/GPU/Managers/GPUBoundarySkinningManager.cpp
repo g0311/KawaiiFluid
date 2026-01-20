@@ -1008,7 +1008,7 @@ void FGPUBoundarySkinningManager::AddBoundaryAdhesionPass(
 		}
 
 		// Adhesion parameters
-		PassParameters->AdhesionStrength = CachedBoundaryAdhesionParams.AdhesionStrength;
+		PassParameters->AdhesionForceStrength = CachedBoundaryAdhesionParams.AdhesionForceStrength;
 		PassParameters->AdhesionRadius = CachedBoundaryAdhesionParams.AdhesionRadius;
 		PassParameters->CohesionStrength = CachedBoundaryAdhesionParams.CohesionStrength;
 		PassParameters->SmoothingRadius = Params.SmoothingRadius;
@@ -1042,7 +1042,7 @@ void FGPUBoundarySkinningManager::AddBoundaryAdhesionPass(
 		{
 			UE_LOG(LogGPUBoundarySkinning, Warning,
 				TEXT("[BoundaryAdhesionPass] Running! AdhesionStrength=%.2f, CohesionStrength=%.2f, AdhesionRadius=%.2f, SmoothingRadius=%.2f, BoundaryCount=%d, FluidCount=%d"),
-				CachedBoundaryAdhesionParams.AdhesionStrength,
+				CachedBoundaryAdhesionParams.AdhesionForceStrength,
 				CachedBoundaryAdhesionParams.CohesionStrength,
 				CachedBoundaryAdhesionParams.AdhesionRadius,
 				Params.SmoothingRadius,

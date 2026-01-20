@@ -573,7 +573,7 @@ void UKawaiiFluidSimulationContext::HandleAttachedParticlesCPU(
 	// This is already done in the main Simulate loop before substeps
 
 	// Apply adhesion for attached particles
-	if (AdhesionSolver.IsValid() && Preset->AdhesionStrength > 0.0f)
+	if (AdhesionSolver.IsValid() && Preset->AdhesionForceStrength > 0.0f)
 	{
 		// Only apply to attached particles
 		for (int32 Idx : AttachedIndices)
@@ -739,7 +739,7 @@ void UKawaiiFluidSimulationContext::SimulateGPU(
 		}
 
 		// Check if adhesion is enabled (Per-Polygon disabled actors can use GPU adhesion)
-		const bool bUseGPUAdhesion = Preset->AdhesionStrength > 0.0f;
+		const bool bUseGPUAdhesion = (Preset->AdhesionForceStrength > 0.0f || Preset->AdhesionVelocityStrength > 0.0f);
 
 		for (UFluidCollider* Collider : Params.Colliders)
 		{
@@ -862,12 +862,10 @@ void UKawaiiFluidSimulationContext::SimulateGPU(
 				{
 					FGPUAdhesionParams AdhesionParams;
 					AdhesionParams.bEnableAdhesion = 0;
-					AdhesionParams.AdhesionStrength = Preset->AdhesionStrength;
+					AdhesionParams.AdhesionStrength = Preset->AdhesionForceStrength;
 					AdhesionParams.AdhesionRadius = Preset->AdhesionRadius;
 					AdhesionParams.ColliderContactOffset = Preset->AdhesionContactOffset;
 					AdhesionParams.BoneVelocityScale = Preset->AdhesionBoneVelocityScale;
-					AdhesionParams.DetachAccelThreshold = Preset->AdhesionDetachAcceleration;
-					AdhesionParams.DetachDistanceThreshold = Preset->AdhesionDetachDistance;
 					AdhesionParams.SlidingFriction = DefaultFriction;
 					AdhesionParams.CurrentTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 					AdhesionParams.Gravity = FVector3f(Params.ExternalForce);
@@ -961,7 +959,8 @@ void UKawaiiFluidSimulationContext::SimulateGPU(
 		{
 			FGPUBoundaryAdhesionParams BoundaryAdhesionParams;
 			BoundaryAdhesionParams.bEnabled = 1;
-			BoundaryAdhesionParams.AdhesionStrength = Preset->AdhesionStrength;
+			BoundaryAdhesionParams.AdhesionForceStrength = Preset->AdhesionForceStrength;
+			BoundaryAdhesionParams.AdhesionVelocityStrength = Preset->AdhesionVelocityStrength;
 			BoundaryAdhesionParams.AdhesionRadius = Preset->AdhesionRadius;
 			BoundaryAdhesionParams.CohesionStrength = Preset->CohesionStrength;
 			BoundaryAdhesionParams.SmoothingRadius = Preset->SmoothingRadius;
@@ -1127,7 +1126,7 @@ void UKawaiiFluidSimulationContext::SimulateGPU(
 							Candidates,
 							Params.InteractionComponents,
 							Preset->ParticleRadius,
-							Preset->AdhesionStrength,  // 유체의 접착력
+							Preset->AdhesionForceStrength,  // 유체의 접착력
 							Preset->AdhesionContactOffset,
 							Corrections
 						);
@@ -2344,17 +2343,8 @@ void UKawaiiFluidSimulationContext::ApplyAdhesion(
 	const UKawaiiFluidPresetDataAsset* Preset,
 	const TArray<TObjectPtr<UFluidCollider>>& Colliders)
 {
-	if (AdhesionSolver.IsValid() && Preset->AdhesionStrength > 0.0f)
-	{
-		AdhesionSolver->Apply(
-			Particles,
-			Colliders,
-			Preset->AdhesionStrength,
-			Preset->AdhesionRadius,
-			Preset->DetachThreshold,
-			Preset->AdhesionContactOffset
-		);
-	}
+	// DEPRECATED: CPU adhesion solver is no longer used
+	// All adhesion is now handled by GPU boundary particle system (FluidApplyViscosity.usf)
 }
 
 void UKawaiiFluidSimulationContext::ApplyCohesion(

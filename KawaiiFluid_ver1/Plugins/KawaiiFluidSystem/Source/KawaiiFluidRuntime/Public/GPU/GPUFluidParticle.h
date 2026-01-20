@@ -1074,28 +1074,32 @@ static_assert(sizeof(FGPUBoundaryParticleLocal) == 32, "FGPUBoundaryParticleLoca
  */
 struct FGPUBoundaryAdhesionParams
 {
-	float AdhesionStrength;       // 4 bytes - Attraction strength to boundary particles
-	float AdhesionRadius;         // 4 bytes - Max distance for adhesion effect
-	float CohesionStrength;       // 4 bytes - Fluid-fluid cohesion near boundaries
-	float SmoothingRadius;        // 4 bytes - SPH kernel radius
-	int32 BoundaryParticleCount;  // 4 bytes - Number of boundary particles
-	int32 FluidParticleCount;     // 4 bytes - Number of fluid particles
-	float DeltaTime;              // 4 bytes - Time step
-	int32 bEnabled;               // 4 bytes - Enable flag
+	float AdhesionForceStrength;     // 4 bytes - Akinci 2013 adhesion force strength
+	float AdhesionVelocityStrength;  // 4 bytes - Velocity transfer strength
+	float AdhesionRadius;            // 4 bytes - Max distance for adhesion effect
+	float CohesionStrength;          // 4 bytes - Fluid-fluid cohesion near boundaries
+	float SmoothingRadius;           // 4 bytes - SPH kernel radius
+	int32 BoundaryParticleCount;     // 4 bytes - Number of boundary particles
+	int32 FluidParticleCount;        // 4 bytes - Number of fluid particles
+	float DeltaTime;                 // 4 bytes - Time step
+	int32 bEnabled;                  // 4 bytes - Enable flag
+	int32 Padding;                   // 4 bytes - Alignment padding
 
 	FGPUBoundaryAdhesionParams()
-		: AdhesionStrength(1.0f)
-		, AdhesionRadius(10.0f)
-		, CohesionStrength(0.5f)
+		: AdhesionForceStrength(5.0f)
+		, AdhesionVelocityStrength(0.5f)
+		, AdhesionRadius(25.0f)
+		, CohesionStrength(0.3f)
 		, SmoothingRadius(20.0f)
 		, BoundaryParticleCount(0)
 		, FluidParticleCount(0)
 		, DeltaTime(0.016f)
 		, bEnabled(0)
+		, Padding(0)
 	{
 	}
 };
-static_assert(sizeof(FGPUBoundaryAdhesionParams) == 32, "FGPUBoundaryAdhesionParams must be 32 bytes");
+static_assert(sizeof(FGPUBoundaryAdhesionParams) == 40, "FGPUBoundaryAdhesionParams must be 40 bytes");
 
 /**
  * GPU Boundary Owner AABB

@@ -59,8 +59,9 @@ struct FGPUBoundaryParticle
 StructuredBuffer<FGPUBoundaryParticle> BoundaryParticles;
 int BoundaryParticleCount;
 int bUseBoundaryViscosity;
-float AdhesionStrength;  // 0~10, normalized to 0~1 for boundary viscosity
-float AdhesionRadius;    // Boundary viscosity influence radius (cm)
+float AdhesionForceStrength;     // Akinci 2013 adhesion force (0~50)
+float AdhesionVelocityStrength;  // Velocity transfer strength (0~5)
+float AdhesionRadius;            // Boundary adhesion influence radius (cm)
 
 // Z-Order sorted boundary particles (same pattern as FluidSolveDensityPressure.usf)
 StructuredBuffer<FGPUBoundaryParticle> SortedBoundaryParticles;
@@ -73,6 +74,8 @@ float3 MortonBoundsMin;  // Required for GetMortonCellIDFromCellCoord
 float BoundaryVelocityTransferStrength;
 float BoundaryDetachSpeedThreshold;
 float BoundaryMaxDetachSpeed;
+
+// Note: AdhesionKernel is defined in FluidGPUPhysics.ush
 
 //=============================================================================
 // Z-Order Cell ID Calculation (uses shader parameters)
@@ -316,22 +319,31 @@ void ApplyViscosityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	}
 
 	//=========================================================================
-	// Boundary Particles viscosity contribution
-	// Uses boundary velocity to make fluid follow moving boundaries
-	// This enables adhesion to moving characters/objects
-	// Scaled by normalized AdhesionStrength (0~10 -> 0~1)
-	// Uses AdhesionRadius instead of SmoothingRadius for tighter influence
+	// Hybrid Boundary Adhesion System
 	//
-	// Two modes:
-	// 1. Z-Order Mode: O(K) neighbor search using Morton-sorted BoundaryCellStart/End
+	// Combines two approaches for realistic adhesion:
+	// 1. Adhesion Force (Akinci 2013): Pulls fluid toward boundary surface
+	//    - Uses AdhesionKernel that peaks at ~0.5*AdhesionRadius
+	//    - Creates actual attractive force toward boundary
+	//    - Works for both static and moving boundaries
+	//
+	// 2. Velocity Transfer: Makes fluid follow moving boundary velocity
+	//    - XSPH-style velocity averaging toward boundary velocity
+	//    - Reduces with high relative speed (natural detachment)
+	//    - Effective for fast-moving characters
+	//
+	// Two spatial search modes:
+	// 1. Z-Order Mode: O(K) neighbor search using Morton-sorted cells
 	// 2. Legacy Mode: O(M) brute-force (fallback)
 	//=========================================================================
-	if (bUseBoundaryViscosity && BoundaryParticleCount > 0 && AdhesionStrength > 0.0f && AdhesionRadius > 0.0f)
-	{
-		// Clamp AdhesionStrength to 0~1 range
-		float clampedAdhesion = saturate(AdhesionStrength);
+	float3 adhesionForce = float3(0.0f, 0.0f, 0.0f);
 
-		// Use AdhesionRadius for boundary viscosity range
+	bool bHasAdhesionForce = AdhesionForceStrength > 0.0f;
+	bool bHasVelocityTransfer = AdhesionVelocityStrength > 0.0f;
+
+	if (bUseBoundaryViscosity && BoundaryParticleCount > 0 && AdhesionRadius > 0.0f && (bHasAdhesionForce || bHasVelocityTransfer))
+	{
+		// Use AdhesionRadius for boundary influence range
 		float adhesionRadius_m = AdhesionRadius * CM_TO_M;
 		float adhesionRadius2 = adhesionRadius_m * adhesionRadius_m;
 
@@ -365,24 +377,53 @@ void ApplyViscosityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 							FGPUBoundaryParticle boundary = SortedBoundaryParticles[bi];
 							float3 r_cm = pos - boundary.Position;
 							float r2_cm = dot(r_cm, r_cm);
+							float r_cm_len = sqrt(r2_cm);
 							float r2 = r2_cm * CM_TO_M_SQ;
+							float r_m = r_cm_len * CM_TO_M;
 
 							if (r2 < adhesionRadius2 && r2 > SMALL_NUMBER)
 							{
-								// Use adhesionRadius for kernel instead of smoothingRadius
-								float w = Poly6Kernel(r2, adhesionRadius2) * Poly6Coeff;
+								//=============================================
+								// 1. Adhesion Force (Akinci 2013)
+								// Pulls fluid toward boundary surface
+								//=============================================
+								if (bHasAdhesionForce)
+								{
+									// Direction from fluid to boundary (pull direction)
+									float3 pullDir = -r_cm / r_cm_len;
 
-								// Relative velocity based transfer (improved version)
-								// Low relative speed = high transfer, high = low transfer (natural detachment)
-								float3 relativeVelocity = vel - boundary.Velocity;
-								float relativeSpeed = length(relativeVelocity);
+									// Adhesion kernel: peaks at 0.5*h, zero at 0 and h
+									float A = AdhesionKernel(r_m, adhesionRadius_m);
 
-								float detachFactor = smoothstep(BoundaryDetachSpeedThreshold, BoundaryMaxDetachSpeed, relativeSpeed);
-								float transferFactor = (1.0f - detachFactor) * BoundaryVelocityTransferStrength;
+									// Adhesion force: F = strength * psi * A(r) * direction
+									// Scale by CM_TO_M to get proper acceleration in cm/s²
+									adhesionForce += AdhesionForceStrength * boundary.Psi * A * pullDir * 100.0f;
+								}
 
-								float3 velDiff = boundary.Velocity - vel;
-								velocityCorrection += velDiff * w * boundary.Psi * clampedAdhesion * transferFactor;
-								weightSum += w * boundary.Psi * clampedAdhesion * transferFactor;
+								//=============================================
+								// 2. Velocity Transfer (XSPH-style)
+								// Makes fluid follow moving boundaries
+								//=============================================
+								if (bHasVelocityTransfer)
+								{
+									// Distance-based weight (Poly6 for smooth falloff)
+									float w = Poly6Kernel(r2, adhesionRadius2) * Poly6Coeff;
+
+									// Relative velocity based detachment
+									// High relative speed = natural separation
+									float3 relativeVelocity = vel - boundary.Velocity;
+									float relativeSpeed = length(relativeVelocity);
+
+									float detachFactor = smoothstep(BoundaryDetachSpeedThreshold, BoundaryMaxDetachSpeed, relativeSpeed);
+									float transferFactor = (1.0f - detachFactor) * BoundaryVelocityTransferStrength;
+
+									// Velocity difference (boundary - fluid)
+									float3 velDiff = boundary.Velocity - vel;
+
+									// Accumulate velocity correction
+									velocityCorrection += velDiff * w * boundary.Psi * AdhesionVelocityStrength * transferFactor;
+									weightSum += w * boundary.Psi * AdhesionVelocityStrength * transferFactor;
+								}
 							}
 						}
 					}
@@ -399,24 +440,53 @@ void ApplyViscosityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 				FGPUBoundaryParticle boundary = BoundaryParticles[bi];
 				float3 r_cm = pos - boundary.Position;
 				float r2_cm = dot(r_cm, r_cm);
+				float r_cm_len = sqrt(r2_cm);
 				float r2 = r2_cm * CM_TO_M_SQ;
+				float r_m = r_cm_len * CM_TO_M;
 
 				if (r2 < adhesionRadius2 && r2 > SMALL_NUMBER)
 				{
-					// Use adhesionRadius for kernel instead of smoothingRadius
-					float w = Poly6Kernel(r2, adhesionRadius2) * Poly6Coeff;
+					//=============================================
+					// 1. Adhesion Force (Akinci 2013)
+					// Pulls fluid toward boundary surface
+					//=============================================
+					if (bHasAdhesionForce)
+					{
+						// Direction from fluid to boundary (pull direction)
+						float3 pullDir = -r_cm / r_cm_len;
 
-					// Relative velocity based transfer (improved version)
-					// Low relative speed = high transfer, high = low transfer (natural detachment)
-					float3 relativeVelocity = vel - boundary.Velocity;
-					float relativeSpeed = length(relativeVelocity);
+						// Adhesion kernel: peaks at 0.5*h, zero at 0 and h
+						float A = AdhesionKernel(r_m, adhesionRadius_m);
 
-					float detachFactor = smoothstep(BoundaryDetachSpeedThreshold, BoundaryMaxDetachSpeed, relativeSpeed);
-					float transferFactor = (1.0f - detachFactor) * BoundaryVelocityTransferStrength;
+						// Adhesion force: F = strength * psi * A(r) * direction
+						// Scale by CM_TO_M to get proper acceleration in cm/s²
+						adhesionForce += AdhesionForceStrength * boundary.Psi * A * pullDir * 100.0f;
+					}
 
-					float3 velDiff = boundary.Velocity - vel;
-					velocityCorrection += velDiff * w * boundary.Psi * clampedAdhesion * transferFactor;
-					weightSum += w * boundary.Psi * clampedAdhesion * transferFactor;
+					//=============================================
+					// 2. Velocity Transfer (XSPH-style)
+					// Makes fluid follow moving boundaries
+					//=============================================
+					if (bHasVelocityTransfer)
+					{
+						// Distance-based weight (Poly6 for smooth falloff)
+						float w = Poly6Kernel(r2, adhesionRadius2) * Poly6Coeff;
+
+						// Relative velocity based detachment
+						// High relative speed = natural separation
+						float3 relativeVelocity = vel - boundary.Velocity;
+						float relativeSpeed = length(relativeVelocity);
+
+						float detachFactor = smoothstep(BoundaryDetachSpeedThreshold, BoundaryMaxDetachSpeed, relativeSpeed);
+						float transferFactor = (1.0f - detachFactor) * BoundaryVelocityTransferStrength;
+
+						// Velocity difference (boundary - fluid)
+						float3 velDiff = boundary.Velocity - vel;
+
+						// Accumulate velocity correction
+						velocityCorrection += velDiff * w * boundary.Psi * AdhesionVelocityStrength * transferFactor;
+						weightSum += w * boundary.Psi * AdhesionVelocityStrength * transferFactor;
+					}
 				}
 			}
 		}
@@ -464,6 +534,14 @@ void ApplyViscosityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		float damping = 1.0f - dragCoeff * DeltaTime;
 		damping = max(damping, 0.0f);  // Clamp to prevent negative/reversal
 		particle.Velocity *= damping;
+	}
+
+	// 4. Apply Adhesion Force (Akinci 2013)
+	// This pulls fluid toward boundary surfaces
+	// v' = v + F_adhesion * dt
+	if (length(adhesionForce) > SMALL_NUMBER)
+	{
+		particle.Velocity += adhesionForce * DeltaTime;
 	}
 
 	Particles[idx] = particle;

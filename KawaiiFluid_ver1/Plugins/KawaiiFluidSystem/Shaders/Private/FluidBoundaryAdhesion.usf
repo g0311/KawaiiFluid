@@ -57,7 +57,7 @@ float3 MortonBoundsMin;
 float CellSize;  // Cell size for Morton code calculation
 
 // Parameters
-float AdhesionStrength;
+float AdhesionForceStrength;
 float AdhesionRadius;
 float CohesionStrength;
 float SmoothingRadius;
@@ -234,14 +234,15 @@ void BoundaryAdhesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 						{
 							float3 r_normalized = r_vec / r;
 
-							// Distance-based strength: closer = stronger adhesion
-							// r=0 → closeFactor=6, r=h → closeFactor=1
-							float closeFactor = 1.0 + 5.0 * (1.0 - r / h);
+							// Distance-based strength: exponential decay
+							// r=0 → closeFactor=10.0, very strong at close range
+							// r=h → closeFactor≈3.68, still has significant influence at boundary
+							float closeFactor = 50.0 * exp(-r / h);
 
 							// Adhesion force (Akinci 2013)
 							// F_adhesion = -beta * m_i * psi_b * A(r,h) * r_normalized
 							float A = AdhesionKernel(r, h);
-							adhesionForce -= AdhesionStrength * particle.Mass * closeFactor * A * r_normalized;
+							adhesionForce -= AdhesionForceStrength * particle.Mass * closeFactor * A * r_normalized;
 
 							// Cohesion force (surface tension at boundary)
 							// F_cohesion = -gamma * m_i * psi_b * C(r,h) * r_normalized
@@ -288,14 +289,15 @@ void BoundaryAdhesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 						{
 							float3 r_normalized = r_vec / r;
 
-							// Distance-based strength: closer = stronger adhesion
-							// r=0 → closeFactor=6, r=h → closeFactor=1
-							float closeFactor = 1.0 + 5.0 * (1.0 - r / h);
+							// Distance-based strength: exponential decay
+							// r=0 → closeFactor=10.0, very strong at close range
+							// r=h → closeFactor≈3.68, still has significant influence at boundary
+							float closeFactor = 10.0 * exp(-r / h);
 
 							// Adhesion force (Akinci 2013)
 							// F_adhesion = -beta * m_i * psi_b * A(r,h) * r_normalized
 							float A = AdhesionKernel(r, h);
-							adhesionForce -= AdhesionStrength * particle.Mass * closeFactor * A * r_normalized;
+							adhesionForce -= AdhesionForceStrength * particle.Mass * closeFactor * A * r_normalized;
 
 							// Cohesion force (surface tension at boundary)
 							// F_cohesion = -gamma * m_i * psi_b * C(r,h) * r_normalized
@@ -311,12 +313,9 @@ void BoundaryAdhesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		}
 	}
 
-	// Normalize forces by weight sum (average instead of accumulate)
-	if (weightSum > 0.0001f)
-	{
-		adhesionForce /= weightSum;
-		cohesionForce /= weightSum;
-	}
+	// Note: Force normalization removed to allow proper force accumulation
+	// Previously divided by weightSum which caused weak adhesion with many boundary particles
+	// Now forces accumulate naturally - more neighbors = stronger adhesion
 
 	// Apply forces to velocity
 	float3 totalForce = adhesionForce + cohesionForce;
