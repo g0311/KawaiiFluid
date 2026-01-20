@@ -21,7 +21,14 @@
 
 UKawaiiFluidSimulationModule::UKawaiiFluidSimulationModule()
 {
-	// Calculate initial bounds (uses GridResolutionPreset default = Medium)
+	// Initialize default volume size based on Medium Z-Order preset and CellSize
+	// Formula: GridResolution(Medium) * CellSize = 128 * CellSize
+	const float MediumGridResolution = static_cast<float>(GridResolutionPresetHelper::GetGridResolution(EGridResolutionPreset::Medium));
+	const float DefaultVolumeSize = MediumGridResolution * CellSize;
+	UniformVolumeSize = DefaultVolumeSize;
+	VolumeSize = FVector(DefaultVolumeSize);
+
+	// Calculate initial bounds
 	RecalculateVolumeBounds();
 }
 
@@ -301,6 +308,58 @@ void UKawaiiFluidSimulationModule::PostEditChangeProperty(FPropertyChangedEvent&
 			UpdateVolumeInfoDisplay();
 		}
 	}
+	// bUniformSize 체크박스 변경 시 - Sync values between uniform and non-uniform
+	else if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationModule, bUniformSize))
+	{
+		if (!TargetSimulationVolume)
+		{
+			if (bUniformSize)
+			{
+				// When switching to uniform, use the max axis of VolumeSize
+				UniformVolumeSize = FMath::Max3(VolumeSize.X, VolumeSize.Y, VolumeSize.Z);
+			}
+			else
+			{
+				// When switching to non-uniform, copy uniform to all axes
+				VolumeSize = FVector(UniformVolumeSize);
+			}
+			RecalculateVolumeBounds();
+		}
+	}
+	// UniformVolumeSize 변경 시 - Clamp and recalculate
+	else if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationModule, UniformVolumeSize))
+	{
+		if (!TargetSimulationVolume)
+		{
+			// Clamp to max supported (Large preset max * 2 for full size)
+			const float EffectiveCellSize = FMath::Max(CellSize, 1.0f);
+			const float MaxFullSize = GridResolutionPresetHelper::GetMaxExtentForPreset(EGridResolutionPreset::Large, EffectiveCellSize) * 2.0f;
+			UniformVolumeSize = FMath::Clamp(UniformVolumeSize, 10.0f, MaxFullSize);
+			RecalculateVolumeBounds();
+		}
+	}
+	// VolumeSize 변경 시 - Clamp and recalculate
+	else if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationModule, VolumeSize))
+	{
+		if (!TargetSimulationVolume)
+		{
+			// Clamp each axis to max supported
+			const float EffectiveCellSize = FMath::Max(CellSize, 1.0f);
+			const float MaxFullSize = GridResolutionPresetHelper::GetMaxExtentForPreset(EGridResolutionPreset::Large, EffectiveCellSize) * 2.0f;
+			VolumeSize.X = FMath::Clamp(VolumeSize.X, 10.0f, MaxFullSize);
+			VolumeSize.Y = FMath::Clamp(VolumeSize.Y, 10.0f, MaxFullSize);
+			VolumeSize.Z = FMath::Clamp(VolumeSize.Z, 10.0f, MaxFullSize);
+			RecalculateVolumeBounds();
+		}
+	}
+	// VolumeRotation 변경 시 - Recalculate bounds (OBB → AABB expansion)
+	else if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationModule, VolumeRotation))
+	{
+		if (!TargetSimulationVolume)
+		{
+			RecalculateVolumeBounds();
+		}
+	}
 }
 #endif
 
@@ -420,25 +479,76 @@ FKawaiiFluidSimulationParams UKawaiiFluidSimulationModule::BuildSimulationParams
 		Params.StaticBoundaryParticleSpacing = OwnerComp->StaticBoundaryParticleSpacing;
 	}
 
-	// Containment bounds for GPU collision (supports OBB with rotation)
-	if (bEnableContainment)
+	// Unified Simulation Volume for containment collision (always enabled)
+	// Check if using external volume
+	if (UKawaiiFluidSimulationVolumeComponent* ExternalVolume = GetTargetVolumeComponent())
 	{
-		// OBB parameters (Center, Extent, Rotation)
-		Params.BoundsCenter = ContainmentCenter;
-		Params.BoundsExtent = ContainmentExtent;
-		Params.BoundsRotation = ContainmentRotation;
+		if (IsUsingExternalVolume())
+		{
+			// Use external volume's location and user-defined size for containment
+			Params.BoundsCenter = ExternalVolume->GetComponentLocation();
+			Params.BoundsExtent = ExternalVolume->GetVolumeHalfExtent();
+			Params.BoundsRotation = FQuat::Identity;  // External volumes are axis-aligned
 
-		// Also compute AABB from OBB for legacy/fallback
-		// For rotated box, compute the axis-aligned bounding box
+			// AABB is the same as OBB for axis-aligned volumes
+			Params.WorldBounds = FBox(
+				Params.BoundsCenter - Params.BoundsExtent,
+				Params.BoundsCenter + Params.BoundsExtent
+			);
+
+			// Use external volume's collision parameters
+			Params.BoundsRestitution = ExternalVolume->GetWallBounce();
+			Params.BoundsFriction = ExternalVolume->GetWallFriction();
+		}
+		else
+		{
+			// Internal volume - use module's own settings
+			Params.BoundsCenter = VolumeCenter;
+			Params.BoundsExtent = GridResolutionPresetHelper::ClampExtentToMaxSupported(GetVolumeHalfExtent(), CellSize);
+			Params.BoundsRotation = VolumeRotationQuat;
+
+			// Compute AABB from OBB for rotated internal volumes
+			FVector RotatedExtents[8];
+			for (int32 i = 0; i < 8; ++i)
+			{
+				FVector Corner(
+					(i & 1) ? Params.BoundsExtent.X : -Params.BoundsExtent.X,
+					(i & 2) ? Params.BoundsExtent.Y : -Params.BoundsExtent.Y,
+					(i & 4) ? Params.BoundsExtent.Z : -Params.BoundsExtent.Z
+				);
+				RotatedExtents[i] = VolumeRotationQuat.RotateVector(Corner);
+			}
+
+			FVector AABBMin = RotatedExtents[0];
+			FVector AABBMax = RotatedExtents[0];
+			for (int32 i = 1; i < 8; ++i)
+			{
+				AABBMin = AABBMin.ComponentMin(RotatedExtents[i]);
+				AABBMax = AABBMax.ComponentMax(RotatedExtents[i]);
+			}
+
+			Params.WorldBounds = FBox(VolumeCenter + AABBMin, VolumeCenter + AABBMax);
+			Params.BoundsRestitution = WallBounce;
+			Params.BoundsFriction = WallFriction;
+		}
+	}
+	else
+	{
+		// Fallback: use internal volume settings
+		Params.BoundsCenter = VolumeCenter;
+		Params.BoundsExtent = GridResolutionPresetHelper::ClampExtentToMaxSupported(GetVolumeHalfExtent(), CellSize);
+		Params.BoundsRotation = VolumeRotationQuat;
+
+		// Compute AABB from OBB
 		FVector RotatedExtents[8];
 		for (int32 i = 0; i < 8; ++i)
 		{
 			FVector Corner(
-				(i & 1) ? ContainmentExtent.X : -ContainmentExtent.X,
-				(i & 2) ? ContainmentExtent.Y : -ContainmentExtent.Y,
-				(i & 4) ? ContainmentExtent.Z : -ContainmentExtent.Z
+				(i & 1) ? Params.BoundsExtent.X : -Params.BoundsExtent.X,
+				(i & 2) ? Params.BoundsExtent.Y : -Params.BoundsExtent.Y,
+				(i & 4) ? Params.BoundsExtent.Z : -Params.BoundsExtent.Z
 			);
-			RotatedExtents[i] = ContainmentRotation.RotateVector(Corner);
+			RotatedExtents[i] = VolumeRotationQuat.RotateVector(Corner);
 		}
 
 		FVector AABBMin = RotatedExtents[0];
@@ -449,9 +559,9 @@ FKawaiiFluidSimulationParams UKawaiiFluidSimulationModule::BuildSimulationParams
 			AABBMax = AABBMax.ComponentMax(RotatedExtents[i]);
 		}
 
-		Params.WorldBounds = FBox(ContainmentCenter + AABBMin, ContainmentCenter + AABBMax);
-		Params.BoundsRestitution = ContainmentRestitution;
-		Params.BoundsFriction = ContainmentFriction;
+		Params.WorldBounds = FBox(VolumeCenter + AABBMin, VolumeCenter + AABBMax);
+		Params.BoundsRestitution = WallBounce;
+		Params.BoundsFriction = WallFriction;
 	}
 
 	// Event Settings
@@ -1729,38 +1839,116 @@ int32 UKawaiiFluidSimulationModule::SpawnParticlesCylinderByCount(FVector Center
 }
 
 //========================================
-// Containment Volume
+// Simulation Bounds API
 //========================================
 
+void UKawaiiFluidSimulationModule::SetSimulationVolume(const FVector& Size, const FRotator& Rotation, float Bounce, float Friction)
+{
+	// Size is full size, convert to half-extent for internal storage
+	const FVector HalfExtent = Size * 0.5f;
+
+	// Clamp half-extent to maximum supported by Large preset
+	const float EffectiveCellSize = FMath::Max(CellSize, 1.0f);
+	const FVector ClampedHalfExtent = GridResolutionPresetHelper::ClampExtentToMaxSupported(HalfExtent, EffectiveCellSize);
+	const FVector ClampedFullSize = ClampedHalfExtent * 2.0f;
+
+	// Update the appropriate size property based on current bUniformSize setting
+	// Note: bUniformSize is user-controlled from editor, don't modify it here
+	if (bUniformSize)
+	{
+		UniformVolumeSize = FMath::Max3(ClampedFullSize.X, ClampedFullSize.Y, ClampedFullSize.Z);
+	}
+	else
+	{
+		VolumeSize = ClampedFullSize;
+	}
+
+	VolumeRotation = Rotation;
+	WallBounce = FMath::Clamp(Bounce, 0.0f, 1.0f);
+	WallFriction = FMath::Clamp(Friction, 0.0f, 1.0f);
+
+	// Recalculate bounds (auto-selects Z-Order preset)
+	RecalculateVolumeBounds();
+}
+
+// Legacy API - deprecated
 void UKawaiiFluidSimulationModule::SetContainment(bool bEnabled, const FVector& Center, const FVector& Extent,
                                                    const FQuat& Rotation, float Restitution, float Friction)
 {
-	// UPROPERTY 값들은 에디터에서 설정, Center와 Rotation은 동적으로 설정됨
-	bEnableContainment = bEnabled;
-	ContainmentCenter = Center;
-	ContainmentExtent = Extent;
-	ContainmentRotation = Rotation;
-	ContainmentRestitution = FMath::Clamp(Restitution, 0.0f, 1.0f);
-	ContainmentFriction = FMath::Clamp(Friction, 0.0f, 1.0f);
+	// Map to new unified API (ignoring bEnabled and Center since containment is always enabled)
+	// Extent is half-extent in legacy API, convert to full size
+	const float EffectiveCellSize = FMath::Max(CellSize, 1.0f);
+	const FVector ClampedHalfExtent = GridResolutionPresetHelper::ClampExtentToMaxSupported(Extent, EffectiveCellSize);
+	const FVector ClampedFullSize = ClampedHalfExtent * 2.0f;
+
+	// Update the appropriate size property based on current bUniformSize setting
+	// Note: bUniformSize is user-controlled from editor, don't modify it here
+	if (bUniformSize)
+	{
+		UniformVolumeSize = FMath::Max3(ClampedFullSize.X, ClampedFullSize.Y, ClampedFullSize.Z);
+	}
+	else
+	{
+		VolumeSize = ClampedFullSize;
+	}
+
+	VolumeRotation = Rotation.Rotator();
+	VolumeCenter = Center;  // Set center directly
+	VolumeRotationQuat = Rotation;
+	WallBounce = FMath::Clamp(Restitution, 0.0f, 1.0f);
+	WallFriction = FMath::Clamp(Friction, 0.0f, 1.0f);
 }
 
-void UKawaiiFluidSimulationModule::ResolveContainmentCollisions()
+void UKawaiiFluidSimulationModule::ResolveVolumeBoundaryCollisions()
 {
-	if (!bEnableContainment)
+	// Determine bounds parameters based on whether using external or internal volume
+	FVector EffectiveCenter;
+	FVector EffectiveHalfExtent;
+	FQuat EffectiveRotation;
+	float EffectiveBounce;
+	float EffectiveFriction;
+
+	if (UKawaiiFluidSimulationVolumeComponent* ExternalVolume = GetTargetVolumeComponent())
 	{
-		return;
+		if (IsUsingExternalVolume())
+		{
+			// Use external volume's parameters
+			EffectiveCenter = ExternalVolume->GetComponentLocation();
+			EffectiveHalfExtent = ExternalVolume->GetVolumeHalfExtent();
+			EffectiveRotation = FQuat::Identity;  // External volumes are axis-aligned
+			EffectiveBounce = ExternalVolume->GetWallBounce();
+			EffectiveFriction = ExternalVolume->GetWallFriction();
+		}
+		else
+		{
+			// Use internal volume parameters
+			EffectiveCenter = VolumeCenter;
+			EffectiveHalfExtent = GridResolutionPresetHelper::ClampExtentToMaxSupported(GetVolumeHalfExtent(), CellSize);
+			EffectiveRotation = VolumeRotationQuat;
+			EffectiveBounce = WallBounce;
+			EffectiveFriction = WallFriction;
+		}
+	}
+	else
+	{
+		// Fallback to internal parameters
+		EffectiveCenter = VolumeCenter;
+		EffectiveHalfExtent = GridResolutionPresetHelper::ClampExtentToMaxSupported(GetVolumeHalfExtent(), CellSize);
+		EffectiveRotation = VolumeRotationQuat;
+		EffectiveBounce = WallBounce;
+		EffectiveFriction = WallFriction;
 	}
 
 	// OBB (Oriented Bounding Box) 충돌 처리
 	// 파티클을 로컬 공간으로 변환하여 AABB 충돌 체크 후 다시 월드로 변환
-	const FQuat InverseRotation = ContainmentRotation.Inverse();
-	const FVector LocalBoxMin = -ContainmentExtent;
-	const FVector LocalBoxMax = ContainmentExtent;
+	const FQuat InverseRotation = EffectiveRotation.Inverse();
+	const FVector LocalBoxMin = -EffectiveHalfExtent;
+	const FVector LocalBoxMax = EffectiveHalfExtent;
 
 	for (FFluidParticle& P : Particles)
 	{
 		// 월드 -> 로컬 변환
-		FVector LocalPos = InverseRotation.RotateVector(P.PredictedPosition - ContainmentCenter);
+		FVector LocalPos = InverseRotation.RotateVector(P.PredictedPosition - EffectiveCenter);
 		FVector LocalVel = InverseRotation.RotateVector(P.Velocity);
 		bool bCollided = false;
 
@@ -1771,10 +1959,10 @@ void UKawaiiFluidSimulationModule::ResolveContainmentCollisions()
 			LocalPos.X = LocalBoxMin.X;
 			if (LocalVel.X < 0.0f)
 			{
-				LocalVel.X = -LocalVel.X * ContainmentRestitution;
+				LocalVel.X = -LocalVel.X * EffectiveBounce;
 			}
-			LocalVel.Y *= (1.0f - ContainmentFriction);
-			LocalVel.Z *= (1.0f - ContainmentFriction);
+			LocalVel.Y *= (1.0f - EffectiveFriction);
+			LocalVel.Z *= (1.0f - EffectiveFriction);
 			bCollided = true;
 		}
 		else if (LocalPos.X > LocalBoxMax.X)
@@ -1782,10 +1970,10 @@ void UKawaiiFluidSimulationModule::ResolveContainmentCollisions()
 			LocalPos.X = LocalBoxMax.X;
 			if (LocalVel.X > 0.0f)
 			{
-				LocalVel.X = -LocalVel.X * ContainmentRestitution;
+				LocalVel.X = -LocalVel.X * EffectiveBounce;
 			}
-			LocalVel.Y *= (1.0f - ContainmentFriction);
-			LocalVel.Z *= (1.0f - ContainmentFriction);
+			LocalVel.Y *= (1.0f - EffectiveFriction);
+			LocalVel.Z *= (1.0f - EffectiveFriction);
 			bCollided = true;
 		}
 
@@ -1795,10 +1983,10 @@ void UKawaiiFluidSimulationModule::ResolveContainmentCollisions()
 			LocalPos.Y = LocalBoxMin.Y;
 			if (LocalVel.Y < 0.0f)
 			{
-				LocalVel.Y = -LocalVel.Y * ContainmentRestitution;
+				LocalVel.Y = -LocalVel.Y * EffectiveBounce;
 			}
-			LocalVel.X *= (1.0f - ContainmentFriction);
-			LocalVel.Z *= (1.0f - ContainmentFriction);
+			LocalVel.X *= (1.0f - EffectiveFriction);
+			LocalVel.Z *= (1.0f - EffectiveFriction);
 			bCollided = true;
 		}
 		else if (LocalPos.Y > LocalBoxMax.Y)
@@ -1806,10 +1994,10 @@ void UKawaiiFluidSimulationModule::ResolveContainmentCollisions()
 			LocalPos.Y = LocalBoxMax.Y;
 			if (LocalVel.Y > 0.0f)
 			{
-				LocalVel.Y = -LocalVel.Y * ContainmentRestitution;
+				LocalVel.Y = -LocalVel.Y * EffectiveBounce;
 			}
-			LocalVel.X *= (1.0f - ContainmentFriction);
-			LocalVel.Z *= (1.0f - ContainmentFriction);
+			LocalVel.X *= (1.0f - EffectiveFriction);
+			LocalVel.Z *= (1.0f - EffectiveFriction);
 			bCollided = true;
 		}
 
@@ -1819,10 +2007,10 @@ void UKawaiiFluidSimulationModule::ResolveContainmentCollisions()
 			LocalPos.Z = LocalBoxMin.Z;
 			if (LocalVel.Z < 0.0f)
 			{
-				LocalVel.Z = -LocalVel.Z * ContainmentRestitution;
+				LocalVel.Z = -LocalVel.Z * EffectiveBounce;
 			}
-			LocalVel.X *= (1.0f - ContainmentFriction);
-			LocalVel.Y *= (1.0f - ContainmentFriction);
+			LocalVel.X *= (1.0f - EffectiveFriction);
+			LocalVel.Y *= (1.0f - EffectiveFriction);
 			bCollided = true;
 		}
 		else if (LocalPos.Z > LocalBoxMax.Z)
@@ -1830,21 +2018,27 @@ void UKawaiiFluidSimulationModule::ResolveContainmentCollisions()
 			LocalPos.Z = LocalBoxMax.Z;
 			if (LocalVel.Z > 0.0f)
 			{
-				LocalVel.Z = -LocalVel.Z * ContainmentRestitution;
+				LocalVel.Z = -LocalVel.Z * EffectiveBounce;
 			}
-			LocalVel.X *= (1.0f - ContainmentFriction);
-			LocalVel.Y *= (1.0f - ContainmentFriction);
+			LocalVel.X *= (1.0f - EffectiveFriction);
+			LocalVel.Y *= (1.0f - EffectiveFriction);
 			bCollided = true;
 		}
 
 		// 로컬 -> 월드 변환하여 Position/Velocity 업데이트
 		if (bCollided)
 		{
-			P.PredictedPosition = ContainmentCenter + ContainmentRotation.RotateVector(LocalPos);
+			P.PredictedPosition = EffectiveCenter + EffectiveRotation.RotateVector(LocalPos);
 			P.Position = P.PredictedPosition;
-			P.Velocity = ContainmentRotation.RotateVector(LocalVel);
+			P.Velocity = EffectiveRotation.RotateVector(LocalVel);
 		}
 	}
+}
+
+// Legacy - redirects to new function
+void UKawaiiFluidSimulationModule::ResolveContainmentCollisions()
+{
+	ResolveVolumeBoundaryCollisions();
 }
 
 //========================================
@@ -1919,12 +2113,111 @@ void UKawaiiFluidSimulationModule::RecalculateVolumeBounds()
 	// Ensure valid CellSize
 	CellSize = FMath::Max(CellSize, 1.0f);
 
-	// Update grid parameters from preset
+	// Get the maximum half-extent supported by Large preset
+	const float LargeMaxHalfExtent = GridResolutionPresetHelper::GetMaxExtentForPreset(EGridResolutionPreset::Large, CellSize);
+
+	// Get current half-extent from VolumeSize (full size / 2)
+	const FVector OriginalHalfExtent = GetVolumeHalfExtent();
+
+	// First pass: Clamp half-extent to Large max (without rotation)
+	FVector WorkingHalfExtent = GridResolutionPresetHelper::ClampExtentToMaxSupported(OriginalHalfExtent, CellSize);
+
+	// Compute rotation quaternion
+	VolumeRotationQuat = VolumeRotation.Quaternion();
+
+	// Calculate the AABB extent for the rotated OBB
+	FVector EffectiveHalfExtent = WorkingHalfExtent;
+
+	// Helper lambda to compute AABB half-extent from OBB half-extent and rotation
+	auto ComputeRotatedAABBHalfExtent = [this](const FVector& OBBHalfExtent) -> FVector
+	{
+		if (VolumeRotationQuat.Equals(FQuat::Identity))
+		{
+			return OBBHalfExtent;
+		}
+
+		FVector RotatedCorners[8];
+		for (int32 i = 0; i < 8; ++i)
+		{
+			FVector Corner(
+				(i & 1) ? OBBHalfExtent.X : -OBBHalfExtent.X,
+				(i & 2) ? OBBHalfExtent.Y : -OBBHalfExtent.Y,
+				(i & 4) ? OBBHalfExtent.Z : -OBBHalfExtent.Z
+			);
+			RotatedCorners[i] = VolumeRotationQuat.RotateVector(Corner);
+		}
+
+		FVector AABBMin = RotatedCorners[0];
+		FVector AABBMax = RotatedCorners[0];
+		for (int32 i = 1; i < 8; ++i)
+		{
+			AABBMin = AABBMin.ComponentMin(RotatedCorners[i]);
+			AABBMax = AABBMax.ComponentMax(RotatedCorners[i]);
+		}
+
+		return FVector(
+			FMath::Max(FMath::Abs(AABBMin.X), FMath::Abs(AABBMax.X)),
+			FMath::Max(FMath::Abs(AABBMin.Y), FMath::Abs(AABBMax.Y)),
+			FMath::Max(FMath::Abs(AABBMin.Z), FMath::Abs(AABBMax.Z))
+		);
+	};
+
+	if (!VolumeRotationQuat.Equals(FQuat::Identity))
+	{
+		// Compute rotated AABB
+		EffectiveHalfExtent = ComputeRotatedAABBHalfExtent(WorkingHalfExtent);
+
+		// Check if rotated AABB exceeds Large preset limits
+		const float MaxAABBHalfExtent = FMath::Max3(EffectiveHalfExtent.X, EffectiveHalfExtent.Y, EffectiveHalfExtent.Z);
+		if (MaxAABBHalfExtent > LargeMaxHalfExtent)
+		{
+			// Scale down the original extent proportionally so rotated AABB fits within Large
+			const float ScaleFactor = LargeMaxHalfExtent / MaxAABBHalfExtent;
+			WorkingHalfExtent = WorkingHalfExtent * ScaleFactor;
+
+			// Recompute rotated AABB with scaled extent
+			EffectiveHalfExtent = ComputeRotatedAABBHalfExtent(WorkingHalfExtent);
+		}
+	}
+
+	// Apply final extent if different from original (update VolumeSize/UniformVolumeSize)
+	if (!WorkingHalfExtent.Equals(OriginalHalfExtent, 0.01f))
+	{
+		const bool bWasRotated = !VolumeRotationQuat.Equals(FQuat::Identity);
+		const FVector OriginalSize = OriginalHalfExtent * 2.0f;
+		const FVector NewSize = WorkingHalfExtent * 2.0f;
+
+		if (bWasRotated)
+		{
+			const float RotatedAABB = FMath::Max3(ComputeRotatedAABBHalfExtent(OriginalHalfExtent).X,
+			                                       ComputeRotatedAABBHalfExtent(OriginalHalfExtent).Y,
+			                                       ComputeRotatedAABBHalfExtent(OriginalHalfExtent).Z);
+			UE_LOG(LogTemp, Warning, TEXT("VolumeSize adjusted: Rotated AABB (%.1f cm) exceeds limit (%.1f cm). Size scaled from (%s) to (%s)"),
+				RotatedAABB * 2.0f, LargeMaxHalfExtent * 2.0f, *OriginalSize.ToString(), *NewSize.ToString());
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("VolumeSize exceeds limit (%.1f cm per axis). Clamped from (%s) to (%s)"),
+				LargeMaxHalfExtent * 2.0f, *OriginalSize.ToString(), *NewSize.ToString());
+		}
+
+		// Update the stored size values
+		VolumeSize = NewSize;
+		if (bUniformSize)
+		{
+			UniformVolumeSize = FMath::Max3(NewSize.X, NewSize.Y, NewSize.Z);
+		}
+	}
+
+	// Auto-select the smallest Z-Order preset that can contain the volume
+	GridResolutionPreset = GridResolutionPresetHelper::SelectPresetForExtent(EffectiveHalfExtent, CellSize);
+
+	// Update grid parameters from auto-selected preset
 	GridAxisBits = GridResolutionPresetHelper::GetAxisBits(GridResolutionPreset);
 	GridResolution = GridResolutionPresetHelper::GetGridResolution(GridResolutionPreset);
 	MaxCells = GridResolutionPresetHelper::GetMaxCells(GridResolutionPreset);
 
-	// Calculate bounds extent from grid resolution and cell size
+	// Calculate Z-Order bounds extent from grid resolution and cell size
 	BoundsExtent = static_cast<float>(GridResolution) * CellSize;
 
 	// Get owner location for bounds center
@@ -1934,7 +2227,10 @@ void UKawaiiFluidSimulationModule::RecalculateVolumeBounds()
 		OwnerLocation = Owner->GetActorLocation();
 	}
 
-	// Calculate world bounds (centered on owner)
+	// Update volume center
+	VolumeCenter = OwnerLocation;
+
+	// Calculate world bounds (centered on owner) - this is the Z-Order space bounds
 	const float HalfExtent = BoundsExtent * 0.5f;
 	WorldBoundsMin = OwnerLocation - FVector(HalfExtent, HalfExtent, HalfExtent);
 	WorldBoundsMax = OwnerLocation + FVector(HalfExtent, HalfExtent, HalfExtent);
@@ -1970,6 +2266,15 @@ void UKawaiiFluidSimulationModule::UpdateVolumeInfoDisplay()
 			WorldBoundsMin = ExternalVolume->GetWorldBoundsMin();
 			WorldBoundsMax = ExternalVolume->GetWorldBoundsMax();
 			CellSize = ExternalVolume->CellSize;
+
+			// Copy collision response parameters from external volume
+			WallBounce = ExternalVolume->GetWallBounce();
+			WallFriction = ExternalVolume->GetWallFriction();
+
+			// Copy size parameters for consistency (read-only display when using external)
+			bUniformSize = ExternalVolume->bUniformSize;
+			UniformVolumeSize = ExternalVolume->UniformVolumeSize;
+			VolumeSize = ExternalVolume->VolumeSize;
 		}
 	}
 	else

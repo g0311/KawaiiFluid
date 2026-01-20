@@ -96,6 +96,63 @@ namespace GridResolutionPresetHelper
 		default: return TEXT("Unknown");
 		}
 	}
+
+	/**
+	 * Get maximum volume extent (half-extent) that a preset can support
+	 * @param Preset - Grid resolution preset
+	 * @param CellSize - Cell size in cm (typically SmoothingRadius)
+	 * @return Maximum half-extent per axis in cm
+	 */
+	inline float GetMaxExtentForPreset(EGridResolutionPreset Preset, float CellSize)
+	{
+		// Z-Order space is centered, so max extent is (GridResolution * CellSize) / 2
+		return static_cast<float>(GetGridResolution(Preset)) * CellSize * 0.5f;
+	}
+
+	/**
+	 * Auto-select the smallest Z-Order permutation that can contain the given volume extent
+	 * This is used for the unified SimulationVolume system where users set a free extent
+	 * and the system automatically selects the appropriate Z-Order space.
+	 *
+	 * @param VolumeExtent - User-defined volume half-extent (per axis)
+	 * @param CellSize - Cell size in cm (typically SmoothingRadius)
+	 * @return Smallest preset that can contain the volume, capped at Large
+	 */
+	inline EGridResolutionPreset SelectPresetForExtent(const FVector& VolumeExtent, float CellSize)
+	{
+		// Get the maximum axis extent
+		const float MaxExtent = FMath::Max3(VolumeExtent.X, VolumeExtent.Y, VolumeExtent.Z);
+
+		// Check presets from smallest to largest
+		if (MaxExtent <= GetMaxExtentForPreset(EGridResolutionPreset::Small, CellSize))
+		{
+			return EGridResolutionPreset::Small;
+		}
+		else if (MaxExtent <= GetMaxExtentForPreset(EGridResolutionPreset::Medium, CellSize))
+		{
+			return EGridResolutionPreset::Medium;
+		}
+		else
+		{
+			return EGridResolutionPreset::Large;
+		}
+	}
+
+	/**
+	 * Clamp volume extent to the maximum supported by the largest preset
+	 * @param VolumeExtent - User-defined volume half-extent
+	 * @param CellSize - Cell size in cm
+	 * @return Clamped extent that fits within Large preset bounds
+	 */
+	inline FVector ClampExtentToMaxSupported(const FVector& VolumeExtent, float CellSize)
+	{
+		const float MaxSupported = GetMaxExtentForPreset(EGridResolutionPreset::Large, CellSize);
+		return FVector(
+			FMath::Min(VolumeExtent.X, MaxSupported),
+			FMath::Min(VolumeExtent.Y, MaxSupported),
+			FMath::Min(VolumeExtent.Z, MaxSupported)
+		);
+	}
 }
 
 /**

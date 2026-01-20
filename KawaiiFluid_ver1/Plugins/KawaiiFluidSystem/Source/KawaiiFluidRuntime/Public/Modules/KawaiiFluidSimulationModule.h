@@ -114,82 +114,117 @@ public:
 	void SetFluidType(EFluidType InFluidType) { FluidType = InFluidType; }
 
 	//========================================
-	// Simulation Volume (Z-Order Space)
+	// Simulation Volume (Unified Volume System)
 	//========================================
 
 	/**
-	 * Target Simulation Volume Actor for Z-Order space bounds
+	 * Target Simulation Volume Actor (for sharing simulation space between multiple fluid components)
 	 *
-	 * When set, this module will use the external Volume's Z-Order space for simulation.
+	 * When set, this module will use the external Volume's bounds for simulation.
 	 * Multiple modules sharing the same Volume can interact with each other.
 	 *
-	 * When nullptr, the module uses its own internal volume settings
-	 * configured below (GridResolutionPreset).
+	 * When nullptr, the module uses its own internal volume settings configured below.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Simulation Volume", meta = (DisplayName = "Target Volume (External)"))
 	TObjectPtr<AKawaiiFluidSimulationVolume> TargetSimulationVolume = nullptr;
 
 	/**
-	 * Grid resolution preset for internal Z-Order sorting (when no External Volume)
-	 * Controls the simulation bounds size and memory usage.
-	 * - Small (64³): Compact bounds, fastest
-	 * - Medium (128³): Balanced, recommended for 100k particles
-	 * - Large (256³): Large bounds, more memory
-	 *
-	 * Ignored when TargetSimulationVolume is set (uses external volume's preset).
+	 * Use uniform (cube) size for simulation volume
+	 * When checked, enter a single size value. When unchecked, enter separate X/Y/Z values.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Simulation Volume",
-		meta = (EditCondition = "TargetSimulationVolume == nullptr", EditConditionHides))
-	EGridResolutionPreset GridResolutionPreset = EGridResolutionPreset::Medium;
+		meta = (EditCondition = "TargetSimulationVolume == nullptr", EditConditionHides, DisplayName = "Uniform Size"))
+	bool bUniformSize = true;
 
 	/**
-	 * Cell size for Z-Order grid (read-only, auto-derived).
+	 * Simulation volume size (cm) - cube dimensions when Uniform Size is checked
+	 * Particles are confined within this box. Enter the full box size (not half).
 	 *
-	 * This value is automatically determined and cannot be set directly:
-	 * - Internal Volume Mode: Derived from Preset's SmoothingRadius (CellSize = SmoothingRadius)
-	 * - External Volume Mode: Inherited from TargetSimulationVolume's CellSize
-	 *
-	 * For optimal SPH neighbor search, CellSize should equal SmoothingRadius.
+	 * Example: 400 cm means a 400×400×400 cm cube.
+	 * Default: 2560 cm (Medium Z-Order preset with CellSize=20)
 	 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Simulation Volume",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Simulation Volume",
+		meta = (EditCondition = "TargetSimulationVolume == nullptr && bUniformSize", EditConditionHides,
+			DisplayName = "Size", ClampMin = "10.0", ClampMax = "5120.0"))
+	float UniformVolumeSize = 2560.0f;
+
+	/**
+	 * Simulation volume size (cm) - separate X/Y/Z dimensions
+	 * Particles are confined within this box. Enter the full box size (not half).
+	 *
+	 * Example: (400, 300, 200) means a 400×300×200 cm box.
+	 * Default: 2560 cm per axis (Medium Z-Order preset with CellSize=20)
+	 *
+	 * Note: Values exceeding the system maximum will be automatically clamped.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Simulation Volume",
+		meta = (EditCondition = "TargetSimulationVolume == nullptr && bUniformSize == false", EditConditionHides,
+			DisplayName = "Size"))
+	FVector VolumeSize = FVector(2560.0f, 2560.0f, 2560.0f);
+
+	/**
+	 * Simulation volume rotation
+	 * Default (0,0,0) = axis-aligned box. Rotating creates an oriented box.
+	 *
+	 * Note: Large rotations may reduce the effective volume size due to internal constraints.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Simulation Volume",
+		meta = (EditCondition = "TargetSimulationVolume == nullptr", EditConditionHides, DisplayName = "Rotation"))
+	FRotator VolumeRotation = FRotator::ZeroRotator;
+
+	/**
+	 * Wall bounce (0 = no bounce, 1 = full bounce)
+	 * How much particles bounce when hitting the volume walls.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Simulation Volume",
+		meta = (EditCondition = "TargetSimulationVolume == nullptr", EditConditionHides,
+			DisplayName = "Wall Bounce", ClampMin = "0.0", ClampMax = "1.0"))
+	float WallBounce = 0.3f;
+
+	/**
+	 * Wall friction (0 = slippery, 1 = sticky)
+	 * How much particles slow down when sliding along walls.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Simulation Volume",
+		meta = (EditCondition = "TargetSimulationVolume == nullptr", EditConditionHides,
+			DisplayName = "Wall Friction", ClampMin = "0.0", ClampMax = "1.0"))
+	float WallFriction = 0.1f;
+
+	/**
+	 * Grid resolution preset (auto-selected based on volume size)
+	 * Read-only - the system automatically selects the optimal preset.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Simulation Volume|Advanced",
+		meta = (DisplayName = "Internal Grid Preset (Auto)"))
+	EGridResolutionPreset GridResolutionPreset = EGridResolutionPreset::Medium;
+
+	/** Internal cell size (auto-derived from fluid preset) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Simulation Volume|Advanced",
 		meta = (DisplayName = "Cell Size (Auto)"))
 	float CellSize = 20.0f;
 
-	/**
-	 * Grid resolution bits per axis (derived from GridResolutionPreset or external volume)
-	 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Simulation Volume|Info")
+	/** Grid bits per axis */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Simulation Volume|Advanced")
 	int32 GridAxisBits = 7;
 
-	/**
-	 * Grid resolution per axis (2^GridAxisBits)
-	 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Simulation Volume|Info")
+	/** Grid resolution per axis */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Simulation Volume|Advanced")
 	int32 GridResolution = 128;
 
-	/**
-	 * Total number of cells (GridResolution³)
-	 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Simulation Volume|Info")
+	/** Total cell count */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Simulation Volume|Advanced")
 	int32 MaxCells = 2097152;
 
-	/**
-	 * Simulation bounds extent (GridResolution * CellSize)
-	 * This is the total size of the Z-Order space per axis.
-	 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Simulation Volume|Info")
+	/** Internal bounds extent */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Simulation Volume|Advanced")
 	float BoundsExtent = 2560.0f;
 
-	/**
-	 * World-space minimum bounds
-	 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Simulation Volume|Info")
+	/** World-space minimum bounds */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Simulation Volume|Advanced")
 	FVector WorldBoundsMin = FVector(-1280.0f, -1280.0f, -1280.0f);
 
-	/**
-	 * World-space maximum bounds
-	 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Simulation Volume|Info")
+	/** World-space maximum bounds */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid|Simulation Volume|Advanced")
 	FVector WorldBoundsMax = FVector(1280.0f, 1280.0f, 1280.0f);
 
 	/** Get the target simulation volume actor (can be nullptr) */
@@ -200,7 +235,24 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Fluid|Simulation Volume")
 	void SetTargetSimulationVolume(AKawaiiFluidSimulationVolume* NewSimulationVolume);
 
-	/** Recalculate internal volume bounds (call after changing CellSize or owner location)
+	/** Get the effective volume size (full size, cm)
+	 * Returns UniformVolumeSize as FVector if bUniformSize is true, otherwise VolumeSize
+	 */
+	UFUNCTION(BlueprintPure, Category = "Fluid|Simulation Volume")
+	FVector GetEffectiveVolumeSize() const
+	{
+		return bUniformSize ? FVector(UniformVolumeSize) : VolumeSize;
+	}
+
+	/** Get the volume half-extent (for internal collision/rendering use)
+	 * Returns GetEffectiveVolumeSize() * 0.5
+	 */
+	FVector GetVolumeHalfExtent() const
+	{
+		return GetEffectiveVolumeSize() * 0.5f;
+	}
+
+	/** Recalculate internal volume bounds (call after changing size or owner location)
 	 * Called automatically when properties change in editor
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Fluid|Simulation Volume")
@@ -579,52 +631,51 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Collision")
 	bool bUseWorldCollision = true;
 
-	/** Enable containment volume - particles are confined within this box and cannot escape */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Collision")
-	bool bEnableContainment = false;
-
-	/** Containment volume half extent (cm) - centered on component location */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Collision",
-	          meta = (EditCondition = "bEnableContainment", EditConditionHides))
-	FVector ContainmentExtent = FVector(100.0f, 100.0f, 100.0f);
-
-	/** Containment wall restitution (bounciness when particles hit the wall) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Collision",
-	          meta = (EditCondition = "bEnableContainment", EditConditionHides, ClampMin = "0.0", ClampMax = "1.0"))
-	float ContainmentRestitution = 0.3f;
-
-	/** Containment wall friction */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Collision",
-	          meta = (EditCondition = "bEnableContainment", EditConditionHides, ClampMin = "0.0", ClampMax = "1.0"))
-	float ContainmentFriction = 0.1f;
-
-	/** Show containment volume wireframe in editor */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Collision",
-	          meta = (EditCondition = "bEnableContainment", EditConditionHides))
-	bool bShowContainmentWireframe = true;
-
-	/** Containment wireframe color */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Collision",
-	          meta = (EditCondition = "bEnableContainment && bShowContainmentWireframe", EditConditionHides))
-	FColor ContainmentWireframeColor = FColor::Green;
-
 	//========================================
-	// Containment Volume API
+	// Volume Visualization
 	//========================================
 
-	/** Set containment volume parameters - confines particles within a box
-	 * @param bEnabled Enable/disable containment
-	 * @param Center World-space center of the containment volume
-	 * @param Extent Half-extent of the containment volume (cm)
-	 * @param Rotation World-space rotation of the containment volume
-	 * @param Restitution Bounciness when particles hit walls (0-1)
-	 * @param Friction Friction coefficient on walls (0-1)
+	/** Bounds wireframe color (green box showing simulation bounds in editor) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Simulation Volume",
+		meta = (EditCondition = "TargetSimulationVolume == nullptr", EditConditionHides, DisplayName = "Wireframe Color"))
+	FColor VolumeWireframeColor = FColor::Green;
+
+	/** Show internal grid space wireframe (for debugging spatial partitioning) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Simulation Volume|Advanced",
+		meta = (EditCondition = "TargetSimulationVolume == nullptr", EditConditionHides, DisplayName = "Show Internal Grid Wireframe"))
+	bool bShowZOrderSpaceWireframe = false;
+
+	/** Internal grid wireframe color */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Simulation Volume|Advanced",
+		meta = (EditCondition = "TargetSimulationVolume == nullptr && bShowZOrderSpaceWireframe", EditConditionHides, DisplayName = "Grid Wireframe Color"))
+	FColor ZOrderSpaceWireframeColor = FColor::Red;
+
+	//========================================
+	// Simulation Bounds API
+	//========================================
+
+	/** Set simulation bounds at runtime
+	 * @param Size Full size of the simulation volume (cm)
+	 * @param Rotation World-space rotation of the volume
+	 * @param Bounce Wall bounce coefficient (0-1)
+	 * @param Friction Wall friction coefficient (0-1)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Fluid|Containment")
+	UFUNCTION(BlueprintCallable, Category = "Fluid|Simulation Volume")
+	void SetSimulationVolume(const FVector& Size, const FRotator& Rotation, float Bounce, float Friction);
+
+	/** Resolve volume boundary collisions - keeps particles inside */
+	void ResolveVolumeBoundaryCollisions();
+
+	//========================================
+	// Legacy API (Deprecated)
+	//========================================
+
+	/** @deprecated Use VolumeSize/UniformVolumeSize and WallBounce/WallFriction instead */
+	UFUNCTION(BlueprintCallable, Category = "Fluid|Containment", meta = (DeprecatedFunction, DeprecationMessage = "Use SetSimulationVolume instead"))
 	void SetContainment(bool bEnabled, const FVector& Center, const FVector& Extent,
 	                    const FQuat& Rotation, float Restitution, float Friction);
 
-	/** Resolve containment collisions - keeps particles inside the volume */
+	/** @deprecated Use ResolveVolumeBoundaryCollisions instead */
 	void ResolveContainmentCollisions();
 
 	//========================================
@@ -705,11 +756,11 @@ private:
 	/** 서브스텝 시간 누적 */
 	float AccumulatedTime = 0.0f;
 
-	/** Containment center (world space, set dynamically from Component location) */
-	FVector ContainmentCenter = FVector::ZeroVector;
+	/** Volume center (world space, set dynamically from Component location) */
+	FVector VolumeCenter = FVector::ZeroVector;
 
-	/** Containment rotation (world space, set dynamically from Component rotation) */
-	FQuat ContainmentRotation = FQuat::Identity;
+	/** Volume rotation as quaternion (computed from VolumeRotation) */
+	FQuat VolumeRotationQuat = FQuat::Identity;
 
 	/** 시뮬레이션 활성화 */
 	bool bSimulationEnabled = true;

@@ -14,7 +14,14 @@ UKawaiiFluidSimulationVolumeComponent::UKawaiiFluidSimulationVolumeComponent()
 	// Enable ticking in editor for debug visualization
 	bTickInEditor = true;
 
-	// Calculate initial bounds (uses GridResolutionPreset default = Medium)
+	// Initialize default volume size based on Medium Z-Order preset and CellSize
+	// Formula: GridResolution(Medium) * CellSize = 128 * CellSize
+	const float MediumGridResolution = static_cast<float>(GridResolutionPresetHelper::GetGridResolution(EGridResolutionPreset::Medium));
+	const float DefaultVolumeSize = MediumGridResolution * CellSize;
+	UniformVolumeSize = DefaultVolumeSize;
+	VolumeSize = FVector(DefaultVolumeSize);
+
+	// Calculate initial bounds
 	RecalculateBounds();
 }
 
@@ -69,9 +76,26 @@ void UKawaiiFluidSimulationVolumeComponent::PostEditChangeProperty(FPropertyChan
 	const FName PropertyName = PropertyChangedEvent.Property ?
 		PropertyChangedEvent.Property->GetFName() : NAME_None;
 
-	// Handle both CellSize and GridResolutionPreset changes
-	if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationVolumeComponent, CellSize) ||
-		PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationVolumeComponent, GridResolutionPreset))
+	// Sync size values when toggling Uniform Size mode
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationVolumeComponent, bUniformSize))
+	{
+		if (bUniformSize)
+		{
+			// Switching to uniform mode: use max of VolumeSize components
+			UniformVolumeSize = FMath::Max3(VolumeSize.X, VolumeSize.Y, VolumeSize.Z);
+		}
+		else
+		{
+			// Switching to non-uniform mode: copy UniformVolumeSize to all axes
+			VolumeSize = FVector(UniformVolumeSize);
+		}
+	}
+
+	// Handle size-related property changes
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationVolumeComponent, bUniformSize) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationVolumeComponent, UniformVolumeSize) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationVolumeComponent, VolumeSize) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidSimulationVolumeComponent, CellSize))
 	{
 		RecalculateBounds();
 
@@ -92,21 +116,30 @@ void UKawaiiFluidSimulationVolumeComponent::RecalculateBounds()
 	// Ensure valid CellSize
 	CellSize = FMath::Max(CellSize, 1.0f);
 
-	// Update grid parameters from preset
+	// Get user-defined volume size (full size)
+	const FVector EffectiveSize = GetEffectiveVolumeSize();
+	const FVector HalfExtent = EffectiveSize * 0.5f;
+
+	// Auto-select optimal GridResolutionPreset based on volume size
+	GridResolutionPreset = GridResolutionPresetHelper::SelectPresetForExtent(HalfExtent, CellSize);
+
+	// Update grid parameters from auto-selected preset
 	GridAxisBits = GridResolutionPresetHelper::GetAxisBits(GridResolutionPreset);
 	GridResolution = GridResolutionPresetHelper::GetGridResolution(GridResolutionPreset);
 	MaxCells = GridResolutionPresetHelper::GetMaxCells(GridResolutionPreset);
 
-	// Calculate bounds extent from grid resolution and cell size
+	// Calculate actual bounds extent from the selected preset
+	// This may be larger than requested to fit Z-Order grid constraints
 	BoundsExtent = static_cast<float>(GridResolution) * CellSize;
 
 	// Get component world location
 	const FVector ComponentLocation = GetComponentLocation();
 
 	// Calculate world bounds (centered on component)
-	const float HalfExtent = BoundsExtent * 0.5f;
-	WorldBoundsMin = ComponentLocation - FVector(HalfExtent, HalfExtent, HalfExtent);
-	WorldBoundsMax = ComponentLocation + FVector(HalfExtent, HalfExtent, HalfExtent);
+	// Use the actual BoundsExtent from grid for consistency with Z-Order space
+	const float ActualHalfExtent = BoundsExtent * 0.5f;
+	WorldBoundsMin = ComponentLocation - FVector(ActualHalfExtent, ActualHalfExtent, ActualHalfExtent);
+	WorldBoundsMax = ComponentLocation + FVector(ActualHalfExtent, ActualHalfExtent, ActualHalfExtent);
 }
 
 bool UKawaiiFluidSimulationVolumeComponent::IsPositionInBounds(const FVector& WorldPosition) const
@@ -168,18 +201,17 @@ void UKawaiiFluidSimulationVolumeComponent::DrawBoundsVisualization()
 		return;
 	}
 
-	// Draw wireframe box
-	const FVector Center = (WorldBoundsMin + WorldBoundsMax) * 0.5f;
-	const FVector Extent = (WorldBoundsMax - WorldBoundsMin) * 0.5f;
-
-	// Yellow when selected, otherwise use BoundsColor
 	AActor* Owner = GetOwner();
+	const FVector ComponentLocation = GetComponentLocation();
+
+	// Draw user-defined volume size (main wireframe)
+	const FVector UserExtent = GetVolumeHalfExtent();
 	const FColor DrawColor = (Owner && Owner->IsSelected()) ? FColor::Yellow : BoundsColor;
 
 	DrawDebugBox(
 		World,
-		Center,
-		Extent,
+		ComponentLocation,
+		UserExtent,
 		FQuat::Identity,
 		DrawColor,
 		false,  // bPersistentLines
@@ -188,16 +220,36 @@ void UKawaiiFluidSimulationVolumeComponent::DrawBoundsVisualization()
 		BoundsLineThickness
 	);
 
+	// Optionally draw internal Z-Order space (advanced debug)
+	if (bShowZOrderSpaceWireframe)
+	{
+		const FVector ZOrderCenter = (WorldBoundsMin + WorldBoundsMax) * 0.5f;
+		const FVector ZOrderExtent = (WorldBoundsMax - WorldBoundsMin) * 0.5f;
+
+		DrawDebugBox(
+			World,
+			ZOrderCenter,
+			ZOrderExtent,
+			FQuat::Identity,
+			ZOrderSpaceWireframeColor,
+			false,
+			-1.0f,
+			0,
+			1.0f  // Thinner line for internal grid
+		);
+	}
+
 	// Draw info text at center
 #if WITH_EDITOR
 	if (!World->IsGameWorld())
 	{
+		const FVector EffectiveSize = GetEffectiveVolumeSize();
 		const FString InfoText = FString::Printf(
-			TEXT("Volume: %.1fm x %.1fm x %.1fm\nCellSize: %.1fcm"),
-			BoundsExtent / 100.0f, BoundsExtent / 100.0f, BoundsExtent / 100.0f,
-			CellSize
+			TEXT("Size: %.0f×%.0f×%.0f cm\nBounce: %.1f, Friction: %.1f"),
+			EffectiveSize.X, EffectiveSize.Y, EffectiveSize.Z,
+			WallBounce, WallFriction
 		);
-		DrawDebugString(World, Center + FVector(0, 0, Extent.Z + 50.0f), InfoText, nullptr, DrawColor, -1.0f, true);
+		DrawDebugString(World, ComponentLocation + FVector(0, 0, UserExtent.Z + 50.0f), InfoText, nullptr, DrawColor, -1.0f, true);
 	}
 #endif
 }

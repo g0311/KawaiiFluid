@@ -272,67 +272,80 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 	}
 #endif
 
-	// Containment 설정 및 충돌 처리 (시뮬레이션 후에 적용)
-	// Containment 프로퍼티는 SimulationModule에 있음
-{
-	TRACE_CPUPROFILER_EVENT_SCOPE(Containment_Setting_Collision)
-	if (SimulationModule && SimulationModule->bEnableContainment)
+	// Unified Simulation Bounds - 동적 파라미터 설정 및 CPU 충돌 처리
+	// Volume bounds 설정은 SimulationModule에 있으며, Center/Rotation은 Component에서 동적으로 전달
+	if (SimulationModule)
 	{
-		// Center와 Rotation은 동적으로 설정 (다른 값들은 SimulationModule의 UPROPERTY)
-		SimulationModule->SetContainment(
-			SimulationModule->bEnableContainment,
-			GetComponentLocation(),
-			SimulationModule->ContainmentExtent,
-			GetComponentQuat(),  // Component의 회전 전달
-			SimulationModule->ContainmentRestitution,
-			SimulationModule->ContainmentFriction
+		TRACE_CPUPROFILER_EVENT_SCOPE(SimulationVolume_Setting_Collision)
+		// Update volume runtime parameters (size/rotation from editor, center from component)
+		SimulationModule->SetSimulationVolume(
+			SimulationModule->GetEffectiveVolumeSize(),
+			SimulationModule->VolumeRotation,
+			SimulationModule->WallBounce,
+			SimulationModule->WallFriction
 		);
-		SimulationModule->ResolveContainmentCollisions();
+		// CPU-side boundary collision (for CPU simulation mode)
+		SimulationModule->ResolveVolumeBoundaryCollisions();
 	}
-}
 
-	// Containment Wireframe 시각화
-	if (SimulationModule && SimulationModule->bEnableContainment && SimulationModule->bShowContainmentWireframe)
+	// Simulation Bounds Wireframe 시각화 (Containment bounds)
+	// Always shown in editor mode (not PIE), always uses configured color
+	// Selection is indicated by Spawn Shape wireframe turning yellow, not this
+#if WITH_EDITOR
+	if (SimulationModule && !bIsGameWorld && !SimulationModule->GetTargetSimulationVolume())
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE(Containment_VISUAL)
+		TRACE_CPUPROFILER_EVENT_SCOPE(SimulationVolume_VISUAL)
 		const FVector Center = GetComponentLocation();
-		const FQuat Rotation = GetComponentQuat();
+		const FQuat Rotation = SimulationModule->VolumeRotation.Quaternion();
+
 		DrawDebugBox(
 			World,
 			Center,
-			SimulationModule->ContainmentExtent,
-			Rotation,  // Component의 회전 적용
-			SimulationModule->ContainmentWireframeColor,
+			SimulationModule->GetVolumeHalfExtent(),  // DrawDebugBox takes half-extent
+			Rotation,
+			SimulationModule->VolumeWireframeColor,  // Always use configured color (Green by default)
 			false,  // bPersistentLines
 			-1.0f,  // LifeTime (매 프레임 다시 그림)
 			0,      // DepthPriority
-			2.0f    // Thickness
+			2.0f    // Fixed thickness
 		);
 	}
+#endif
 
-	// Simulation Volume Wireframe Visualization (Z-Order Sorting region)
-	// Always visible in EDITOR ONLY when GPU simulation is active
-	// Uses SimulationModule->BoundsExtent which is calculated from CellSize
+	// Z-Order Space Wireframe Visualization (auto-calculated internal spatial hash bounds)
+	// Shows the auto-calculated Z-Order space that contains the simulation volume
+	// This is always axis-aligned and may be larger than the containment volume
+	// Only shown in editor mode (not PIE), disabled by default
 	// Skip if external TargetSimulationVolume is set - the Volume will draw its own bounds instead
 #if WITH_EDITOR
-	if (SimulationModule && !bIsGameWorld && !GetTargetSimulationVolume())
+	if (SimulationModule && SimulationModule->bShowZOrderSpaceWireframe && !bIsGameWorld && !GetTargetSimulationVolume())
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE(Simulation_Volume_Visualization)
+		TRACE_CPUPROFILER_EVENT_SCOPE(ZOrderSpace_Visualization)
 		// Use BoundsExtent from SimulationModule (calculated from CellSize * GridResolution)
-		const float BoundsExtent = SimulationModule->BoundsExtent;
-		const FVector HalfExtent = FVector(BoundsExtent * 0.5f);
+		const float ZOrderBoundsExtent = SimulationModule->BoundsExtent;
+		const FVector HalfExtent = FVector(ZOrderBoundsExtent * 0.5f);
 		const FVector ComponentLocation = GetComponentLocation();
 
-		// Yellow when selected, Red otherwise for Z-Order sorting bounds visualization
+		// Use configurable color, brighten when selected
 		AActor* Owner = GetOwner();
-		const FColor BoundsColor = (Owner && Owner->IsSelected()) ? FColor::Yellow : FColor::Red;
+		FColor ZOrderColor = SimulationModule->ZOrderSpaceWireframeColor;
+		if (Owner && Owner->IsSelected())
+		{
+			// Brighten the color when selected
+			ZOrderColor = FColor(
+				FMath::Min(255, ZOrderColor.R + 80),
+				FMath::Min(255, ZOrderColor.G + 80),
+				FMath::Min(255, ZOrderColor.B + 80),
+				ZOrderColor.A
+			);
+		}
 
 		DrawDebugBox(
 			World,
 			ComponentLocation,  // Center at component location
 			HalfExtent,
-			FQuat::Identity,  // Simulation bounds are axis-aligned
-			BoundsColor,
+			FQuat::Identity,  // Z-Order bounds are always axis-aligned
+			ZOrderColor,
 			false,  // bPersistentLines
 			-1.0f,  // LifeTime (redraw each frame)
 			0,      // DepthPriority
@@ -1015,19 +1028,21 @@ void UKawaiiFluidComponent::DrawSpawnAreaVisualization()
 		return;
 	}
 
-	// 액터가 선택된 상태에서만 시각화 표시
 	AActor* Owner = GetOwner();
-	if (!Owner || !Owner->IsSelected())
+	if (!Owner)
 	{
 		return;
 	}
 
+	// 선택 여부에 따라 색상 및 두께 변경
+	const bool bIsSelected = Owner->IsSelected();
+
 	const FQuat Rotation = GetComponentQuat();
 	const FVector Location = GetComponentLocation() + Rotation.RotateVector(SpawnSettings.SpawnOffset);
-	const FColor SpawnColor = FColor::Cyan;
+	const FColor SpawnColor = bIsSelected ? FColor::Yellow : FColor::Cyan;
 	const float Duration = -1.0f;  // 영구
 	const uint8 DepthPriority = 0;
-	const float Thickness = 2.0f;
+	const float Thickness = bIsSelected ? 3.0f : 2.0f;
 
 	if (SpawnSettings.SpawnType == EFluidSpawnType::ShapeVolume)
 	{
