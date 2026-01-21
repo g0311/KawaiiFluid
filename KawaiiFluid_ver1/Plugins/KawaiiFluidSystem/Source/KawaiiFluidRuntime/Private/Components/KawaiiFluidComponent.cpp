@@ -105,9 +105,11 @@ void UKawaiiFluidComponent::OnRegister()
 	{
 		RenderingModule->Initialize(World, this, SimulationModule, Preset);
 
+		// Apply ISM debug settings from Component properties
 		if (UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer())
 		{
-			ISMRenderer->ApplySettings(ISMSettings);
+			ISMRenderer->bEnabled = bEnableISMDebugView;
+			ISMRenderer->SetFluidColor(ISMDebugColor);
 		}
 	}
 
@@ -160,6 +162,29 @@ void UKawaiiFluidComponent::BeginPlay()
 	// 스폰 타이머 초기화
 	SpawnAccumulatedTime = 0.0f;
 
+	// Re-initialize rendering in PIE (PostDuplicate cleared everything)
+	if (bEnableRendering && RenderingModule && SimulationModule)
+	{
+		UWorld* World = GetWorld();
+		RenderingModule->Initialize(World, this, SimulationModule, Preset);
+
+		// Apply ISM debug settings
+		if (UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer())
+		{
+			ISMRenderer->bEnabled = bEnableISMDebugView;
+			if (bEnableISMDebugView)
+			{
+				ISMRenderer->SetFluidColor(ISMDebugColor);
+			}
+		}
+
+		// Ensure Metaball is disabled if ISM debug is enabled
+		if (UKawaiiFluidMetaballRenderer* MetaballRenderer = RenderingModule->GetMetaballRenderer())
+		{
+			MetaballRenderer->SetEnabled(!bEnableISMDebugView);
+		}
+	}
+
 	// ShapeVolume mode: auto spawn at BeginPlay
 	if (SpawnSettings.IsShapeVolumeMode() && SimulationModule)
 	{
@@ -184,8 +209,8 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 	const bool bIsGameWorld = World && World->IsGameWorld();
 
 	// Readback 요청 설정 (GPU 시뮬레이션 전에 호출 필요)
-	// Debug Draw, 브러시 모드, Recycle 모드에서 readback 필요
-	GetFluidStatsCollector().SetReadbackRequested(bEnableDebugDraw || bBrushModeActive || SpawnSettings.bRecycleOldestParticles);
+	// Debug Draw, ISM Debug View, 브러시 모드, Recycle 모드에서 readback 필요
+	GetFluidStatsCollector().SetReadbackRequested(bEnableDebugDraw || bEnableISMDebugView || bBrushModeActive || SpawnSettings.bRecycleOldestParticles);
 
 #if WITH_EDITOR
 	{
@@ -338,14 +363,68 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 	}
 
 	// 렌더링 업데이트 (에디터 + 게임 모두)
-	// Debug Draw 활성화 시 Metaball 비활성화 (디버그 포인트가 보이도록)
+	// ISM/Debug Draw 활성화 시 Metaball 비활성화 (디버그 시각화 우선)
 	if (RenderingModule)
 	{
-		if (UKawaiiFluidMetaballRenderer* MetaballRenderer = RenderingModule->GetMetaballRenderer())
+		UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer();
+		UKawaiiFluidMetaballRenderer* MetaballRenderer = RenderingModule->GetMetaballRenderer();
+
+		// Sync ISM debug settings from Component properties
+		if (ISMRenderer)
 		{
-			// Debug Draw 상태에 따라 Metaball 활성화/비활성화
-			MetaballRenderer->SetEnabled(!bEnableDebugDraw);
+			bool bEnabledChanged = (ISMRenderer->bEnabled != bEnableISMDebugView);
+			bool bColorChanged = !CachedISMDebugColor.Equals(ISMDebugColor, 0.001f);
+
+			// Update enabled state
+			if (bEnabledChanged)
+			{
+				ISMRenderer->bEnabled = bEnableISMDebugView;
+			}
+
+			// Update color if enabled and (enabled changed OR color changed)
+			if (bEnableISMDebugView && (bEnabledChanged || bColorChanged))
+			{
+				ISMRenderer->SetFluidColor(ISMDebugColor);
+				CachedISMDebugColor = ISMDebugColor;
+			}
 		}
+
+		static int32 RenderLogCounter = 0;
+		if (RenderLogCounter++ % 120 == 0)
+		{
+			UE_LOG(LogTemp, Log, TEXT("KawaiiFluidComponent [%s] Render State - ISM: %s (Enabled: %s), Metaball: %s (Enabled: %s)"),
+				*GetName(),
+				ISMRenderer ? TEXT("Valid") : TEXT("Null"),
+				(ISMRenderer && ISMRenderer->IsEnabled()) ? TEXT("Yes") : TEXT("No"),
+				MetaballRenderer ? TEXT("Valid") : TEXT("Null"),
+				(MetaballRenderer && MetaballRenderer->IsEnabled()) ? TEXT("Yes") : TEXT("No"));
+		}
+
+		// ISM이 켜져 있으면 Metaball 끄기 (상호 배타적)
+		if (ISMRenderer && ISMRenderer->IsEnabled())
+		{
+			if (MetaballRenderer)
+			{
+				MetaballRenderer->SetEnabled(false);
+			}
+		}
+		// Debug Draw가 켜져 있으면 Metaball 끄기
+		else if (bEnableDebugDraw)
+		{
+			if (MetaballRenderer)
+			{
+				MetaballRenderer->SetEnabled(false);
+			}
+		}
+		// ISM과 Debug Draw가 모두 꺼져 있으면 Metaball 켜기
+		else
+		{
+			if (MetaballRenderer)
+			{
+				MetaballRenderer->SetEnabled(true);
+			}
+		}
+
 		RenderingModule->UpdateRenderers();
 	}
 

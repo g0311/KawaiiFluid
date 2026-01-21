@@ -6,7 +6,6 @@
 #include "Components/SceneComponent.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
 #include "Modules/KawaiiFluidSimulationModule.h"
-#include "Rendering/KawaiiFluidRendererSettings.h"
 #include "KawaiiFluidComponent.generated.h"
 
 class UKawaiiFluidRenderingModule;
@@ -431,12 +430,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|VFX", meta = (ClampMin = "0", ClampMax = "10", EditCondition = "SplashVFX != nullptr && SplashConditionMode != ESplashConditionMode::VelocityOnly"))
 	int32 IsolationNeighborThreshold = 2;
 
-	/** ISM Renderer Settings (per-Component, debug/preview purpose) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering", meta = (EditCondition = "bEnableRendering", DisplayName = "ISM Settings"))
-	FKawaiiFluidISMRendererSettings ISMSettings;
+	//========================================
+	// Debug Visualization
+	//========================================
 
-	// Note: Metaball rendering parameters are in Preset->RenderingParameters
-	// This ensures same Preset = same Metaball rendering = proper batching
+	/** Enable ISM debug view (renders particles as simple spheres, disables Metaball) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Debug")
+	bool bEnableISMDebugView = false;
+
+	/** Debug particle color for ISM view */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Debug", meta = (EditCondition = "bEnableISMDebugView"))
+	FLinearColor ISMDebugColor = FLinearColor(0.2f, 0.5f, 1.0f, 0.8f);
+
+	// Note: Metaball rendering parameters are in Preset->RenderingParameters (ensures batching)
 
 	//========================================
 	// Spawn Settings
@@ -595,6 +601,13 @@ private:
 
 	float SpawnAccumulatedTime = 0.0f;
 	void ProcessContinuousSpawn(float DeltaTime);
+
+	//========================================
+	// ISM Debug State Cache
+	//========================================
+
+	/** Cached ISM debug color (for change detection) */
+	FLinearColor CachedISMDebugColor = FLinearColor(0.2f, 0.5f, 1.0f, 0.8f);
 
 	//========================================
 	// Spawn Helpers

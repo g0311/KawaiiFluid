@@ -60,7 +60,7 @@ void UKawaiiFluidRenderingModule::Initialize(UWorld* InWorld, USceneComponent* I
 	// Initialize renderers
 	if (ISMRenderer)
 	{
-		ISMRenderer->Initialize(InWorld, InOwnerComponent);
+		ISMRenderer->Initialize(InWorld, InOwnerComponent, InPreset);
 	}
 
 	if (MetaballRenderer)
@@ -97,15 +97,13 @@ void UKawaiiFluidRenderingModule::UpdateRenderers()
 		return;
 	}
 
-	// Update all enabled renderers
-	if (ISMRenderer && ISMRenderer->IsEnabled())
-	{
-		ISMRenderer->UpdateRendering(DataProviderPtr, 0.0f);
-	}
-
 	if (MetaballRenderer && MetaballRenderer->IsEnabled())
 	{
 		MetaballRenderer->UpdateRendering(DataProviderPtr, 0.0f);
+	}
+	else if (ISMRenderer && ISMRenderer->IsEnabled())
+	{
+		ISMRenderer->UpdateRendering(DataProviderPtr, 0.0f);
 	}
 }
 

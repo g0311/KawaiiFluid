@@ -3,17 +3,20 @@
 #include "Rendering/KawaiiFluidISMRenderer.h"
 #include "Interfaces/IKawaiiFluidDataProvider.h"
 #include "Core/FluidParticle.h"
+#include "Data/KawaiiFluidPresetDataAsset.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "GPU/GPUFluidSimulator.h"
 
 UKawaiiFluidISMRenderer::UKawaiiFluidISMRenderer()
 {
 	// No component tick needed - UObject doesn't tick
 }
 
-void UKawaiiFluidISMRenderer::Initialize(UWorld* InWorld, USceneComponent* InOwnerComponent)
+void UKawaiiFluidISMRenderer::Initialize(UWorld* InWorld, USceneComponent* InOwnerComponent, UKawaiiFluidPresetDataAsset* InPreset)
 {
 	CachedWorld = InWorld;
 	CachedOwnerComponent = InOwnerComponent;
+	CachedPreset = InPreset;
 
 	if (!CachedWorld)
 	{
@@ -23,6 +26,11 @@ void UKawaiiFluidISMRenderer::Initialize(UWorld* InWorld, USceneComponent* InOwn
 	if (!CachedOwnerComponent)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidISMRenderer::Initialize - No owner component provided"));
+	}
+
+	if (!CachedPreset)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidISMRenderer::Initialize - No preset provided"));
 	}
 
 	InitializeISM();
@@ -44,7 +52,8 @@ void UKawaiiFluidISMRenderer::Cleanup()
 	// Clear cached references
 	CachedWorld = nullptr;
 	CachedOwnerComponent = nullptr;
-	bEnabled = false;
+	CachedPreset = nullptr;
+	// Note: Do NOT reset bEnabled here - it's controlled by Component's bEnableISMDebugView
 }
 
 void UKawaiiFluidISMRenderer::SetEnabled(bool bInEnabled)
@@ -58,58 +67,73 @@ void UKawaiiFluidISMRenderer::SetEnabled(bool bInEnabled)
 	}
 }
 
-void UKawaiiFluidISMRenderer::ApplySettings(const FKawaiiFluidISMRendererSettings& Settings)
-{
-	bEnabled = Settings.bEnabled;
-	ParticleMesh = Settings.ParticleMesh;
-	ParticleMaterial = Settings.ParticleMaterial;
-	ParticleScale = Settings.ParticleScale;
-
-	// If ISMComponent already exists, update it with new settings
-	if (ISMComponent)
-	{
-		// Clear instances when disabled
-		if (!bEnabled)
-		{
-			ISMComponent->ClearInstances();
-			return;
-		}
-
-		// Update mesh
-		if (ParticleMesh)
-		{
-			ISMComponent->SetStaticMesh(ParticleMesh);
-		}
-
-		// Update material
-		if (ParticleMaterial)
-		{
-			ISMComponent->SetMaterial(0, ParticleMaterial);
-		}
-
-		// Apply color
-		SetFluidColor(Settings.ParticleColor);
-
-		UE_LOG(LogTemp, Log, TEXT("ISMRenderer: Applied settings to existing ISMComponent (Mesh: %s, Material: %s)"),
-			ParticleMesh ? *ParticleMesh->GetName() : TEXT("None"),
-			ParticleMaterial ? *ParticleMaterial->GetName() : TEXT("None"));
-	}
-}
-
 void UKawaiiFluidISMRenderer::UpdateRendering(const IKawaiiFluidDataProvider* DataProvider, float DeltaTime)
 {
-	if (!bEnabled || !ISMComponent || !DataProvider)
+	static int32 UpdateLogCounter = 0;
+	const bool bShouldLog = (UpdateLogCounter++ % 120 == 0);
+
+	if (!bEnabled)
 	{
 		return;
 	}
 
-	// Get simulation data from DataProvider
-	const TArray<FFluidParticle>& SimParticles = DataProvider->GetParticles();
+	if (!ISMComponent)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ISMRenderer::UpdateRendering - ISMComponent is NULL!"));
+		return;
+	}
 
-	if (SimParticles.Num() == 0)
+	if (!DataProvider)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ISMRenderer::UpdateRendering - DataProvider is NULL!"));
+		return;
+	}
+
+	// Get simulation data from DataProvider (GPU or CPU)
+	const TArray<FFluidParticle>* ParticlesPtr = nullptr;
+	TArray<FFluidParticle> GPUParticlesCache;
+
+	if (DataProvider->IsGPUSimulationActive())
+	{
+		// GPU mode: Use readback data (same as DrawDebugParticles)
+		FGPUFluidSimulator* Simulator = DataProvider->GetGPUSimulator();
+		if (Simulator && Simulator->GetAllGPUParticles(GPUParticlesCache))
+		{
+			ParticlesPtr = &GPUParticlesCache;
+		}
+		else
+		{
+			// No readback data available
+			if (bShouldLog)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("ISMRenderer: GPU readback not available"));
+			}
+			return;
+		}
+	}
+	else
+	{
+		// CPU mode: Direct particle array
+		ParticlesPtr = &DataProvider->GetParticles();
+	}
+
+	if (!ParticlesPtr || ParticlesPtr->Num() == 0)
 	{
 		ISMComponent->ClearInstances();
 		return;
+	}
+
+	const TArray<FFluidParticle>& SimParticles = *ParticlesPtr;
+
+	if (bShouldLog)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("=== ISM Debug: Particles=%d, Registered=%d, Visible=%d, Mesh=%s, Material=%s, InstanceCount=%d ==="),
+			SimParticles.Num(),
+			ISMComponent->IsRegistered() ? 1 : 0,
+			ISMComponent->IsVisible() ? 1 : 0,
+			ISMComponent->GetStaticMesh() ? TEXT("OK") : TEXT("NULL"),
+			ISMComponent->GetMaterial(0) ? TEXT("OK") : TEXT("NULL"),
+			ISMComponent->GetInstanceCount());
 	}
 
 	// Limit number of particles to render
@@ -119,9 +143,15 @@ void UKawaiiFluidISMRenderer::UpdateRendering(const IKawaiiFluidDataProvider* Da
 	ISMComponent->ClearInstances();
 	ISMComponent->PreAllocateInstancesMemory(NumInstances);
 
-	// Get particle radius from simulation
-	float ParticleRadius = DataProvider->GetParticleRadius();
-	float ScaleFactor = (ParticleRadius / 50.0f) * ParticleScale; // Default Sphere has 50cm radius
+	// Get ParticleRenderRadius from Preset to match Metaball rendering size
+	float ParticleRenderRadius = 15.0f; // Default fallback
+	if (CachedPreset)
+	{
+		ParticleRenderRadius = CachedPreset->RenderingParameters.ParticleRenderRadius;
+	}
+
+	// Scale factor based on ParticleRenderRadius (Default Sphere has 50cm radius)
+	float ScaleFactor = ParticleRenderRadius / 50.0f;
 	FVector ScaleVec(ScaleFactor, ScaleFactor, ScaleFactor);
 
 	// Add each particle as instance
@@ -141,7 +171,7 @@ void UKawaiiFluidISMRenderer::UpdateRendering(const IKawaiiFluidDataProvider* Da
 			InstanceTransform.SetRotation(Rotation.Quaternion());
 		}
 
-		// Add instance
+		// Add instance (use local space - SetAbsolute makes local=world)
 		ISMComponent->AddInstance(InstanceTransform, false);
 
 		// Velocity-based color (optional)
@@ -159,7 +189,7 @@ void UKawaiiFluidISMRenderer::UpdateRendering(const IKawaiiFluidDataProvider* Da
 		}
 	}
 
-	// Update render state
+	// Update render state - single call is sufficient in UE5
 	ISMComponent->MarkRenderStateDirty();
 }
 
@@ -190,39 +220,43 @@ void UKawaiiFluidISMRenderer::InitializeISM()
 	// Use absolute coordinates (same as DummyComponent)
 	ISMComponent->SetAbsolute(true, true, true);
 
-	ISMComponent->RegisterComponent();
+	// Mesh setup - MUST be done before RegisterComponent()
+	UStaticMesh* DefaultMesh = GetDefaultParticleMesh();
+	if (DefaultMesh)
+	{
+		ISMComponent->SetStaticMesh(DefaultMesh);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("KawaiiFluidISMRenderer: Failed to load default sphere mesh"));
+		return;
+	}
+
+	// Material setup - MUST be done before RegisterComponent()
+	UMaterialInterface* DefaultMaterial = GetDefaultParticleMaterial();
+	if (DefaultMaterial)
+	{
+		ISMComponent->SetMaterial(0, DefaultMaterial);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidISMRenderer: Failed to load default material"));
+	}
+
+	// Set properties before registration
 	ISMComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	ISMComponent->SetCastShadow(bCastShadow);
 	ISMComponent->SetCullDistances(0, CullDistance);
+	ISMComponent->SetVisibility(true);
+	ISMComponent->SetHiddenInGame(false);
 
-	// Mesh setup
-	if (!ParticleMesh)
-	{
-		ParticleMesh = GetDefaultParticleMesh();
-	}
+	// Register component AFTER all setup is done
+	ISMComponent->RegisterComponent();
 
-	if (ParticleMesh)
+	if (!ISMComponent->IsRegistered())
 	{
-		ISMComponent->SetStaticMesh(ParticleMesh);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidISMRenderer: No particle mesh available"));
-	}
-	
-	// Material setup
-	if (!ParticleMaterial)
-	{
-		ParticleMaterial = GetDefaultParticleMaterial();
-	}
-	
-	if (ParticleMaterial)
-	{
-		ISMComponent->SetMaterial(0, ParticleMaterial);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("KawaiiFluidISMRenderer: No particle material available"));
+		UE_LOG(LogTemp, Error, TEXT("KawaiiFluidISMRenderer: RegisterComponent() failed!"));
+		return;
 	}
 
 	// Custom data setup (for color variation)

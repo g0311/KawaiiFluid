@@ -4,7 +4,6 @@
 
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
-#include "Rendering/KawaiiFluidRendererSettings.h"
 #include "FluidPreviewSettings.generated.h"
 
 /**
@@ -53,14 +52,5 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Preview Settings", meta = (ShowOnlyInnerProperties))
 	FFluidPreviewSettings Settings;
 
-	//========================================
-	// Rendering Settings
-	//========================================
-
-	/** ISM Renderer Settings (debug visualization, per-preview) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering", meta = (DisplayName = "ISM Settings"))
-	FKawaiiFluidISMRendererSettings ISMSettings;
-
-	// Note: Metaball settings come from Preset->RenderingParameters
-	// This ensures preview matches actual runtime appearance
+	// Note: Rendering settings come from Preset->RenderingParameters
 };

@@ -54,14 +54,6 @@ FFluidPreviewScene::FFluidPreviewScene(FPreviewScene::ConstructionValues CVS)
 		// Preset은 SetPreset()에서 나중에 설정됨
 		RenderingModule->Initialize(GetWorld(), PreviewActor->GetRootComponent(), this, nullptr);
 
-		// Apply default ISM settings (debug visualization)
-		if (UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer())
-		{
-			FKawaiiFluidISMRendererSettings ISMSettings;
-			ISMSettings.bEnabled = true;
-			ISMRenderer->ApplySettings(ISMSettings);
-		}
-
 		// Metaball settings come from Preset->RenderingParameters (set in SetPreset)
 
 		// Connect MetaballRenderer to SimulationContext for batched rendering
@@ -189,10 +181,6 @@ void FFluidPreviewScene::SetPreset(UKawaiiFluidPresetDataAsset* InPreset)
 		// Update renderers from preset
 		if (RenderingModule)
 		{
-			if (UKawaiiFluidISMRenderer* ISM = RenderingModule->GetISMRenderer())
-			{
-				ISM->ParticleScale = CachedParticleRadius / 5.0f;
-			}
 			// Metaball uses Preset->RenderingParameters via SetPreset
 			if (UKawaiiFluidMetaballRenderer* Metaball = RenderingModule->GetMetaballRenderer())
 			{
@@ -227,10 +215,6 @@ void FFluidPreviewScene::RefreshFromPreset()
 	// Update renderers from preset
 	if (RenderingModule)
 	{
-		if (UKawaiiFluidISMRenderer* ISM = RenderingModule->GetISMRenderer())
-		{
-			ISM->ParticleScale = CachedParticleRadius / 5.0f;
-		}
 		// Metaball uses Preset->RenderingParameters via SetPreset
 		if (UKawaiiFluidMetaballRenderer* Metaball = RenderingModule->GetMetaballRenderer())
 		{
@@ -389,15 +373,7 @@ void FFluidPreviewScene::ApplyPreviewSettings()
 {
 	UpdateEnvironment();
 
-	// Apply ISM settings (debug visualization, per-preview)
-	// Note: Metaball settings come from Preset->RenderingParameters (set in SetPreset/RefreshFromPreset)
-	if (RenderingModule && PreviewSettingsObject)
-	{
-		if (UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer())
-		{
-			ISMRenderer->ApplySettings(PreviewSettingsObject->ISMSettings);
-		}
-	}
+	// Metaball settings come from Preset->RenderingParameters (set in SetPreset/RefreshFromPreset)
 }
 
 void FFluidPreviewScene::SetupFloor()

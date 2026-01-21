@@ -5,7 +5,6 @@
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
 #include "Components/InstancedStaticMeshComponent.h"
-#include "Rendering/KawaiiFluidRendererSettings.h"
 #include "KawaiiFluidISMRenderer.generated.h"
 
 class IKawaiiFluidDataProvider;
@@ -34,22 +33,17 @@ public:
 	UKawaiiFluidISMRenderer();
 
 	/**
-	 * Initialize renderer with world and owner context
+	 * Initialize renderer with world, owner and preset
 	 * @param InWorld World context for subsystem access
 	 * @param InOwnerComponent Parent scene component for ISM attachment
+	 * @param InPreset Preset data asset for rendering parameters
 	 */
-	void Initialize(UWorld* InWorld, USceneComponent* InOwnerComponent);
+	void Initialize(UWorld* InWorld, USceneComponent* InOwnerComponent, class UKawaiiFluidPresetDataAsset* InPreset);
 
 	/**
 	 * Cleanup renderer resources
 	 */
 	void Cleanup();
-
-	/**
-	 * Apply settings from struct
-	 * @param Settings Editor configuration to apply
-	 */
-	void ApplySettings(const FKawaiiFluidISMRendererSettings& Settings);
 
 	/**
 	 * Update rendering
@@ -64,24 +58,15 @@ public:
 	/** Enable or disable rendering */
 	void SetEnabled(bool bInEnabled);
 
-
 	/** Set fluid color (creates dynamic material instance if needed) */
 	void SetFluidColor(FLinearColor Color);
 
 	//========================================
-	// Configuration
+	// Debug Visualization Settings
 	//========================================
 
-	/** Particle mesh to use (UPROPERTY for GC) */
-	UPROPERTY()
-	TObjectPtr<UStaticMesh> ParticleMesh;
-
-	/** Particle material (UPROPERTY for GC, nullptr uses mesh default) */
-	UPROPERTY()
-	TObjectPtr<UMaterialInterface> ParticleMaterial;
-
-	/** Particle scale multiplier */
-	float ParticleScale = 1.0f;
+	/** Enable/disable ISM debug renderer (set from Component) */
+	bool bEnabled = false;
 
 	//========================================
 	// Performance Options
@@ -116,13 +101,6 @@ public:
 	float MaxVelocityForColor = 1000.0f;
 
 	//========================================
-	// Enable Control
-	//========================================
-
-	/** Enable/disable this renderer */
-	bool bEnabled = true;
-
-	//========================================
 	// Component Access
 	//========================================
 
@@ -142,6 +120,10 @@ protected:
 	/** Cached owner component reference (for ISM attachment) */
 	UPROPERTY()
 	TObjectPtr<USceneComponent> CachedOwnerComponent;
+
+	/** Cached preset reference (for rendering parameters) */
+	UPROPERTY()
+	TObjectPtr<class UKawaiiFluidPresetDataAsset> CachedPreset;
 
 	//========================================
 	// ISM-specific Internals

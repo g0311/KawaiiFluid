@@ -9,6 +9,7 @@
 #include "Data/KawaiiFluidPresetDataAsset.h"
 #include "Core/KawaiiFluidSimulatorSubsystem.h"
 #include "Rendering/KawaiiFluidMetaballRenderer.h"
+#include "Rendering/KawaiiFluidISMRenderer.h"
 #include "Rendering/FluidRendererSubsystem.h"
 #include "GPU/GPUFluidSimulator.h"
 #include "DrawDebugHelpers.h"
@@ -642,6 +643,16 @@ void AKawaiiFluidVolume::InitializeRendering()
 	// Initialize RenderingModule with SimulationModule as data provider
 	// Rendering parameters (PipelineType, etc.) are taken from Preset->RenderingParameters
 	RenderingModule->Initialize(World, VolumeComponent, SimulationModule, Preset);
+
+	// Configure ISMRenderer (debug/preview renderer)
+	if (UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer())
+	{
+		// ISM disabled by default (use Metaball for production)
+		// To enable ISM debug view, set ISMRenderer->bEnabled=true in Blueprint or C++
+		// ISMRenderer manages its own settings (bEnabled, ParticleColor as UPROPERTY)
+		ISMRenderer->SetEnabled(false);
+		UE_LOG(LogTemp, Log, TEXT("AKawaiiFluidVolume [%s]: ISMRenderer disabled (use Metaball renderer)"), *GetName());
+	}
 
 	// Configure MetaballRenderer based on preset's RenderingParameters
 	if (UKawaiiFluidMetaballRenderer* MetaballRenderer = RenderingModule->GetMetaballRenderer())
