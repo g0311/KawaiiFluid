@@ -14,10 +14,12 @@ UKawaiiFluidVolumeComponent::UKawaiiFluidVolumeComponent()
 	// Enable ticking in editor for debug visualization
 	bTickInEditor = true;
 
-	// Initialize default volume size based on Medium Z-Order preset and CellSize
-	// Formula: GridResolution(Medium) * CellSize = 128 * CellSize
+	// Initialize default volume size based on Medium Z-Order preset and default CellSize (20.0f)
+	// Formula: GridResolution(Medium) * CellSize = 128 * 20 = 2560
+	// CellSize will be automatically derived from Preset->SmoothingRadius when Preset is set
 	const float MediumGridResolution = static_cast<float>(GridResolutionPresetHelper::GetGridResolution(EGridResolutionPreset::Medium));
-	const float DefaultVolumeSize = MediumGridResolution * CellSize;
+	const float DefaultCellSize = 20.0f;  // Default fallback when no Preset is set
+	const float DefaultVolumeSize = MediumGridResolution * DefaultCellSize;
 	UniformVolumeSize = DefaultVolumeSize;
 	VolumeSize = FVector(DefaultVolumeSize);
 
@@ -91,20 +93,11 @@ void UKawaiiFluidVolumeComponent::PostEditChangeProperty(FPropertyChangedEvent& 
 		}
 	}
 
-	// When CellSize changes, recalculate volume size to maintain Medium preset
-	if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidVolumeComponent, CellSize))
-	{
-		const float MediumGridResolution = static_cast<float>(GridResolutionPresetHelper::GetGridResolution(EGridResolutionPreset::Medium));
-		const float NewDefaultSize = MediumGridResolution * CellSize;
-		UniformVolumeSize = NewDefaultSize;
-		VolumeSize = FVector(NewDefaultSize);
-	}
-
-	// Handle size-related property changes
+	// Handle size-related property changes or Preset change (which affects CellSize)
 	if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidVolumeComponent, bUniformSize) ||
 		PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidVolumeComponent, UniformVolumeSize) ||
 		PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidVolumeComponent, VolumeSize) ||
-		PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidVolumeComponent, CellSize))
+		PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidVolumeComponent, Preset))
 	{
 		RecalculateBounds();
 
@@ -122,6 +115,16 @@ void UKawaiiFluidVolumeComponent::PostEditChangeProperty(FPropertyChangedEvent& 
 
 void UKawaiiFluidVolumeComponent::RecalculateBounds()
 {
+	// Update CellSize from Preset->SmoothingRadius (or use default fallback)
+	if (Preset)
+	{
+		CellSize = Preset->SmoothingRadius;
+	}
+	else
+	{
+		CellSize = 20.0f;  // Default fallback when no Preset is set
+	}
+
 	// Ensure valid CellSize
 	CellSize = FMath::Max(CellSize, 1.0f);
 

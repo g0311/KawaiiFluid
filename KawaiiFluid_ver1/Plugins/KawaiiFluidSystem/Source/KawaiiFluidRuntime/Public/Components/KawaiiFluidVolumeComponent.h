@@ -274,11 +274,11 @@ public:
 	//========================================
 
 	/**
-	 * Cell size for Z-Order grid (should match SmoothingRadius of fluid presets)
+	 * Cell size for Z-Order grid (auto-derived from Preset->SmoothingRadius)
 	 * Determines the grid cell size for neighbor search.
-	 * Smaller values = more precision but smaller bounds extent.
+	 * This value is automatically set from the fluid preset's SmoothingRadius.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Volume|Advanced", meta = (ClampMin = "1.0", ClampMax = "1000.0"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Volume|Advanced", meta = (DisplayName = "Cell Size (from Preset)"))
 	float CellSize = 20.0f;
 
 	/**
