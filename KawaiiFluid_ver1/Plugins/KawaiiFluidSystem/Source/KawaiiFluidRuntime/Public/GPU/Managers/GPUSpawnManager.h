@@ -92,18 +92,19 @@ public:
 	void AddDespawnByIDRequest(int32 ParticleID);
 
 	/**
-	 * Cleanup AlreadyRequestedIDs based on currently alive particles.
-	 * Call this when readback data is updated to ensure IDs can be reused for future despawns.
-	 * @param CurrentAliveIDs - Set of IDs currently alive on GPU
+	 * Cleanup AlreadyRequestedIDs based on currently alive particles (Pull 방식).
+	 * AliveParticleIDs를 순회하며 AlreadyRequestedIDs에서 검색 (Set lookup O(1)).
+	 * Array 순회 + 작은 Set에서 lookup이 TSet 생성 + 큰 Set에서 lookup보다 효율적.
+	 * @param AliveParticleIDs - Array of IDs currently alive on GPU
 	 */
-	void CleanupCompletedRequests(const TSet<int32>& CurrentAliveIDs);
+	void CleanupCompletedRequests(const TArray<int32>& AliveParticleIDs);
 
 	/**
 	 * Add multiple despawn requests by particle IDs (thread-safe, more efficient)
+	 * CleanupCompletedRequests는 ProcessStatsReadback에서 Readback 완료 시 호출됨
 	 * @param ParticleIDs - Array of particle IDs to despawn
-	 * @param AllCurrentReadbackIDs - All particle IDs in current readback (for cleanup of already-removed IDs)
 	 */
-	void AddDespawnByIDRequests(const TArray<int32>& ParticleIDs, const TArray<int32>& AllCurrentReadbackIDs);
+	void AddDespawnByIDRequests(const TArray<int32>& ParticleIDs);
 
 	/** Swap pending ID despawn requests to active buffer (call at start of simulation frame)
 	 * @return Number of IDs to despawn this frame

@@ -1415,33 +1415,14 @@ void UKawaiiFluidSimulationModule::ClearAllParticles()
 	// GPU 파티클 클리어 (이 Module의 SourceID 파티클만)
 	if (bGPUSimulationActive && CachedGPUSimulator)
 	{
-		// Readback 데이터 가져오기
-		TArray<FGPUFluidParticle> ReadbackParticles;
-		if (CachedGPUSimulator->GetReadbackGPUParticles(ReadbackParticles) && ReadbackParticles.Num() > 0)
+		// 캐시된 SourceID별 ParticleIDs 참조 (복사 없음, O(1) lookup)
+		const TArray<int32>* MyParticleIDsPtr = CachedGPUSimulator->GetParticleIDsBySourceID(CachedSourceID);
+		if (MyParticleIDsPtr && MyParticleIDsPtr->Num() > 0)
 		{
-			// 내 SourceID의 파티클 ID만 수집
-			TArray<int32> MyParticleIDs;
-			TArray<int32> AllParticleIDs;
-			MyParticleIDs.Reserve(ReadbackParticles.Num());
-			AllParticleIDs.Reserve(ReadbackParticles.Num());
-
-			for (const FGPUFluidParticle& Particle : ReadbackParticles)
-			{
-				AllParticleIDs.Add(Particle.ParticleID);
-
-				if (Particle.SourceID == CachedSourceID)
-				{
-					MyParticleIDs.Add(Particle.ParticleID);
-				}
-			}
-
-			// 내 파티클들 Despawn 요청
-			if (MyParticleIDs.Num() > 0)
-			{
-				CachedGPUSimulator->AddDespawnByIDRequests(MyParticleIDs, AllParticleIDs);
-				UE_LOG(LogTemp, Log, TEXT("ClearAllParticles: SourceID=%d, Clearing %d particles (Total=%d)"),
-					CachedSourceID, MyParticleIDs.Num(), ReadbackParticles.Num());
-			}
+			// 내 파티클들 Despawn 요청 (CleanupCompletedRequests는 Readback 시 호출됨)
+			CachedGPUSimulator->AddDespawnByIDRequests(*MyParticleIDsPtr);
+			UE_LOG(LogTemp, Log, TEXT("ClearAllParticles: SourceID=%d, Clearing %d particles"),
+				CachedSourceID, MyParticleIDsPtr->Num());
 		}
 	}
 }
@@ -1456,63 +1437,38 @@ int32 UKawaiiFluidSimulationModule::RemoveOldestParticles(int32 Count)
 	// GPU 모드
 	if (bGPUSimulationActive && CachedGPUSimulator)
 	{
-		// Readback 데이터 가져오기
-		TArray<FGPUFluidParticle> ReadbackParticles;
-		if (!CachedGPUSimulator->GetReadbackGPUParticles(ReadbackParticles))
+		// 캐시된 SourceID별 ParticleIDs 참조 (복사 없음, O(1) lookup)
+		const TArray<int32>* MyParticleIDsPtr = CachedGPUSimulator->GetParticleIDsBySourceID(CachedSourceID);
+		if (!MyParticleIDsPtr || MyParticleIDsPtr->Num() == 0)
 		{
 			return 0;
 		}
 
-		if (ReadbackParticles.Num() == 0)
-		{
-			return 0;
-		}
-
-		// 이 Module의 파티클만 필터링 (SourceID 기반)
-		TArray<int32> MyParticleIDs;
-		TArray<int32> AllParticleIDs;
-		MyParticleIDs.Reserve(ReadbackParticles.Num());
-		AllParticleIDs.Reserve(ReadbackParticles.Num());
-
-		for (const FGPUFluidParticle& Particle : ReadbackParticles)
-		{
-			AllParticleIDs.Add(Particle.ParticleID);
-
-			// 내 SourceID의 파티클만 수집
-			if (Particle.SourceID == CachedSourceID)
-			{
-				MyParticleIDs.Add(Particle.ParticleID);
-			}
-		}
-
-		if (MyParticleIDs.Num() == 0)
-		{
-			return 0;
-		}
+		const int32 MyCount = MyParticleIDsPtr->Num();
 
 		// 제거할 개수 결정 (내 파티클 수 기준)
-		const int32 RemoveCount = FMath::Min(Count, MyParticleIDs.Num());
+		const int32 RemoveCount = FMath::Min(Count, MyCount);
 
-		// nth_element로 가장 작은 ID N개 찾기 (O(n))
-		if (RemoveCount < MyParticleIDs.Num())
+		// nth_element는 원본 수정하므로 복사 필요 (내 파티클만, 전체 아님)
+		TArray<int32> MyParticleIDs = *MyParticleIDsPtr;
+
+		// nth_element로 가장 작은 ID N개 찾기 O(n)
+		if (RemoveCount < MyCount)
 		{
 			std::nth_element(MyParticleIDs.GetData(), MyParticleIDs.GetData() + RemoveCount,
-				MyParticleIDs.GetData() + MyParticleIDs.Num());
+				MyParticleIDs.GetData() + MyCount);
 		}
 
-		// 앞쪽 RemoveCount개가 가장 작은 ID들 (가장 오래된 파티클)
+		// 앞쪽 RemoveCount개 추출
 		TArray<int32> IDsToRemove;
-		IDsToRemove.Reserve(RemoveCount);
-		for (int32 i = 0; i < RemoveCount; i++)
-		{
-			IDsToRemove.Add(MyParticleIDs[i]);
-		}
+		IDsToRemove.SetNumUninitialized(RemoveCount);
+		FMemory::Memcpy(IDsToRemove.GetData(), MyParticleIDs.GetData(), RemoveCount * sizeof(int32));
 
-		// Despawn 요청
-		CachedGPUSimulator->AddDespawnByIDRequests(IDsToRemove, AllParticleIDs);
+		// Despawn 요청 (CleanupCompletedRequests는 Readback 시 1회 호출됨)
+		CachedGPUSimulator->AddDespawnByIDRequests(IDsToRemove);
 
-		UE_LOG(LogTemp, Log, TEXT("RemoveOldestParticles: SourceID=%d, Removing %d particles (IDs: %d ~ %d), MyCount=%d, TotalCount=%d"),
-			CachedSourceID, RemoveCount, IDsToRemove[0], IDsToRemove.Last(), MyParticleIDs.Num(), ReadbackParticles.Num());
+		UE_LOG(LogTemp, Log, TEXT("RemoveOldestParticles: SourceID=%d, Removing %d particles (IDs: %d ~ %d), MyCount=%d"),
+			CachedSourceID, RemoveCount, IDsToRemove[0], IDsToRemove.Last(), MyCount);
 
 		return RemoveCount;
 	}

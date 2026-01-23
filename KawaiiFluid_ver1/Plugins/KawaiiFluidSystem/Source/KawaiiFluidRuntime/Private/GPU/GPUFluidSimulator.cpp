@@ -652,7 +652,7 @@ void FGPUFluidSimulator::EndFrame()
 				// This allows reusing the same IDs immediately after a full clear.
 				if (Self->SpawnManager.IsValid())
 				{
-					Self->SpawnManager->CleanupCompletedRequests(TSet<int32>());
+					Self->SpawnManager->CleanupCompletedRequests(TArray<int32>());
 				}
 			}
 
@@ -1398,11 +1398,11 @@ void FGPUFluidSimulator::AddSpawnRequests(const TArray<FGPUSpawnRequest>& Reques
 	if (SpawnManager.IsValid()) { SpawnManager->AddSpawnRequests(Requests); }
 }
 
-void FGPUFluidSimulator::AddDespawnByIDRequests(const TArray<int32>& ParticleIDs, const TArray<int32>& AllCurrentReadbackIDs)
+void FGPUFluidSimulator::AddDespawnByIDRequests(const TArray<int32>& ParticleIDs)
 {
 	if (SpawnManager.IsValid() && ParticleIDs.Num() > 0)
 	{
-		SpawnManager->AddDespawnByIDRequests(ParticleIDs, AllCurrentReadbackIDs);
+		SpawnManager->AddDespawnByIDRequests(ParticleIDs);
 		// 카운트 업데이트는 PrepareParticleBuffer에서 AddDespawnByIDPass 실행 후에 함
 	}
 }
@@ -1423,6 +1423,32 @@ bool FGPUFluidSimulator::GetReadbackGPUParticles(TArray<FGPUFluidParticle>& OutP
 
 	OutParticles = ReadbackGPUParticles;
 	return true;
+}
+
+const TArray<int32>* FGPUFluidSimulator::GetParticleIDsBySourceID(int32 SourceID) const
+{
+	if (!bHasValidGPUResults.load())
+	{
+		return nullptr;
+	}
+
+	FScopeLock Lock(&const_cast<FCriticalSection&>(BufferLock));
+	return CachedSourceIDToParticleIDs.Find(SourceID);
+}
+
+const TArray<int32>* FGPUFluidSimulator::GetAllParticleIDs() const
+{
+	if (!bHasValidGPUResults.load())
+	{
+		return nullptr;
+	}
+
+	FScopeLock Lock(&const_cast<FCriticalSection&>(BufferLock));
+	if (CachedAllParticleIDs.Num() == 0)
+	{
+		return nullptr;
+	}
+	return &CachedAllParticleIDs;
 }
 
 void FGPUFluidSimulator::ClearSpawnRequests()
@@ -2857,12 +2883,66 @@ void FGPUFluidSimulator::ProcessStatsReadback()
 	const int32 BufferSize = ParticleCount * sizeof(FGPUFluidParticle);
 	const FGPUFluidParticle* ParticleData = (const FGPUFluidParticle*)StatsReadbacks[ReadIdx]->Lock(BufferSize);
 
-	if (ParticleData)
+	if (ParticleData && ParticleCount > 0)
 	{
-		FScopeLock Lock(&BufferLock);
-		ReadbackGPUParticles.SetNumUninitialized(ParticleCount);
-		FMemory::Memcpy(ReadbackGPUParticles.GetData(), ParticleData, BufferSize);
-		bHasValidGPUResults.store(true);
+		// 병렬 캐시 빌드: 청크별 로컬 맵 → merge
+		const int32 NumChunks = FMath::Clamp(FPlatformMisc::NumberOfCoresIncludingHyperthreads(), 1, ParticleCount);
+		const int32 ChunkSize = (ParticleCount + NumChunks - 1) / NumChunks;
+
+		TArray<TMap<int32, TArray<int32>>> ChunkMaps;
+		TArray<TArray<int32>> ChunkAllIDs;
+		ChunkMaps.SetNum(NumChunks);
+		ChunkAllIDs.SetNum(NumChunks);
+
+		ParallelFor(NumChunks, [&](int32 ChunkIndex)
+		{
+			const int32 StartIdx = ChunkIndex * ChunkSize;
+			const int32 EndIdx = FMath::Min(StartIdx + ChunkSize, ParticleCount);
+			if (StartIdx >= EndIdx) return;  // 안전 체크
+
+			auto& LocalMap = ChunkMaps[ChunkIndex];
+			auto& LocalAllIDs = ChunkAllIDs[ChunkIndex];
+			LocalAllIDs.Reserve(EndIdx - StartIdx);
+
+			for (int32 i = StartIdx; i < EndIdx; ++i)
+			{
+				const FGPUFluidParticle& P = ParticleData[i];
+				LocalAllIDs.Add(P.ParticleID);
+				LocalMap.FindOrAdd(P.SourceID).Add(P.ParticleID);
+			}
+		});
+
+		// Merge (단일 스레드)
+		TMap<int32, TArray<int32>> NewSourceIDMap;
+		TArray<int32> NewAllParticleIDs;
+		NewAllParticleIDs.Reserve(ParticleCount);
+
+		for (int32 c = 0; c < NumChunks; ++c)
+		{
+			NewAllParticleIDs.Append(ChunkAllIDs[c]);
+			for (auto& Pair : ChunkMaps[c])
+			{
+				NewSourceIDMap.FindOrAdd(Pair.Key).Append(Pair.Value);
+			}
+		}
+
+		// Lock 짧게 잡고 swap + ReadbackGPUParticles 복사
+		{
+			FScopeLock Lock(&BufferLock);
+			ReadbackGPUParticles.SetNumUninitialized(ParticleCount);
+			FMemory::Memcpy(ReadbackGPUParticles.GetData(), ParticleData, BufferSize);
+			CachedSourceIDToParticleIDs = MoveTemp(NewSourceIDMap);
+			CachedAllParticleIDs = MoveTemp(NewAllParticleIDs);
+			bHasValidGPUResults.store(true);
+		}
+
+		// BufferLock 밖에서 DespawnByIDLock 잡음 (Lock 중첩 방지)
+		// CleanupCompletedRequests에는 아까 빌드한 배열 재사용 불가 (MoveTemp됨)
+		// 그냥 CachedAllParticleIDs 참조해도 됨 - 렌더 스레드에서만 수정하므로 여기선 안전
+		if (SpawnManager.IsValid())
+		{
+			SpawnManager->CleanupCompletedRequests(CachedAllParticleIDs);
+		}
 	}
 
 	StatsReadbacks[ReadIdx]->Unlock();

@@ -1063,10 +1063,10 @@ int32 AKawaiiFluidVolume::RemoveParticlesInRadius(const FVector& WorldCenter, fl
 		}
 	}
 
-	// Submit ID-based despawn request with all readback IDs for cleanup
+	// Submit ID-based despawn request (CleanupCompletedRequests는 Readback 시 호출됨)
 	if (ParticleIDsToRemove.Num() > 0)
 	{
-		GPUSimulator->AddDespawnByIDRequests(ParticleIDsToRemove, AllReadbackIDs);
+		GPUSimulator->AddDespawnByIDRequests(ParticleIDsToRemove);
 	}
 
 	return ParticleIDsToRemove.Num();

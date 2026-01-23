@@ -1432,10 +1432,10 @@ int32 UKawaiiFluidComponent::RemoveParticlesInRadius(const FVector& WorldCenter,
 		}
 	}
 
-	// Submit ID-based despawn request with all readback IDs for cleanup
+	// Submit ID-based despawn request (CleanupCompletedRequests는 Readback 시 호출됨)
 	if (ParticleIDsToRemove.Num() > 0)
 	{
-		GPUSimulator->AddDespawnByIDRequests(ParticleIDsToRemove, AllReadbackIDs);
+		GPUSimulator->AddDespawnByIDRequests(ParticleIDsToRemove);
 		UE_LOG(LogTemp, Verbose, TEXT("RemoveParticlesInRadius: Found %d particles to remove by ID"), ParticleIDsToRemove.Num());
 	}
 

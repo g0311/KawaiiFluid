@@ -584,10 +584,10 @@ public:
 	/**
 	 * Add despawn requests by particle IDs (thread-safe)
 	 * Uses binary search on GPU for O(log n) matching per particle
+	 * CleanupCompletedRequests는 ProcessStatsReadback에서 Readback 완료 시 호출됨
 	 * @param ParticleIDs - Array of particle IDs to despawn
-	 * @param AllCurrentReadbackIDs - All particle IDs in current readback (for cleanup)
 	 */
-	void AddDespawnByIDRequests(const TArray<int32>& ParticleIDs, const TArray<int32>& AllCurrentReadbackIDs);
+	void AddDespawnByIDRequests(const TArray<int32>& ParticleIDs);
 
 	/**
 	 * Get readback GPU particle data (thread-safe)
@@ -596,6 +596,22 @@ public:
 	 * @return true if valid data was copied
 	 */
 	bool GetReadbackGPUParticles(TArray<FGPUFluidParticle>& OutParticles);
+
+	/**
+	 * Get particle IDs for a specific SourceID from cached readback data
+	 * Returns nullptr if no cached data or SourceID not found
+	 * Uses CachedSourceIDToParticleIDs built during readback processing
+	 * @param SourceID - Source component ID to query
+	 * @return Pointer to array of particle IDs, or nullptr if not available
+	 */
+	const TArray<int32>* GetParticleIDsBySourceID(int32 SourceID) const;
+
+	/**
+	 * Get all particle IDs from cached readback data
+	 * Returns nullptr if no cached data available
+	 * @return Pointer to array of all particle IDs, or nullptr if not available
+	 */
+	const TArray<int32>* GetAllParticleIDs() const;
 
 	/**
 	 * Clear all pending spawn requests
@@ -944,6 +960,12 @@ private:
 
 	// Separate buffer for GPU readback results (to avoid race with upload)
 	TArray<FGPUFluidParticle> ReadbackGPUParticles;
+
+	// Cached SourceID → ParticleIDs mapping (built during readback processing)
+	TMap<int32, TArray<int32>> CachedSourceIDToParticleIDs;
+
+	// Cached all particle IDs (built during readback processing)
+	TArray<int32> CachedAllParticleIDs;
 
 	// Flag indicating valid GPU results are available for download
 	std::atomic<bool> bHasValidGPUResults{false};

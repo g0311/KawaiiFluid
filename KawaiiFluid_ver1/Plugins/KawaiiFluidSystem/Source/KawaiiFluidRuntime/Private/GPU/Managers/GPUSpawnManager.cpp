@@ -160,33 +160,68 @@ void FGPUSpawnManager::AddDespawnByIDRequest(int32 ParticleID)
 	bHasPendingDespawnByIDRequests.store(true);
 }
 
-void FGPUSpawnManager::CleanupCompletedRequests(const TSet<int32>& CurrentAliveIDs)
+void FGPUSpawnManager::CleanupCompletedRequests(const TArray<int32>& AliveParticleIDs)
 {
 	FScopeLock Lock(&DespawnByIDLock);
 
-	// Remove IDs from tracking if they are no longer in the alive set
-	// This means they have been successfully despawned and confirmed by readback
-	TArray<int32> ToRemove;
-	for (int32 ID : AlreadyRequestedIDs)
+	// AlreadyRequestedIDs가 비어있으면 할 일 없음
+	if (AlreadyRequestedIDs.Num() == 0)
 	{
-		if (!CurrentAliveIDs.Contains(ID))
+		return;
+	}
+
+	const int32 ParticleCount = AliveParticleIDs.Num();
+	if (ParticleCount == 0)
+	{
+		// 파티클이 없으면 모든 요청이 완료된 것
+		AlreadyRequestedIDs.Empty();
+		return;
+	}
+
+	// 병렬 처리: 청크별 로컬 Set → merge
+	const int32 NumChunks = FMath::Clamp(FPlatformMisc::NumberOfCoresIncludingHyperthreads(), 1, ParticleCount);
+	const int32 ChunkSize = (ParticleCount + NumChunks - 1) / NumChunks;
+
+	TArray<TSet<int32>> ChunkSets;
+	ChunkSets.SetNum(NumChunks);
+
+	// 각 청크에서 AlreadyRequestedIDs에 있는 ID만 수집 (읽기 전용이므로 thread-safe)
+	ParallelFor(NumChunks, [&](int32 ChunkIndex)
+	{
+		const int32 StartIdx = ChunkIndex * ChunkSize;
+		const int32 EndIdx = FMath::Min(StartIdx + ChunkSize, ParticleCount);
+		if (StartIdx >= EndIdx) return;  // 안전 체크
+
+		auto& LocalSet = ChunkSets[ChunkIndex];
+
+		for (int32 i = StartIdx; i < EndIdx; ++i)
 		{
-			ToRemove.Add(ID);
+			const int32 ID = AliveParticleIDs[i];
+			if (AlreadyRequestedIDs.Contains(ID))
+			{
+				LocalSet.Add(ID);
+			}
 		}
+	});
+
+	// Merge
+	TSet<int32> StillPending;
+	StillPending.Reserve(AlreadyRequestedIDs.Num());
+	for (int32 c = 0; c < NumChunks; ++c)
+	{
+		StillPending.Append(ChunkSets[c]);
 	}
 
-	for (int32 ID : ToRemove)
-	{
-		AlreadyRequestedIDs.Remove(ID);
-	}
+	const int32 RemovedCount = AlreadyRequestedIDs.Num() - StillPending.Num();
+	AlreadyRequestedIDs = MoveTemp(StillPending);
 
-	if (ToRemove.Num() > 0)
+	if (RemovedCount > 0)
 	{
-		UE_LOG(LogGPUSpawnManager, Verbose, TEXT("CleanupCompletedRequests: Cleared %d IDs from tracking"), ToRemove.Num());
+		UE_LOG(LogGPUSpawnManager, Verbose, TEXT("CleanupCompletedRequests: Cleared %d IDs from tracking"), RemovedCount);
 	}
 }
 
-void FGPUSpawnManager::AddDespawnByIDRequests(const TArray<int32>& ParticleIDs, const TArray<int32>& AllCurrentReadbackIDs)
+void FGPUSpawnManager::AddDespawnByIDRequests(const TArray<int32>& ParticleIDs)
 {
 	if (ParticleIDs.Num() == 0)
 	{
@@ -194,9 +229,7 @@ void FGPUSpawnManager::AddDespawnByIDRequests(const TArray<int32>& ParticleIDs, 
 	}
 
 	FScopeLock Lock(&DespawnByIDLock);
-
-	// Cleanup IDs that are already removed on GPU
-	CleanupCompletedRequests(TSet<int32>(AllCurrentReadbackIDs));
+	
 
 	// 중복 필터링: 이미 제거 요청한 ID는 제외
 	int32 OriginalCount = ParticleIDs.Num();
@@ -216,8 +249,8 @@ void FGPUSpawnManager::AddDespawnByIDRequests(const TArray<int32>& ParticleIDs, 
 		bHasPendingDespawnByIDRequests.store(true);
 	}
 
-	UE_LOG(LogGPUSpawnManager, Log, TEXT("AddDespawnByIDRequests: %d requested, %d new, %d duplicates, %d cleaned (total pending: %d)"),
-		OriginalCount, FilteredCount, OriginalCount - FilteredCount, OriginalCount - FilteredCount, PendingDespawnByIDs.Num());
+	UE_LOG(LogGPUSpawnManager, Log, TEXT("AddDespawnByIDRequests: %d requested, %d new, %d duplicates (total pending: %d)"),
+		OriginalCount, FilteredCount, OriginalCount - FilteredCount, PendingDespawnByIDs.Num());
 }
 
 int32 FGPUSpawnManager::SwapDespawnByIDBuffers()
