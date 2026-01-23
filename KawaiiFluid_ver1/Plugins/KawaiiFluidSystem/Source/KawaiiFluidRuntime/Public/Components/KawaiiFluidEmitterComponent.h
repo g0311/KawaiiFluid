@@ -143,14 +143,15 @@ public:
 		meta = (ClampMin = "0"))
 	int32 MaxParticleCount = 0;
 
+	/** Recycle oldest particles when MaxParticleCount is exceeded (instead of stopping spawn)
+	 *  Only applicable to Stream mode - Fill mode spawns once and doesn't need recycling */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter",
+		meta = (EditCondition = "MaxParticleCount > 0 && EmitterMode == EKawaiiFluidEmitterMode::Stream", EditConditionHides))
+	bool bRecycleOldestParticles = false;
+
 	/** Whether to automatically start spawning on BeginPlay */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter")
 	bool bAutoStartSpawning = true;
-
-	/** Recycle oldest particles when MaxParticleCount is reached (Stream mode) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter",
-		meta = (EditCondition = "EmitterMode == EKawaiiFluidEmitterMode::Stream && MaxParticleCount > 0", EditConditionHides))
-	bool bRecycleOldestParticles = false;
 
 	//========================================
 	// Target Volume API
@@ -305,6 +306,9 @@ protected:
 	float StreamParticleSpacing = 0.0f;
 	float StreamJitter = 0.15f;
 	float StreamLayerSpacingRatio = 0.816f;
+
+	/** Cached SourceID for this emitter (allocated from Subsystem, 0~63 range) */
+	int32 CachedSourceID = -1;
 
 	//========================================
 	// Volume Registration (Internal)

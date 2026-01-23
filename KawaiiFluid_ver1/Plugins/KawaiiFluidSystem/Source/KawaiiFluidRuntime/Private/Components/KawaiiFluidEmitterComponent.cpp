@@ -4,6 +4,7 @@
 #include "Actors/KawaiiFluidEmitter.h"
 #include "Actors/KawaiiFluidVolume.h"
 #include "Core/KawaiiFluidSimulatorSubsystem.h"
+#include "Core/KawaiiFluidSimulationStats.h"
 #include "Modules/KawaiiFluidSimulationModule.h"
 #include "Data/KawaiiFluidPresetDataAsset.h"
 #include "DrawDebugHelpers.h"
@@ -38,6 +39,17 @@ void UKawaiiFluidEmitterComponent::BeginPlay()
 		TargetVolume = FindNearestVolume();
 	}
 
+	// Allocate SourceID from Subsystem (0~63 range, compatible with GPU counters)
+	if (UWorld* World = GetWorld())
+	{
+		if (UKawaiiFluidSimulatorSubsystem* Subsystem = World->GetSubsystem<UKawaiiFluidSimulatorSubsystem>())
+		{
+			CachedSourceID = Subsystem->AllocateSourceID();
+			UE_LOG(LogTemp, Log, TEXT("UKawaiiFluidEmitterComponent [%s]: Allocated SourceID = %d"),
+				*GetName(), CachedSourceID);
+		}
+	}
+
 	RegisterToVolume();
 
 	UE_LOG(LogTemp, Log, TEXT("UKawaiiFluidEmitterComponent [%s]: BeginPlay - TargetVolume=%s"),
@@ -60,6 +72,22 @@ void UKawaiiFluidEmitterComponent::BeginPlay()
 void UKawaiiFluidEmitterComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	UnregisterFromVolume();
+
+	// Release SourceID back to Subsystem
+	if (CachedSourceID >= 0)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			if (UKawaiiFluidSimulatorSubsystem* Subsystem = World->GetSubsystem<UKawaiiFluidSimulatorSubsystem>())
+			{
+				Subsystem->ReleaseSourceID(CachedSourceID);
+				UE_LOG(LogTemp, Log, TEXT("UKawaiiFluidEmitterComponent [%s]: Released SourceID = %d"),
+					*GetName(), CachedSourceID);
+			}
+		}
+		CachedSourceID = -1;
+	}
+
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -74,6 +102,12 @@ void UKawaiiFluidEmitterComponent::TickComponent(float DeltaTime, ELevelTick Tic
 	}
 
 	const bool bIsGameWorld = World->IsGameWorld();
+
+	// Request readback if this emitter needs particle count tracking (for MaxParticleCount or Recycle)
+	if (bIsGameWorld && MaxParticleCount > 0)
+	{
+		GetFluidStatsCollector().SetReadbackRequested(true);
+	}
 
 	// Wireframe visualization (editor only, when selected)
 #if WITH_EDITOR
@@ -253,14 +287,35 @@ bool UKawaiiFluidEmitterComponent::HasReachedParticleLimit() const
 {
 	if (MaxParticleCount <= 0)
 	{
+		return false;  // No limit set
+	}
+	
+	// Recycle mode (Stream only): don't block spawning, let recycle handle overflow
+	if (bRecycleOldestParticles && IsStreamMode())
+	{
 		return false;
 	}
-	return SpawnedParticleCount >= MaxParticleCount;
+	
+	// Use actual per-source particle count from GPU readback
+	UKawaiiFluidSimulationModule* Module = GetSimulationModule();
+	if (Module && CachedSourceID >= 0)
+	{
+		const int32 ActualCount = Module->GetParticleCountForSource(CachedSourceID);
+		if (ActualCount >= 0)  // Readback data ready
+		{
+			return ActualCount >= MaxParticleCount;
+		}
+	}
+	
+	// If readback not ready, allow spawning (don't block based on SpawnedParticleCount)
+	// SpawnedParticleCount only goes up and doesn't account for particle deaths
+	return false;
 }
 
 void UKawaiiFluidEmitterComponent::ProcessContinuousSpawn(float DeltaTime)
 {
-	if (HasReachedParticleLimit() && !bRecycleOldestParticles)
+	// Check per-emitter particle limit (MaxParticleCount)
+	if (HasReachedParticleLimit())
 	{
 		return;
 	}
@@ -324,13 +379,25 @@ void UKawaiiFluidEmitterComponent::ProcessStreamEmitter(float DeltaTime)
 
 	for (int32 i = 0; i < LayerCount; ++i)
 	{
-		// Estimate particles per layer for recycling
-		const int32 EstimatedParticlesPerLayer = FMath::Max(1, FMath::CeilToInt(
-			PI * FMath::Square(StreamRadius / EffectiveSpacing)));
-		RecycleOldestParticlesIfNeeded(EstimatedParticlesPerLayer);
-
 		SpawnStreamLayer(SpawnPos, LocalLayerDir, VelocityDir, InitialSpeed,
 			StreamRadius, EffectiveSpacing);
+	}
+
+	// Recycle (Stream mode only): After spawning, remove oldest particles if over MaxParticleCount
+	// This allows continuous emission by replacing old particles with new ones
+	if (bRecycleOldestParticles && MaxParticleCount > 0)
+	{
+		UKawaiiFluidSimulationModule* Module = GetSimulationModule();
+		if (Module && CachedSourceID >= 0)
+		{
+			const int32 CurrentCount = Module->GetParticleCountForSource(CachedSourceID);
+			// -1 = readback not ready, skip recycle this frame
+			if (CurrentCount >= 0 && CurrentCount > MaxParticleCount)
+			{
+				const int32 ToRemove = CurrentCount - MaxParticleCount;
+				Module->RemoveOldestParticlesForSource(CachedSourceID, ToRemove);
+			}
+		}
 	}
 }
 
@@ -717,15 +784,9 @@ void UKawaiiFluidEmitterComponent::QueueSpawnRequest(const TArray<FVector>& Posi
 		return;
 	}
 
-	// Get SourceID from owner emitter
-	int32 SourceID = -1;
-	if (AKawaiiFluidEmitter* Emitter = GetOwnerEmitter())
-	{
-		SourceID = Emitter->GetUniqueID();
-	}
-
+	// Use pre-allocated SourceID (from Subsystem, 0~63 range)
 	// Queue spawn requests to Volume's batch queue
-	Volume->QueueSpawnRequests(Positions, Velocities, SourceID);
+	Volume->QueueSpawnRequests(Positions, Velocities, CachedSourceID);
 
 	SpawnedParticleCount += Positions.Num();
 }
@@ -737,28 +798,6 @@ UKawaiiFluidSimulationModule* UKawaiiFluidEmitterComponent::GetSimulationModule(
 		return Volume->GetSimulationModule();
 	}
 	return nullptr;
-}
-
-void UKawaiiFluidEmitterComponent::RecycleOldestParticlesIfNeeded(int32 NewParticleCount)
-{
-	if (!bRecycleOldestParticles || MaxParticleCount <= 0)
-	{
-		return;
-	}
-
-	UKawaiiFluidSimulationModule* Module = GetSimulationModule();
-	if (!Module)
-	{
-		return;
-	}
-
-	const int32 CurrentCount = Module->GetParticleCount();
-	const int32 ExcessCount = (CurrentCount + NewParticleCount) - MaxParticleCount;
-
-	if (ExcessCount > 0)
-	{
-		Module->RemoveOldestParticles(ExcessCount);
-	}
 }
 
 //========================================

@@ -67,8 +67,7 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 		return;
 	}
 
-	// Process pending spawn requests BEFORE subsystem simulation runs
-	// This converts queued spawn requests (from emitters) into actual particles
+	// Process pending spawn requests from emitters
 	ProcessPendingSpawnRequests();
 
 	// Update rendering (read from VolumeComponent)
@@ -404,33 +403,37 @@ void AKawaiiFluidVolume::ProcessPendingSpawnRequests()
 		return;
 	}
 
-	// Debug: Check GPU simulator status before spawning
-	static bool bLoggedOnce = false;
-	if (!bLoggedOnce)
+	// Get GPU simulator to send requests directly (preserving SourceID from each request)
+	FGPUFluidSimulator* GPUSimulator = SimulationModule->GetGPUSimulator();
+	if (!GPUSimulator)
 	{
-		const bool bHasGPU = SimulationModule->GetGPUSimulator() != nullptr;
-		const bool bGPUActive = SimulationModule->IsGPUSimulationActive();
-		UE_LOG(LogTemp, Log, TEXT("AKawaiiFluidVolume [%s]: ProcessPendingSpawnRequests - GPU=%s, Active=%s"),
-			*GetName(), bHasGPU ? TEXT("Yes") : TEXT("No"), bGPUActive ? TEXT("Yes") : TEXT("No"));
-		bLoggedOnce = true;
+		UE_LOG(LogTemp, Warning, TEXT("AKawaiiFluidVolume [%s]: No GPU simulator available for spawn requests"),
+			*GetName());
+		PendingSpawnRequests.Empty();
+		return;
 	}
 
-	int32 SuccessCount = 0;
-	// Spawn all pending particles
-	for (const FGPUSpawnRequest& Request : PendingSpawnRequests)
+	// Fill in default mass and radius from preset
+	const float DefaultMass = SimulationModule->Preset ? SimulationModule->Preset->ParticleMass : 1.0f;
+	const float DefaultRadius = SimulationModule->Preset ? SimulationModule->Preset->ParticleRadius : 5.0f;
+
+	for (FGPUSpawnRequest& Request : PendingSpawnRequests)
 	{
-		int32 Result = SimulationModule->SpawnParticle(
-			FVector(Request.Position.X, Request.Position.Y, Request.Position.Z),
-			FVector(Request.Velocity.X, Request.Velocity.Y, Request.Velocity.Z)
-		);
-		if (Result >= 0)
+		if (Request.Mass <= 0.0f)
 		{
-			SuccessCount++;
+			Request.Mass = DefaultMass;
+		}
+		if (Request.Radius <= 0.0f)
+		{
+			Request.Radius = DefaultRadius;
 		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("AKawaiiFluidVolume [%s]: Processed %d spawn requests, %d succeeded"),
-		*GetName(), PendingSpawnRequests.Num(), SuccessCount);
+	// Send all requests directly to GPU (preserving each request's SourceID)
+	GPUSimulator->AddSpawnRequests(PendingSpawnRequests);
+
+	UE_LOG(LogTemp, Verbose, TEXT("AKawaiiFluidVolume [%s]: Sent %d spawn requests to GPU"),
+		*GetName(), PendingSpawnRequests.Num());
 
 	PendingSpawnRequests.Empty();
 }

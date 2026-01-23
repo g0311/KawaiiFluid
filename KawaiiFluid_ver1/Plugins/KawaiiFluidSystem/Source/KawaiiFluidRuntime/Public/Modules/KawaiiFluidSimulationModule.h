@@ -513,6 +513,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Fluid")
 	int32 RemoveOldestParticles(int32 Count);
 
+	/** 특정 Source의 가장 오래된 파티클 N개 제거
+	 * Emitter 등 외부 컴포넌트가 자신의 파티클만 제거할 때 사용
+	 * @param SourceID 대상 Source ID (0~63)
+	 * @param Count 제거할 파티클 수
+	 * @return 실제 제거 요청된 파티클 수
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Fluid")
+	int32 RemoveOldestParticlesForSource(int32 SourceID, int32 Count);
+
 	/** 파티클 위치 배열 */
 	UFUNCTION(BlueprintCallable, Category = "Fluid")
 	TArray<FVector> GetParticlePositions() const;
