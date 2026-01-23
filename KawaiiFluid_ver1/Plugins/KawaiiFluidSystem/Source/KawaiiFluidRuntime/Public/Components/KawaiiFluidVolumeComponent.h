@@ -332,7 +332,7 @@ public:
 
 	/** Wireframe color */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
-	FColor BoundsColor = FColor::Green;
+	FColor BoundsColor = FColor::Cyan;
 
 	/** Wireframe line thickness */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug", meta = (ClampMin = "0.5", ClampMax = "10.0"))

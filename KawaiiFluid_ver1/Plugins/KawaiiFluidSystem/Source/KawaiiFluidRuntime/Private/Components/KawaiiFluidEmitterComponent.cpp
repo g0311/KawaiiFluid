@@ -871,8 +871,19 @@ void UKawaiiFluidEmitterComponent::DrawSpawnVolumeVisualization()
 		switch (ShapeType)
 		{
 		case EKawaiiFluidEmitterShapeType::Sphere:
-			// Sphere is rotation-independent
-			DrawDebugSphere(World, Location, SphereRadius, 24, SpawnColor, false, Duration, DepthPriority, Thickness);
+			{
+				// Draw sphere using 3 circles (one per axis) like Point Light
+				const int32 NumSegments = 24;
+				
+				// XY plane circle (around Z axis)
+				DrawDebugCircle(World, Location, SphereRadius, NumSegments, SpawnColor, false, Duration, DepthPriority, Thickness, FVector(1, 0, 0), FVector(0, 1, 0), false);
+				
+				// XZ plane circle (around Y axis)
+				DrawDebugCircle(World, Location, SphereRadius, NumSegments, SpawnColor, false, Duration, DepthPriority, Thickness, FVector(1, 0, 0), FVector(0, 0, 1), false);
+				
+				// YZ plane circle (around X axis)
+				DrawDebugCircle(World, Location, SphereRadius, NumSegments, SpawnColor, false, Duration, DepthPriority, Thickness, FVector(0, 1, 0), FVector(0, 0, 1), false);
+			}
 			break;
 
 		case EKawaiiFluidEmitterShapeType::Cube:
