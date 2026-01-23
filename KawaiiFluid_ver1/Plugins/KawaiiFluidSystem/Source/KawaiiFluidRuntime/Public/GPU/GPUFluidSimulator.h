@@ -644,6 +644,13 @@ public:
 	void SetNextParticleID(int32 ID) { if (SpawnManager.IsValid()) SpawnManager->SetNextParticleID(ID); }
 
 	/**
+	 * Atomically allocate a range of particle IDs (thread-safe for multi-module upload)
+	 * @param Count - Number of IDs to allocate
+	 * @return Starting ID of allocated range, or 0 if SpawnManager invalid
+	 */
+	int32 AllocateParticleIDs(int32 Count) { return SpawnManager.IsValid() ? SpawnManager->AllocateParticleIDs(Count) : 0; }
+
+	/**
 	 * Get the spawn manager (for per-source particle count tracking)
 	 */
 	FGPUSpawnManager* GetSpawnManager() const { return SpawnManager.Get(); }

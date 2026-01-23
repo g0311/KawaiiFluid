@@ -54,6 +54,19 @@ public:
 		NextParticleID.store(0);
 	}
 
+	/** Clear only despawn tracking state (keeps NextParticleID intact)
+	 * Use this when uploading particles with new IDs - clears stale despawn requests
+	 * without disrupting the atomic ID allocation from AllocateParticleIDs()
+	 */
+	void ClearDespawnTracking()
+	{
+		FScopeLock Lock(&DespawnByIDLock);
+		PendingDespawnByIDs.Empty();
+		ActiveDespawnByIDs.Empty();
+		AlreadyRequestedIDs.Empty();
+		bHasPendingDespawnByIDRequests.store(false);
+	}
+
 	//=========================================================================
 	// Thread-Safe Public API (callable from any thread)
 	//=========================================================================
@@ -201,6 +214,12 @@ public:
 
 	/** Set next particle ID (for PIE transition - sync with uploaded particles) */
 	void SetNextParticleID(int32 ID) { NextParticleID.store(ID); }
+
+	/** Atomically allocate a range of particle IDs (thread-safe for multi-module upload)
+	 * @param Count - Number of IDs to allocate
+	 * @return Starting ID of allocated range [StartID, StartID + Count)
+	 */
+	int32 AllocateParticleIDs(int32 Count) { return NextParticleID.fetch_add(Count); }
 
 	/** Reset NextParticleID to 0 when particle count is 0 (prevents overflow) */
 	void TryResetParticleID(int32 CurrentParticleCount)

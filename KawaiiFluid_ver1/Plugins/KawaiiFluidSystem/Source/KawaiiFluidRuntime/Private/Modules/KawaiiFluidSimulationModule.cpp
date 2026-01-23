@@ -158,36 +158,25 @@ void UKawaiiFluidSimulationModule::UploadCPUParticlesToGPU()
 
 	const int32 UploadCount = Particles.Num();
 
-	// 업로드된 파티클 중 최대 ID 찾기 + SourceID를 현재 컴포넌트로 바인딩
-	// (PIE 전환/옵션 변경 시 새로 할당받은 SourceID 적용)
-	int32 MaxParticleID = -1;
-	for (FFluidParticle& Particle : Particles)
+	// Atomic ID 할당: 저장된 ID 무시하고 새로 할당 (멀티모듈 충돌 방지 + overflow 리셋)
+	const int32 StartID = CachedGPUSimulator->AllocateParticleIDs(UploadCount);
+	for (int32 i = 0; i < UploadCount; ++i)
 	{
-		MaxParticleID = FMath::Max(MaxParticleID, Particle.ParticleID);
-		Particle.SourceID = CachedSourceID;
+		Particles[i].ParticleID = StartID + i;
+		Particles[i].SourceID = CachedSourceID;
 	}
 
 	// CPU에서 GPU로 업로드 (bAppend=true: 배칭 환경에서 다른 컴포넌트 파티클 보존)
 	CachedGPUSimulator->UploadParticles(Particles, /*bAppend=*/true);
 
-	// 모든 append 후 GPU 버퍼 생성/갱신
+	// 모든 append 후 GPU 버퍼 생성/갱신 + SpawnManager 상태 리셋
 	CachedGPUSimulator->FinalizeUpload();
-
-	// SpawnManager의 NextParticleID 갱신 (여러 컴포넌트가 업로드할 때 가장 큰 ID 기준)
-	if (MaxParticleID >= 0)
-	{
-		const int32 NewNextID = MaxParticleID + 1;
-		const int32 CurrentNextID = CachedGPUSimulator->GetNextParticleID();
-		if (NewNextID > CurrentNextID)
-		{
-			CachedGPUSimulator->SetNextParticleID(NewNextID);
-		}
-	}
 
 	// GPU에 올렸으니 CPU 배열 정리 (중복 업로드 방지 + 메모리 절약)
 	Particles.Empty();
 
-	UE_LOG(LogTemp, Log, TEXT("UploadCPUParticlesToGPU: Uploaded %d particles (SourceID=%d) to GPU"), UploadCount, CachedSourceID);
+	UE_LOG(LogTemp, Log, TEXT("UploadCPUParticlesToGPU: Uploaded %d particles (SourceID=%d, IDs=%d~%d) to GPU"),
+		UploadCount, CachedSourceID, StartID, StartID + UploadCount - 1);
 }
 
 void UKawaiiFluidSimulationModule::BeginDestroy()

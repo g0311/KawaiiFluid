@@ -1878,6 +1878,13 @@ void FGPUFluidSimulator::FinalizeUpload()
 	// GPU 버퍼 생성
 	CreateImmediatePersistentBuffer();
 
+	// Despawn 추적 상태만 클리어 (업로드된 파티클은 새 ID이므로 기존 추적 무효)
+	// NextParticleID는 AllocateParticleIDs에서 atomic하게 관리되므로 건드리지 않음
+	if (SpawnManager.IsValid())
+	{
+		SpawnManager->ClearDespawnTracking();
+	}
+
 	// 플래그 설정
 	bNeedsFullUpload = false;
 }
