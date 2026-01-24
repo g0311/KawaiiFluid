@@ -27,6 +27,26 @@ enum class EMetaballPipelineType : uint8
 // Removed: ESSFRRenderingMode (deprecated)
 
 /**
+ * Fluid Reflection Mode.
+ * Determines how reflections are rendered on the fluid surface.
+ */
+UENUM(BlueprintType)
+enum class EFluidReflectionMode : uint8
+{
+	/** No reflection (only base color and refraction) */
+	None UMETA(DisplayName = "None"),
+
+	/** Cubemap-based reflection (static environment map) */
+	Cubemap UMETA(DisplayName = "Cubemap"),
+
+	/** Screen Space Reflection (real-time scene reflection, no fallback) */
+	ScreenSpaceReflection UMETA(DisplayName = "Screen Space Reflection"),
+
+	/** SSR with Cubemap fallback (SSR hit uses scene, miss uses Cubemap) */
+	ScreenSpaceReflectionWithCubemap UMETA(DisplayName = "SSR + Cubemap")
+};
+
+/**
  * SSR Debug visualization mode.
  * Used to diagnose Screen Space Reflection issues at runtime.
  */
@@ -228,83 +248,95 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	float AbsorptionBias = 0.7f;
 
 	//========================================
-	// Reflection (SSR + Cubemap Fallback)
+	// Reflection Mode (mutually exclusive)
 	//========================================
 
 	/**
-	 * Enable SSR (Screen Space Reflections).
-	 * Actual scene objects are reflected on the fluid surface.
-	 * Falls back to Cubemap on SSR miss.
+	 * Reflection Mode.
+	 * None: No reflection (base color and refraction only).
+	 * Cubemap: Static environment map reflection.
+	 * ScreenSpaceReflection: Real-time scene reflection (SSR, no fallback on miss).
+	 * SSR + Cubemap: SSR with Cubemap fallback (SSR hit uses scene, miss uses Cubemap).
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection")
-	bool bEnableScreenSpaceReflection = true;
+	EFluidReflectionMode ReflectionMode = EFluidReflectionMode::Cubemap;
+
+	//========================================
+	// Cubemap Reflection Parameters
+	//========================================
+
+	/**
+	 * Reflection Cubemap (environment map).
+	 * If not set, uses scene Sky Light color as fallback.
+	 * Can assign scene Reflection Capture or HDRI Cubemap.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection|Cubemap",
+		meta = (EditCondition = "ReflectionMode == EFluidReflectionMode::Cubemap || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap"))
+	TObjectPtr<UTextureCube> ReflectionCubemap = nullptr;
+
+	/** Cubemap reflection intensity (0 = no reflection, 1 = full reflection) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection|Cubemap",
+		meta = (EditCondition = "ReflectionMode == EFluidReflectionMode::Cubemap || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap", ClampMin = "0.0", ClampMax = "2.0"))
+	float ReflectionIntensity = 1.0f;
+
+	/** Cubemap mip level (higher = blurrier reflection, linked to roughness) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection|Cubemap",
+		meta = (EditCondition = "ReflectionMode == EFluidReflectionMode::Cubemap || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap", ClampMin = "0.0", ClampMax = "10.0"))
+	float ReflectionMipLevel = 2.0f;
+
+	//========================================
+	// Screen Space Reflection Parameters
+	//========================================
 
 	/**
 	 * SSR ray march max steps.
 	 * Higher = more accurate but more expensive.
-	 * 8~16: low cost, 24~32: high quality.
+	 * DDA-style: 1 step per pixel, so this limits max ray length in pixels.
+	 * 128: short rays, 256: medium, 512: long rays (high quality).
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
-		meta = (EditCondition = "bEnableScreenSpaceReflection", ClampMin = "4", ClampMax = "64"))
-	int32 ScreenSpaceReflectionMaxSteps = 16;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection|SSR",
+		meta = (EditCondition = "ReflectionMode == EFluidReflectionMode::ScreenSpaceReflection || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap", ClampMin = "64", ClampMax = "512"))
+	int32 ScreenSpaceReflectionMaxSteps = 256;
 
 	/**
 	 * SSR step size (in pixels).
 	 * Smaller = more precise but shorter reach.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
-		meta = (EditCondition = "bEnableScreenSpaceReflection", ClampMin = "0.5", ClampMax = "20.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection|SSR",
+		meta = (EditCondition = "ReflectionMode == EFluidReflectionMode::ScreenSpaceReflection || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap", ClampMin = "0.5", ClampMax = "20.0"))
 	float ScreenSpaceReflectionStepSize = 4.0f;
 
 	/**
 	 * SSR hit detection thickness.
-	 * Higher = more lenient hit detection, lower = more precise.
+	 * Higher = more lenient hit detection (fewer misses), lower = more precise.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
-		meta = (EditCondition = "bEnableScreenSpaceReflection", ClampMin = "0.1", ClampMax = "5.0"))
-	float ScreenSpaceReflectionThickness = 1.0f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection|SSR",
+		meta = (EditCondition = "ReflectionMode == EFluidReflectionMode::ScreenSpaceReflection || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap", ClampMin = "0.5", ClampMax = "5.0"))
+	float ScreenSpaceReflectionThickness = 2.0f;
 
 	/**
-	 * SSR intensity (blended with Cubemap).
-	 * 0 = Cubemap only, 1 = SSR only.
+	 * SSR intensity.
+	 * 0 = no reflection, 1 = full reflection.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
-		meta = (EditCondition = "bEnableScreenSpaceReflection", ClampMin = "0.0", ClampMax = "1.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection|SSR",
+		meta = (EditCondition = "ReflectionMode == EFluidReflectionMode::ScreenSpaceReflection || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap", ClampMin = "0.0", ClampMax = "1.0"))
 	float ScreenSpaceReflectionIntensity = 0.8f;
 
 	/**
 	 * SSR screen edge fade.
 	 * Smoothly fades reflections going off screen.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
-		meta = (EditCondition = "bEnableScreenSpaceReflection", ClampMin = "0.0", ClampMax = "0.5"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection|SSR",
+		meta = (EditCondition = "ReflectionMode == EFluidReflectionMode::ScreenSpaceReflection || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap", ClampMin = "0.0", ClampMax = "0.5"))
 	float ScreenSpaceReflectionEdgeFade = 0.1f;
 
 	/**
 	 * SSR debug visualization mode.
 	 * Helps diagnose SSR issues at runtime.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
-		meta = (EditCondition = "bEnableScreenSpaceReflection"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection|SSR",
+		meta = (EditCondition = "ReflectionMode == EFluidReflectionMode::ScreenSpaceReflection || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap"))
 	EScreenSpaceReflectionDebugMode ScreenSpaceReflectionDebugMode = EScreenSpaceReflectionDebugMode::None;
-
-	/**
-	 * Fallback Cubemap (used on SSR miss).
-	 * If not set, uses scene Sky Light color.
-	 * Can assign scene Reflection Capture or HDRI Cubemap.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection")
-	TObjectPtr<UTextureCube> ReflectionCubemap = nullptr;
-
-	/** Cubemap reflection intensity (0 = no reflection, 1 = full reflection) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
-		meta = (ClampMin = "0.0", ClampMax = "2.0"))
-	float ReflectionIntensity = 1.0f;
-
-	/** Cubemap mip level (higher = blurrier reflection, linked to roughness) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
-		meta = (ClampMin = "0.0", ClampMax = "10.0"))
-	float ReflectionMipLevel = 2.0f;
 
 	/** Thickness rendering scale */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Thickness",
@@ -632,8 +664,8 @@ FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
 	Hash = HashCombine(Hash, GetTypeHash(Params.SurfaceDecoration.Emissive.bEnabled));
 	Hash = HashCombine(Hash, GetTypeHash(Params.RenderTargetScale));
 	Hash = HashCombine(Hash, GetTypeHash(Params.ThicknessScale));
-	// SSR parameters
-	Hash = HashCombine(Hash, GetTypeHash(Params.bEnableScreenSpaceReflection));
+	// Reflection parameters
+	Hash = HashCombine(Hash, GetTypeHash(static_cast<uint8>(Params.ReflectionMode)));
 	Hash = HashCombine(Hash, GetTypeHash(Params.ScreenSpaceReflectionMaxSteps));
 	Hash = HashCombine(Hash, GetTypeHash(Params.ScreenSpaceReflectionStepSize));
 	Hash = HashCombine(Hash, GetTypeHash(Params.ScreenSpaceReflectionThickness));
@@ -705,8 +737,8 @@ FORCEINLINE bool operator==(const FFluidRenderingParameters& A, const FFluidRend
 		A.SurfaceDecoration.Emissive.bEnabled == B.SurfaceDecoration.Emissive.bEnabled &&
 		FMath::IsNearlyEqual(A.RenderTargetScale, B.RenderTargetScale, 0.001f) &&
 		FMath::IsNearlyEqual(A.ThicknessScale, B.ThicknessScale, 0.001f) &&
-		// SSR parameters
-		A.bEnableScreenSpaceReflection == B.bEnableScreenSpaceReflection &&
+		// Reflection parameters
+		A.ReflectionMode == B.ReflectionMode &&
 		A.ScreenSpaceReflectionMaxSteps == B.ScreenSpaceReflectionMaxSteps &&
 		FMath::IsNearlyEqual(A.ScreenSpaceReflectionStepSize, B.ScreenSpaceReflectionStepSize, 0.01f) &&
 		FMath::IsNearlyEqual(A.ScreenSpaceReflectionThickness, B.ScreenSpaceReflectionThickness, 0.01f) &&

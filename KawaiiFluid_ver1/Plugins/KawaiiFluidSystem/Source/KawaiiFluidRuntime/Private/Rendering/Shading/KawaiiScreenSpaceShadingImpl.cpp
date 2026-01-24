@@ -197,8 +197,8 @@ void KawaiiScreenSpaceShading::RenderPostProcessShading(
 	//     PassParameters->NumLights++;
 	// }
 
-	// SSR parameters
-	PassParameters->bEnableScreenSpaceReflection = RenderParams.bEnableScreenSpaceReflection ? 1 : 0;
+	// Reflection mode parameter (0=None, 1=Cubemap, 2=SSR, 3=SSR+Cubemap)
+	PassParameters->ReflectionMode = static_cast<int32>(RenderParams.ReflectionMode);
 	PassParameters->ScreenSpaceReflectionMaxSteps = RenderParams.ScreenSpaceReflectionMaxSteps;
 	PassParameters->ScreenSpaceReflectionStepSize = RenderParams.ScreenSpaceReflectionStepSize;
 	PassParameters->ScreenSpaceReflectionThickness = RenderParams.ScreenSpaceReflectionThickness;

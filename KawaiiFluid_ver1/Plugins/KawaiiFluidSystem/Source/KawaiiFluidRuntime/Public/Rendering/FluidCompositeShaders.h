@@ -84,9 +84,9 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
     SHADER_PARAMETER(int, bUseReflectionCubemap)  // 1 = use Cubemap, 0 = fallback color
 
     // ------------------------------------------------------
-    // Screen Space Reflections (SSR)
+    // Reflection Mode (0=None, 1=Cubemap, 2=SSR, 3=SSR+Cubemap)
     // ------------------------------------------------------
-    SHADER_PARAMETER(int, bEnableScreenSpaceReflection)           // Enable SSR
+    SHADER_PARAMETER(int, ReflectionMode)                         // Reflection mode enum
     SHADER_PARAMETER(int, ScreenSpaceReflectionMaxSteps)          // Ray march max steps
     SHADER_PARAMETER(float, ScreenSpaceReflectionStepSize)        // Step size (pixels)
     SHADER_PARAMETER(float, ScreenSpaceReflectionThickness)       // Hit detection thickness
