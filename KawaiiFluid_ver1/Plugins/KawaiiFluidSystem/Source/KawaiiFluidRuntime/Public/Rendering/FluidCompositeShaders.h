@@ -56,7 +56,6 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
     SHADER_PARAMETER(FLinearColor, AbsorptionColorCoefficients)  // Per-channel absorption (Beer's Law)
     SHADER_PARAMETER(float, SpecularStrength)
     SHADER_PARAMETER(float, SpecularRoughness)
-    SHADER_PARAMETER(FLinearColor, EnvironmentLightColor)
 
     // ------------------------------------------------------
     // Multi-Light Support
@@ -71,7 +70,6 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
     // ------------------------------------------------------
     // Lighting Scale Parameters
     // ------------------------------------------------------
-    SHADER_PARAMETER(float, AmbientScale)
     SHADER_PARAMETER(float, ThicknessSensitivity)  // How much thickness affects transparency (0 = uniform, 1 = thickness-dependent)
     SHADER_PARAMETER(float, RefractionScale)
     SHADER_PARAMETER(float, FresnelReflectionBlend)
@@ -79,8 +77,8 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
     // ------------------------------------------------------
     // Subsurface Scattering (SSS)
     // ------------------------------------------------------
-    SHADER_PARAMETER(float, SSSIntensity)
-    SHADER_PARAMETER(FLinearColor, SSSColor)
+    SHADER_PARAMETER(float, SubsurfaceScatteringIntensity)
+    SHADER_PARAMETER(FLinearColor, SubsurfaceScatteringColor)
 
     // ------------------------------------------------------
     // Reflection Cubemap
@@ -94,13 +92,13 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
     // ------------------------------------------------------
     // Screen Space Reflections (SSR)
     // ------------------------------------------------------
-    SHADER_PARAMETER(int, bEnableSSR)           // Enable SSR
-    SHADER_PARAMETER(int, SSRMaxSteps)          // Ray march max steps
-    SHADER_PARAMETER(float, SSRStepSize)        // Step size (pixels)
-    SHADER_PARAMETER(float, SSRThickness)       // Hit detection thickness
-    SHADER_PARAMETER(float, SSRIntensity)       // SSR intensity
-    SHADER_PARAMETER(float, SSREdgeFade)        // Screen edge fade
-    SHADER_PARAMETER(int, SSRDebugMode)         // Debug visualization mode (0=none, 1-9=various debug views)
+    SHADER_PARAMETER(int, bEnableScreenSpaceReflection)           // Enable SSR
+    SHADER_PARAMETER(int, ScreenSpaceReflectionMaxSteps)          // Ray march max steps
+    SHADER_PARAMETER(float, ScreenSpaceReflectionStepSize)        // Step size (pixels)
+    SHADER_PARAMETER(float, ScreenSpaceReflectionThickness)       // Hit detection thickness
+    SHADER_PARAMETER(float, ScreenSpaceReflectionIntensity)       // SSR intensity
+    SHADER_PARAMETER(float, ScreenSpaceReflectionEdgeFade)        // Screen edge fade
+    SHADER_PARAMETER(int, ScreenSpaceReflectionDebugMode)         // Debug visualization mode (0=none, 1-9=various debug views)
     SHADER_PARAMETER(FVector2f, ViewportSize)   // Viewport size (pixels)
 
     // ------------------------------------------------------

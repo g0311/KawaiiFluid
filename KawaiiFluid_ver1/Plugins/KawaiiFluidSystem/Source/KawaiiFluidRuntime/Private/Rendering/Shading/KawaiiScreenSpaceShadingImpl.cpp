@@ -12,8 +12,8 @@
 #include "RHIStaticStates.h"
 #include "TextureResource.h"
 
-static TAutoConsoleVariable<int32> CVarFluidSSRDebugMode(
-	TEXT("r.Fluid.SSRDebugMode"),
+static TAutoConsoleVariable<int32> CVarFluidScreenSpaceReflectionDebugMode(
+	TEXT("r.Fluid.ScreenSpaceReflectionDebugMode"),
 	0,
 	TEXT("SSR Debug visualization mode for fluid rendering.\n")
 	TEXT("0: None (normal rendering)\n")
@@ -146,17 +146,15 @@ void KawaiiScreenSpaceShading::RenderPostProcessShading(
 	PassParameters->AbsorptionColorCoefficients = RenderParams.AbsorptionColorCoefficients;
 	PassParameters->SpecularStrength = RenderParams.SpecularStrength;
 	PassParameters->SpecularRoughness = RenderParams.SpecularRoughness;
-	PassParameters->EnvironmentLightColor = RenderParams.EnvironmentLightColor;
 
 	// Lighting scale parameters
-	PassParameters->AmbientScale = RenderParams.AmbientScale;
 	PassParameters->ThicknessSensitivity = RenderParams.ThicknessSensitivity;
 	PassParameters->RefractionScale = RenderParams.RefractionScale;
 	PassParameters->FresnelReflectionBlend = RenderParams.FresnelReflectionBlend;
 
 	// Subsurface Scattering (SSS)
-	PassParameters->SSSIntensity = RenderParams.SSSIntensity;
-	PassParameters->SSSColor = RenderParams.SSSColor;
+	PassParameters->SubsurfaceScatteringIntensity = RenderParams.SubsurfaceScatteringIntensity;
+	PassParameters->SubsurfaceScatteringColor = RenderParams.SubsurfaceScatteringColor;
 
 	// Reflection Cubemap
 	if (RenderParams.ReflectionCubemap && RenderParams.ReflectionCubemap->GetResource())
@@ -204,15 +202,15 @@ void KawaiiScreenSpaceShading::RenderPostProcessShading(
 	// }
 
 	// SSR parameters
-	PassParameters->bEnableSSR = RenderParams.bEnableSSR ? 1 : 0;
-	PassParameters->SSRMaxSteps = RenderParams.SSRMaxSteps;
-	PassParameters->SSRStepSize = RenderParams.SSRStepSize;
-	PassParameters->SSRThickness = RenderParams.SSRThickness;
-	PassParameters->SSRIntensity = RenderParams.SSRIntensity;
-	PassParameters->SSREdgeFade = RenderParams.SSREdgeFade;
+	PassParameters->bEnableScreenSpaceReflection = RenderParams.bEnableScreenSpaceReflection ? 1 : 0;
+	PassParameters->ScreenSpaceReflectionMaxSteps = RenderParams.ScreenSpaceReflectionMaxSteps;
+	PassParameters->ScreenSpaceReflectionStepSize = RenderParams.ScreenSpaceReflectionStepSize;
+	PassParameters->ScreenSpaceReflectionThickness = RenderParams.ScreenSpaceReflectionThickness;
+	PassParameters->ScreenSpaceReflectionIntensity = RenderParams.ScreenSpaceReflectionIntensity;
+	PassParameters->ScreenSpaceReflectionEdgeFade = RenderParams.ScreenSpaceReflectionEdgeFade;
 	// CVar override takes priority if set (non-zero)
-	int32 DebugModeFromCVar = CVarFluidSSRDebugMode.GetValueOnRenderThread();
-	PassParameters->SSRDebugMode = (DebugModeFromCVar > 0) ? DebugModeFromCVar : static_cast<int32>(RenderParams.SSRDebugMode);
+	int32 DebugModeFromCVar = CVarFluidScreenSpaceReflectionDebugMode.GetValueOnRenderThread();
+	PassParameters->ScreenSpaceReflectionDebugMode = (DebugModeFromCVar > 0) ? DebugModeFromCVar : static_cast<int32>(RenderParams.ScreenSpaceReflectionDebugMode);
 	PassParameters->ViewportSize = FVector2f(Output.ViewRect.Width(), Output.ViewRect.Height());
 
 	// Render target (blend over existing scene)

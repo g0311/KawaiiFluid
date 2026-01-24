@@ -31,7 +31,7 @@ enum class EMetaballPipelineType : uint8
  * Used to diagnose Screen Space Reflection issues at runtime.
  */
 UENUM(BlueprintType)
-enum class ESSRDebugMode : uint8
+enum class EScreenSpaceReflectionDebugMode : uint8
 {
 	/** No debug visualization (normal rendering) */
 	None = 0 UMETA(DisplayName = "None"),
@@ -190,24 +190,6 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 		meta = (ClampMin = "0.01", ClampMax = "1.0"))
 	float SpecularRoughness = 0.2f;
 
-	/** Environment light color (fallback when no Cubemap, base ambient color) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
-		meta = (HideAlphaChannel))
-	FLinearColor EnvironmentLightColor = FLinearColor(0.8f, 0.9f, 1.0f, 1.0f);
-
-	//========================================
-	// Lighting Scale Parameters
-	//========================================
-
-	/**
-	 * Ambient lighting intensity scale.
-	 * Multiplied with EnvironmentLightColor.
-	 * 0 = no ambient (fully dark surfaces possible), 1 = strong ambient.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
-		meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float AmbientScale = 0.15f;
-
 	/**
 	 * Thickness sensitivity (0 = uniform opacity, 1 = thickness-dependent).
 	 * Controls how much fluid thickness affects transparency.
@@ -255,7 +237,7 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 * Falls back to Cubemap on SSR miss.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection")
-	bool bEnableSSR = true;
+	bool bEnableScreenSpaceReflection = true;
 
 	/**
 	 * SSR ray march max steps.
@@ -263,52 +245,52 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 * 8~16: low cost, 24~32: high quality.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
-		meta = (EditCondition = "bEnableSSR", ClampMin = "4", ClampMax = "64"))
-	int32 SSRMaxSteps = 16;
+		meta = (EditCondition = "bEnableScreenSpaceReflection", ClampMin = "4", ClampMax = "64"))
+	int32 ScreenSpaceReflectionMaxSteps = 16;
 
 	/**
 	 * SSR step size (in pixels).
 	 * Smaller = more precise but shorter reach.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
-		meta = (EditCondition = "bEnableSSR", ClampMin = "0.5", ClampMax = "20.0"))
-	float SSRStepSize = 4.0f;
+		meta = (EditCondition = "bEnableScreenSpaceReflection", ClampMin = "0.5", ClampMax = "20.0"))
+	float ScreenSpaceReflectionStepSize = 4.0f;
 
 	/**
 	 * SSR hit detection thickness.
 	 * Higher = more lenient hit detection, lower = more precise.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
-		meta = (EditCondition = "bEnableSSR", ClampMin = "0.1", ClampMax = "5.0"))
-	float SSRThickness = 1.0f;
+		meta = (EditCondition = "bEnableScreenSpaceReflection", ClampMin = "0.1", ClampMax = "5.0"))
+	float ScreenSpaceReflectionThickness = 1.0f;
 
 	/**
 	 * SSR intensity (blended with Cubemap).
 	 * 0 = Cubemap only, 1 = SSR only.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
-		meta = (EditCondition = "bEnableSSR", ClampMin = "0.0", ClampMax = "1.0"))
-	float SSRIntensity = 0.8f;
+		meta = (EditCondition = "bEnableScreenSpaceReflection", ClampMin = "0.0", ClampMax = "1.0"))
+	float ScreenSpaceReflectionIntensity = 0.8f;
 
 	/**
 	 * SSR screen edge fade.
 	 * Smoothly fades reflections going off screen.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
-		meta = (EditCondition = "bEnableSSR", ClampMin = "0.0", ClampMax = "0.5"))
-	float SSREdgeFade = 0.1f;
+		meta = (EditCondition = "bEnableScreenSpaceReflection", ClampMin = "0.0", ClampMax = "0.5"))
+	float ScreenSpaceReflectionEdgeFade = 0.1f;
 
 	/**
 	 * SSR debug visualization mode.
 	 * Helps diagnose SSR issues at runtime.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
-		meta = (EditCondition = "bEnableSSR"))
-	ESSRDebugMode SSRDebugMode = ESSRDebugMode::None;
+		meta = (EditCondition = "bEnableScreenSpaceReflection"))
+	EScreenSpaceReflectionDebugMode ScreenSpaceReflectionDebugMode = EScreenSpaceReflectionDebugMode::None;
 
 	/**
 	 * Fallback Cubemap (used on SSR miss).
-	 * If not set, uses EnvironmentLightColor.
+	 * If not set, uses scene Sky Light color.
 	 * Can assign scene Reflection Capture or HDRI Cubemap.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection")
@@ -349,12 +331,12 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	/** Subsurface scattering intensity (jelly effect) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
 		meta = (ClampMin = "0.0", ClampMax = "2.0"))
-	float SSSIntensity = 1.0f;
+	float SubsurfaceScatteringIntensity = 1.0f;
 
 	/** Subsurface scattering color (RGB only, alpha channel not used) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
 		meta = (HideAlphaChannel))
-	FLinearColor SSSColor = FLinearColor(1.0f, 0.5f, 0.3f, 1.0f);
+	FLinearColor SubsurfaceScatteringColor = FLinearColor(1.0f, 0.5f, 0.3f, 1.0f);
 
 	// Removed: G-Buffer Mode Parameters (GBuffer/Opaque/Translucent modes removed)
 
@@ -633,9 +615,6 @@ FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
 	Hash = HashCombine(Hash, GetTypeHash(Params.AbsorptionColorCoefficients.ToString()));
 	Hash = HashCombine(Hash, GetTypeHash(Params.SpecularStrength));
 	Hash = HashCombine(Hash, GetTypeHash(Params.SpecularRoughness));
-	Hash = HashCombine(Hash, GetTypeHash(Params.EnvironmentLightColor.ToString()));
-	// Lighting scale parameters
-	Hash = HashCombine(Hash, GetTypeHash(Params.AmbientScale));
 	Hash = HashCombine(Hash, GetTypeHash(Params.ThicknessSensitivity));
 	Hash = HashCombine(Hash, GetTypeHash(Params.RefractionScale));
 	Hash = HashCombine(Hash, GetTypeHash(Params.FresnelReflectionBlend));
@@ -663,15 +642,15 @@ FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
 	Hash = HashCombine(Hash, GetTypeHash(Params.RenderTargetScale));
 	Hash = HashCombine(Hash, GetTypeHash(Params.ThicknessScale));
 	// SSS parameters
-	Hash = HashCombine(Hash, GetTypeHash(Params.SSSIntensity));
-	Hash = HashCombine(Hash, GetTypeHash(Params.SSSColor.ToString()));
+	Hash = HashCombine(Hash, GetTypeHash(Params.SubsurfaceScatteringIntensity));
+	Hash = HashCombine(Hash, GetTypeHash(Params.SubsurfaceScatteringColor.ToString()));
 	// SSR parameters
-	Hash = HashCombine(Hash, GetTypeHash(Params.bEnableSSR));
-	Hash = HashCombine(Hash, GetTypeHash(Params.SSRMaxSteps));
-	Hash = HashCombine(Hash, GetTypeHash(Params.SSRStepSize));
-	Hash = HashCombine(Hash, GetTypeHash(Params.SSRThickness));
-	Hash = HashCombine(Hash, GetTypeHash(Params.SSRIntensity));
-	Hash = HashCombine(Hash, GetTypeHash(Params.SSREdgeFade));
+	Hash = HashCombine(Hash, GetTypeHash(Params.bEnableScreenSpaceReflection));
+	Hash = HashCombine(Hash, GetTypeHash(Params.ScreenSpaceReflectionMaxSteps));
+	Hash = HashCombine(Hash, GetTypeHash(Params.ScreenSpaceReflectionStepSize));
+	Hash = HashCombine(Hash, GetTypeHash(Params.ScreenSpaceReflectionThickness));
+	Hash = HashCombine(Hash, GetTypeHash(Params.ScreenSpaceReflectionIntensity));
+	Hash = HashCombine(Hash, GetTypeHash(Params.ScreenSpaceReflectionEdgeFade));
 	// Ray Marching parameters
 	Hash = HashCombine(Hash, GetTypeHash(Params.VolumeResolution));
 	Hash = HashCombine(Hash, GetTypeHash(Params.RayMarchMaxSteps));
@@ -709,9 +688,6 @@ FORCEINLINE bool operator==(const FFluidRenderingParameters& A, const FFluidRend
 		A.AbsorptionColorCoefficients.Equals(B.AbsorptionColorCoefficients, 0.001f) &&
 		FMath::IsNearlyEqual(A.SpecularStrength, B.SpecularStrength, 0.001f) &&
 		FMath::IsNearlyEqual(A.SpecularRoughness, B.SpecularRoughness, 0.001f) &&
-		A.EnvironmentLightColor.Equals(B.EnvironmentLightColor, 0.001f) &&
-		// Lighting scale parameters
-		FMath::IsNearlyEqual(A.AmbientScale, B.AmbientScale, 0.001f) &&
 		FMath::IsNearlyEqual(A.ThicknessSensitivity, B.ThicknessSensitivity, 0.001f) &&
 		FMath::IsNearlyEqual(A.RefractionScale, B.RefractionScale, 0.001f) &&
 		FMath::IsNearlyEqual(A.FresnelReflectionBlend, B.FresnelReflectionBlend, 0.001f) &&
@@ -742,15 +718,15 @@ FORCEINLINE bool operator==(const FFluidRenderingParameters& A, const FFluidRend
 		FMath::IsNearlyEqual(A.RenderTargetScale, B.RenderTargetScale, 0.001f) &&
 		FMath::IsNearlyEqual(A.ThicknessScale, B.ThicknessScale, 0.001f) &&
 		// SSS parameters
-		FMath::IsNearlyEqual(A.SSSIntensity, B.SSSIntensity, 0.001f) &&
-		A.SSSColor.Equals(B.SSSColor, 0.001f) &&
+		FMath::IsNearlyEqual(A.SubsurfaceScatteringIntensity, B.SubsurfaceScatteringIntensity, 0.001f) &&
+		A.SubsurfaceScatteringColor.Equals(B.SubsurfaceScatteringColor, 0.001f) &&
 		// SSR parameters
-		A.bEnableSSR == B.bEnableSSR &&
-		A.SSRMaxSteps == B.SSRMaxSteps &&
-		FMath::IsNearlyEqual(A.SSRStepSize, B.SSRStepSize, 0.01f) &&
-		FMath::IsNearlyEqual(A.SSRThickness, B.SSRThickness, 0.01f) &&
-		FMath::IsNearlyEqual(A.SSRIntensity, B.SSRIntensity, 0.01f) &&
-		FMath::IsNearlyEqual(A.SSREdgeFade, B.SSREdgeFade, 0.01f) &&
+		A.bEnableScreenSpaceReflection == B.bEnableScreenSpaceReflection &&
+		A.ScreenSpaceReflectionMaxSteps == B.ScreenSpaceReflectionMaxSteps &&
+		FMath::IsNearlyEqual(A.ScreenSpaceReflectionStepSize, B.ScreenSpaceReflectionStepSize, 0.01f) &&
+		FMath::IsNearlyEqual(A.ScreenSpaceReflectionThickness, B.ScreenSpaceReflectionThickness, 0.01f) &&
+		FMath::IsNearlyEqual(A.ScreenSpaceReflectionIntensity, B.ScreenSpaceReflectionIntensity, 0.01f) &&
+		FMath::IsNearlyEqual(A.ScreenSpaceReflectionEdgeFade, B.ScreenSpaceReflectionEdgeFade, 0.01f) &&
 		// Ray Marching parameters
 		A.VolumeResolution == B.VolumeResolution &&
 		A.RayMarchMaxSteps == B.RayMarchMaxSteps &&

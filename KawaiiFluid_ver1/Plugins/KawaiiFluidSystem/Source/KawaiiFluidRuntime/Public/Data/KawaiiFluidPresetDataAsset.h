@@ -27,6 +27,18 @@ public:
 	UKawaiiFluidPresetDataAsset();
 
 	//========================================
+	// Rendering Parameters
+	//========================================
+
+	/**
+	 * Metaball rendering parameters for this fluid preset
+	 * All KawaiiFluidComponents sharing this preset will use these settings
+	 * Note: ISM settings remain per-Component (debug/preview purpose, no batching needed)
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering")
+	FFluidRenderingParameters RenderingParameters;
+
+	//========================================
 	// Fluid Identification
 	//========================================
 
@@ -409,18 +421,6 @@ public:
 	/** Maximum particle count */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Limits", meta = (ClampMin = "1"))
 	int32 MaxParticles = 10000;
-
-	//========================================
-	// Rendering Parameters
-	//========================================
-
-	/**
-	 * Metaball rendering parameters for this fluid preset
-	 * All KawaiiFluidComponents sharing this preset will use these settings
-	 * Note: ISM settings remain per-Component (debug/preview purpose, no batching needed)
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering")
-	FFluidRenderingParameters RenderingParameters;
 
 	/** Recalculate derived particle parameters (mass, spacing, radius) based on SmoothingRadius and RestDensity */
 	UFUNCTION(BlueprintCallable, Category = "Fluid")

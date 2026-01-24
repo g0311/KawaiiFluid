@@ -31,7 +31,6 @@ float Opacity;                       // Fluid opacity (0 = transparent, 1 = opaq
 float4 AbsorptionColorCoefficients;  // Per-channel absorption coefficients (Beer's Law)
 float SpecularStrength;
 float SpecularRoughness;
-float4 EnvironmentLightColor;
 
 // -----------------------------------------------------------------------------
 // Multi-Light Support
@@ -46,14 +45,13 @@ float4 LightDirectionsAndIntensity[FLUID_MAX_LIGHTS];
 float4 LightColors[FLUID_MAX_LIGHTS];
 
 // Lighting Scale Parameters
-float AmbientScale;
 float ThicknessSensitivity;          // How much thickness affects transparency (0 = uniform, 1 = thickness-dependent)
 float RefractionScale;
 float FresnelReflectionBlend;
 
 // Subsurface Scattering (SSS)
-float SSSIntensity;
-float4 SSSColor;
+float SubsurfaceScatteringIntensity;
+float4 SubsurfaceScatteringColor;
 
 // Reflection Cubemap
 TextureCube ReflectionCubemap;
@@ -63,13 +61,13 @@ float ReflectionMipLevel;
 int bUseReflectionCubemap;
 
 // Screen Space Reflections (SSR)
-int bEnableSSR;
-int SSRMaxSteps;
-float SSRStepSize;
-float SSRThickness;
-float SSRIntensity;
-float SSREdgeFade;
-int SSRDebugMode;
+int bEnableScreenSpaceReflection;
+int ScreenSpaceReflectionMaxSteps;
+float ScreenSpaceReflectionStepSize;
+float ScreenSpaceReflectionThickness;
+float ScreenSpaceReflectionIntensity;
+float ScreenSpaceReflectionEdgeFade;
+int ScreenSpaceReflectionDebugMode;
 float2 ViewportSize;
 
 // -----------------------------------------------------------------------------
@@ -256,7 +254,7 @@ float TraceSSR(float3 RayOrigin, float3 RayDir, out float2 OutHitUV, out float3 
 	}
 
 	// Step size calculation
-	float StepSize = SSRStepSize * abs(RayOrigin.z) * 0.002;
+	float StepSize = ScreenSpaceReflectionStepSize * abs(RayOrigin.z) * 0.002;
 	StepSize = clamp(StepSize, 1.0, 50.0);
 
 	// Ray march
@@ -264,7 +262,7 @@ float TraceSSR(float3 RayOrigin, float3 RayDir, out float2 OutHitUV, out float3 
 	float3 PrevPos = RayOrigin;
 	float OriginDepth = -RayOrigin.z;
 
-	for (int i = 1; i <= SSRMaxSteps; i++)
+	for (int i = 1; i <= ScreenSpaceReflectionMaxSteps; i++)
 	{
 		PrevPos = CurrentPos;
 		CurrentPos += RayDir * StepSize;
@@ -337,7 +335,7 @@ float TraceSSR(float3 RayOrigin, float3 RayDir, out float2 OutHitUV, out float3 
 		{
 			// Check thickness (don't hit if we overshot too far)
 			float Penetration = RayDepth - SceneDepth;
-			float MaxPenetration = SSRThickness * SceneDepth * 0.1;
+			float MaxPenetration = ScreenSpaceReflectionThickness * SceneDepth * 0.1;
 
 			if (Penetration < MaxPenetration)
 			{
@@ -382,8 +380,8 @@ float TraceSSR(float3 RayOrigin, float3 RayDir, out float2 OutHitUV, out float3 
 
 				// Fade factors
 				float2 EdgeDist = min(HitUV, 1.0 - HitUV);
-				float EdgeFade = saturate(min(EdgeDist.x, EdgeDist.y) / max(SSREdgeFade, 0.01));
-				float DistFade = saturate(1.0 - float(i) / float(SSRMaxSteps));
+				float EdgeFade = saturate(min(EdgeDist.x, EdgeDist.y) / max(ScreenSpaceReflectionEdgeFade, 0.01));
+				float DistFade = saturate(1.0 - float(i) / float(ScreenSpaceReflectionMaxSteps));
 
 				return EdgeFade * DistFade;
 			}
@@ -558,7 +556,17 @@ void MainPS(
 	float3 Specular = TotalSpecular;
 
 	// Ambient (prevents completely dark surfaces)
-	float3 AmbientColor = EnvironmentLightColor.rgb * AmbientScale;
+	// Use SkyLightColor if available, otherwise fallback to DirectionalLightColor, then fixed value
+	float3 EnvironmentColor = View.SkyLightColor.rgb;
+	if (dot(EnvironmentColor, float3(1, 1, 1)) < 0.001)
+	{
+		EnvironmentColor = View.DirectionalLightColor.rgb;
+	}
+	if (dot(EnvironmentColor, float3(1, 1, 1)) < 0.001)
+	{
+		EnvironmentColor = float3(1.0, 1.0, 1.0);  // White fallback
+	}
+	float3 AmbientColor = EnvironmentColor;
 
 	// Total Lighting (diffuse + ambient, specular added separately)
 	float3 TotalLighting = TotalDiffuse + AmbientColor;
@@ -583,8 +591,8 @@ void MainPS(
 	// ========================================================================
 	float RimFactor = 1.0 - NoV;
 	float ThicknessSSSMask = exp(-Thickness * 0.05);  // Stronger SSS in thin areas
-	float SSSFactor = smoothstep(0.3, 1.0, RimFactor) * SSSIntensity * ThicknessSSSMask * 0.5;
-	float3 SSSContribution = SSSColor.rgb * SSSFactor * TotalSSSLightColor;
+	float SSSFactor = smoothstep(0.3, 1.0, RimFactor) * SubsurfaceScatteringIntensity * ThicknessSSSMask * 0.5;
+	float3 SSSContribution = SubsurfaceScatteringColor.rgb * SSSFactor * TotalSSSLightColor;
 
 	// ========================================================================
 	// Color Compositing (Flex-style Simple Approach)
@@ -667,19 +675,19 @@ void MainPS(
 	float SSRHitStrength = 0.0;
 
 	// Attempt SSR (if enabled)
-	if (bEnableSSR > 0)
+	if (bEnableScreenSpaceReflection > 0)
 	{
 		float2 SSRHitUV;
 		float3 SSRHitColor;
 		SSRHitStrength = TraceSSR(ViewPos, ViewSpaceReflect, SSRHitUV, SSRHitColor);
 
-		// DEBUG: SSR debug visualization (runtime switchable via SSRDebugMode)
+		// DEBUG: SSR debug visualization (runtime switchable via ScreenSpaceReflectionDebugMode)
 		// 0 = disabled, 1 = hit/miss, 2 = reflection direction, 3 = hit sample color
 		// 4 = reflection Z direction (green=into scene, red=toward camera)
 		// 5 = ray depth vs scene depth comparison
 		// 6 = exit reason (red=behind camera, green=off screen, blue=max steps)
 		// 7 = Normal visualization, 8 = ViewDir visualization, 9 = ViewPos.z visualization
-		if (SSRDebugMode == 1)
+		if (ScreenSpaceReflectionDebugMode == 1)
 		{
 			// SSR hit/miss: red = hit (intensity varies), blue = miss
 			if (SSRHitStrength > 0.0)
@@ -692,13 +700,13 @@ void MainPS(
 			}
 			return;
 		}
-		else if (SSRDebugMode == 2)
+		else if (ScreenSpaceReflectionDebugMode == 2)
 		{
 			// Reflection vector direction as color (RGB = XYZ, 0.5 = 0)
 			OutColor = float4(ViewSpaceReflect * 0.5 + 0.5, 1.0);
 			return;
 		}
-		else if (SSRDebugMode == 3)
+		else if (ScreenSpaceReflectionDebugMode == 3)
 		{
 			// Direct display of hit color (magenta if miss)
 			if (SSRHitStrength > 0.0)
@@ -711,7 +719,7 @@ void MainPS(
 			}
 			return;
 		}
-		else if (SSRDebugMode == 4)
+		else if (ScreenSpaceReflectionDebugMode == 4)
 		{
 			// Reflection direction Z component visualization
 			// Green = into scene (Z < 0, SSR possible)
@@ -729,7 +737,7 @@ void MainPS(
 			}
 			return;
 		}
-		else if (SSRDebugMode == 5)
+		else if (ScreenSpaceReflectionDebugMode == 5)
 		{
 			// 3D hit test visualization (new corrected logic)
 			// R = XY distance (how far ray XY is from scene XY)
@@ -749,7 +757,7 @@ void MainPS(
 			}
 			return;
 		}
-		else if (SSRDebugMode == 6)
+		else if (ScreenSpaceReflectionDebugMode == 6)
 		{
 			// Exit reason visualization
 			if (SSRHitStrength > 0.0)
@@ -770,19 +778,19 @@ void MainPS(
 			}
 			return;
 		}
-		else if (SSRDebugMode == 7)
+		else if (ScreenSpaceReflectionDebugMode == 7)
 		{
 			// Normal visualization (RGB = XYZ, 0.5 = 0)
 			OutColor = float4(Normal * 0.5 + 0.5, 1.0);
 			return;
 		}
-		else if (SSRDebugMode == 8)
+		else if (ScreenSpaceReflectionDebugMode == 8)
 		{
 			// ViewDir visualization (RGB = XYZ, 0.5 = 0)
 			OutColor = float4(ViewDir * 0.5 + 0.5, 1.0);
 			return;
 		}
-		else if (SSRDebugMode == 9)
+		else if (ScreenSpaceReflectionDebugMode == 9)
 		{
 			// ViewPos.z visualization (blue = in front of camera, red = behind camera)
 			if (ViewPos.z < 0.0)
@@ -795,26 +803,26 @@ void MainPS(
 			}
 			return;
 		}
-		else if (SSRDebugMode == 10)
+		else if (ScreenSpaceReflectionDebugMode == 10)
 		{
 			// Fresnel value visualization (white = high fresnel, black = low)
 			OutColor = float4(Fresnel, Fresnel, Fresnel, 1.0);
 			return;
 		}
-		else if (SSRDebugMode == 11)
+		else if (ScreenSpaceReflectionDebugMode == 11)
 		{
 			// Parameter debug: R = FresnelStrength/10, G = FresnelReflectionBlend, B = Fresnel
 			OutColor = float4(FresnelStrength / 10.0, FresnelReflectionBlend, Fresnel, 1.0);
 			return;
 		}
-		else if (SSRDebugMode == 12)
+		else if (ScreenSpaceReflectionDebugMode == 12)
 		{
 			// Final reflection blend factor: Fresnel * FresnelReflectionBlend
 			float BlendFactor = Fresnel * FresnelReflectionBlend;
 			OutColor = float4(BlendFactor, BlendFactor, BlendFactor, 1.0);
 			return;
 		}
-		else if (SSRDebugMode == 13)
+		else if (ScreenSpaceReflectionDebugMode == 13)
 		{
 			// SSR hit analysis (depth-only)
 			// Yellow = HIT
@@ -829,7 +837,7 @@ void MainPS(
 			{
 				bool bIsSky = g_SSRDebugLastSceneDepth > 50000.0;
 				float Penetration = g_SSRDebugDepthPenetration;
-				float MaxPenetration = SSRThickness * g_SSRDebugLastSceneDepth * 0.1;
+				float MaxPenetration = ScreenSpaceReflectionThickness * g_SSRDebugLastSceneDepth * 0.1;
 
 				if (bIsSky)
 				{
@@ -850,7 +858,7 @@ void MainPS(
 			}
 			return;
 		}
-		else if (SSRDebugMode == 14)
+		else if (ScreenSpaceReflectionDebugMode == 14)
 		{
 			// SSR hit UV visualization
 			// R = hit UV.x, G = hit UV.y, B = hit strength
@@ -869,9 +877,9 @@ void MainPS(
 
 		if (SSRHitStrength > 0.0)
 		{
-			// SSRIntensity = artist strength control
+			// ScreenSpaceReflectionIntensity = artist strength control
 			// SSRHitStrength used only for blend factor below (not multiplied twice)
-			ReflectedColor = SSRHitColor * SSRIntensity;
+			ReflectedColor = SSRHitColor * ScreenSpaceReflectionIntensity;
 		}
 	}
 
@@ -896,7 +904,16 @@ void MainPS(
 		{
 			// Fallback: use a dimmed environment light color for reflection
 			// Scale down to avoid overly bright reflections when no cubemap
-			CubemapColor = EnvironmentLightColor.rgb * 0.3;
+			float3 FallbackEnvColor = View.SkyLightColor.rgb;
+			if (dot(FallbackEnvColor, float3(1, 1, 1)) < 0.001)
+			{
+				FallbackEnvColor = View.DirectionalLightColor.rgb;
+			}
+			if (dot(FallbackEnvColor, float3(1, 1, 1)) < 0.001)
+			{
+				FallbackEnvColor = float3(1.0, 1.0, 1.0);  // White fallback
+			}
+			CubemapColor = FallbackEnvColor * 0.3;
 		}
 
 		// Blend SSR with Cubemap based on hit strength
