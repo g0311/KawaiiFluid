@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -73,12 +73,6 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
     SHADER_PARAMETER(float, ThicknessSensitivity)  // How much thickness affects transparency (0 = uniform, 1 = thickness-dependent)
     SHADER_PARAMETER(float, RefractionScale)
     SHADER_PARAMETER(float, FresnelReflectionBlend)
-
-    // ------------------------------------------------------
-    // Subsurface Scattering (SSS)
-    // ------------------------------------------------------
-    SHADER_PARAMETER(float, SubsurfaceScatteringIntensity)
-    SHADER_PARAMETER(FLinearColor, SubsurfaceScatteringColor)
 
     // ------------------------------------------------------
     // Reflection Cubemap

@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -328,15 +328,6 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration")
 	FSurfaceDecorationParams SurfaceDecoration;
 
-	/** Subsurface scattering intensity (jelly effect) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
-		meta = (ClampMin = "0.0", ClampMax = "2.0"))
-	float SubsurfaceScatteringIntensity = 1.0f;
-
-	/** Subsurface scattering color (RGB only, alpha channel not used) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
-		meta = (HideAlphaChannel))
-	FLinearColor SubsurfaceScatteringColor = FLinearColor(1.0f, 0.5f, 0.3f, 1.0f);
 
 	// Removed: G-Buffer Mode Parameters (GBuffer/Opaque/Translucent modes removed)
 
@@ -641,9 +632,6 @@ FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
 	Hash = HashCombine(Hash, GetTypeHash(Params.SurfaceDecoration.Emissive.bEnabled));
 	Hash = HashCombine(Hash, GetTypeHash(Params.RenderTargetScale));
 	Hash = HashCombine(Hash, GetTypeHash(Params.ThicknessScale));
-	// SSS parameters
-	Hash = HashCombine(Hash, GetTypeHash(Params.SubsurfaceScatteringIntensity));
-	Hash = HashCombine(Hash, GetTypeHash(Params.SubsurfaceScatteringColor.ToString()));
 	// SSR parameters
 	Hash = HashCombine(Hash, GetTypeHash(Params.bEnableScreenSpaceReflection));
 	Hash = HashCombine(Hash, GetTypeHash(Params.ScreenSpaceReflectionMaxSteps));
@@ -717,9 +705,6 @@ FORCEINLINE bool operator==(const FFluidRenderingParameters& A, const FFluidRend
 		A.SurfaceDecoration.Emissive.bEnabled == B.SurfaceDecoration.Emissive.bEnabled &&
 		FMath::IsNearlyEqual(A.RenderTargetScale, B.RenderTargetScale, 0.001f) &&
 		FMath::IsNearlyEqual(A.ThicknessScale, B.ThicknessScale, 0.001f) &&
-		// SSS parameters
-		FMath::IsNearlyEqual(A.SubsurfaceScatteringIntensity, B.SubsurfaceScatteringIntensity, 0.001f) &&
-		A.SubsurfaceScatteringColor.Equals(B.SubsurfaceScatteringColor, 0.001f) &&
 		// SSR parameters
 		A.bEnableScreenSpaceReflection == B.bEnableScreenSpaceReflection &&
 		A.ScreenSpaceReflectionMaxSteps == B.ScreenSpaceReflectionMaxSteps &&

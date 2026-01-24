@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #include "Rendering/Shading/KawaiiScreenSpaceShadingImpl.h"
 #include "Rendering/FluidRenderingParameters.h"
@@ -151,10 +151,6 @@ void KawaiiScreenSpaceShading::RenderPostProcessShading(
 	PassParameters->ThicknessSensitivity = RenderParams.ThicknessSensitivity;
 	PassParameters->RefractionScale = RenderParams.RefractionScale;
 	PassParameters->FresnelReflectionBlend = RenderParams.FresnelReflectionBlend;
-
-	// Subsurface Scattering (SSS)
-	PassParameters->SubsurfaceScatteringIntensity = RenderParams.SubsurfaceScatteringIntensity;
-	PassParameters->SubsurfaceScatteringColor = RenderParams.SubsurfaceScatteringColor;
 
 	// Reflection Cubemap
 	if (RenderParams.ReflectionCubemap && RenderParams.ReflectionCubemap->GetResource())
