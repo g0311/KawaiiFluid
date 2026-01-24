@@ -531,8 +531,8 @@ FKawaiiFluidSimulationParams UKawaiiFluidSimulationModule::BuildSimulationParams
 			}
 
 			Params.WorldBounds = FBox(VolumeCenter + AABBMin, VolumeCenter + AABBMax);
-			Params.BoundsRestitution = WallBounce;
-			Params.BoundsFriction = WallFriction;
+			Params.BoundsRestitution = Preset ? Preset->Restitution : 0.0f;
+			Params.BoundsFriction = Preset ? Preset->Friction : 0.5f;
 		}
 	}
 	else
@@ -563,8 +563,8 @@ FKawaiiFluidSimulationParams UKawaiiFluidSimulationModule::BuildSimulationParams
 		}
 
 		Params.WorldBounds = FBox(VolumeCenter + AABBMin, VolumeCenter + AABBMax);
-		Params.BoundsRestitution = WallBounce;
-		Params.BoundsFriction = WallFriction;
+		Params.BoundsRestitution = Preset ? Preset->Restitution : 0.0f;
+		Params.BoundsFriction = Preset ? Preset->Friction : 0.5f;
 	}
 
 	// Event Settings
@@ -1857,8 +1857,7 @@ void UKawaiiFluidSimulationModule::SetSimulationVolume(const FVector& Size, cons
 	}
 
 	VolumeRotation = Rotation;
-	WallBounce = FMath::Clamp(Bounce, 0.0f, 1.0f);
-	WallFriction = FMath::Clamp(Friction, 0.0f, 1.0f);
+	// Note: Bounce/Friction parameters are ignored. Use Preset's Restitution/Friction instead.
 
 	// Recalculate bounds (auto-selects Z-Order preset)
 	RecalculateVolumeBounds();
@@ -1888,8 +1887,7 @@ void UKawaiiFluidSimulationModule::SetContainment(bool bEnabled, const FVector& 
 	VolumeRotation = Rotation.Rotator();
 	VolumeCenter = Center;  // Set center directly
 	VolumeRotationQuat = Rotation;
-	WallBounce = FMath::Clamp(Restitution, 0.0f, 1.0f);
-	WallFriction = FMath::Clamp(Friction, 0.0f, 1.0f);
+	// Note: Restitution/Friction parameters are ignored. Use Preset's Restitution/Friction instead.
 }
 
 void UKawaiiFluidSimulationModule::ResolveVolumeBoundaryCollisions()
@@ -1900,6 +1898,10 @@ void UKawaiiFluidSimulationModule::ResolveVolumeBoundaryCollisions()
 	FQuat EffectiveRotation;
 	float EffectiveBounce;
 	float EffectiveFriction;
+
+	// Get bounce/friction from Preset
+	const float PresetBounce = Preset ? Preset->Restitution : 0.0f;
+	const float PresetFriction = Preset ? Preset->Friction : 0.5f;
 
 	if (UKawaiiFluidVolumeComponent* ExternalVolume = GetTargetVolumeComponent())
 	{
@@ -1918,8 +1920,8 @@ void UKawaiiFluidSimulationModule::ResolveVolumeBoundaryCollisions()
 			EffectiveCenter = VolumeCenter;
 			EffectiveHalfExtent = GridResolutionPresetHelper::ClampExtentToMaxSupported(GetVolumeHalfExtent(), CellSize);
 			EffectiveRotation = VolumeRotationQuat;
-			EffectiveBounce = WallBounce;
-			EffectiveFriction = WallFriction;
+			EffectiveBounce = PresetBounce;
+			EffectiveFriction = PresetFriction;
 		}
 	}
 	else
@@ -1928,8 +1930,8 @@ void UKawaiiFluidSimulationModule::ResolveVolumeBoundaryCollisions()
 		EffectiveCenter = VolumeCenter;
 		EffectiveHalfExtent = GridResolutionPresetHelper::ClampExtentToMaxSupported(GetVolumeHalfExtent(), CellSize);
 		EffectiveRotation = VolumeRotationQuat;
-		EffectiveBounce = WallBounce;
-		EffectiveFriction = WallFriction;
+		EffectiveBounce = PresetBounce;
+		EffectiveFriction = PresetFriction;
 	}
 
 	// OBB (Oriented Bounding Box) 충돌 처리
@@ -2260,9 +2262,7 @@ void UKawaiiFluidSimulationModule::UpdateVolumeInfoDisplay()
 			WorldBoundsMax = ExternalVolume->GetWorldBoundsMax();
 			CellSize = ExternalVolume->CellSize;
 
-			// Copy collision response parameters from external volume
-			WallBounce = ExternalVolume->GetWallBounce();
-			WallFriction = ExternalVolume->GetWallFriction();
+			// Note: Bounce/Friction are now obtained from Preset directly (no longer copied from volume)
 
 			// Copy size parameters for consistency (read-only display when using external)
 			bUniformSize = ExternalVolume->bUniformSize;

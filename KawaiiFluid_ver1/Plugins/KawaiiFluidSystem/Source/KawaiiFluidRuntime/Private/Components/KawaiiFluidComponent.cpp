@@ -288,11 +288,15 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(SimulationVolume_Setting_Collision)
 		// Update volume runtime parameters (size/rotation from editor, center from component)
+		// Note: Bounce/Friction parameters are now obtained from Preset internally
+		UKawaiiFluidPresetDataAsset* ModulePreset = SimulationModule->GetPreset();
+		const float PresetBounce = ModulePreset ? ModulePreset->Restitution : 0.0f;
+		const float PresetFriction = ModulePreset ? ModulePreset->Friction : 0.5f;
 		SimulationModule->SetSimulationVolume(
 			SimulationModule->GetEffectiveVolumeSize(),
 			SimulationModule->VolumeRotation,
-			SimulationModule->WallBounce,
-			SimulationModule->WallFriction
+			PresetBounce,
+			PresetFriction
 		);
 		// CPU-side boundary collision (for CPU simulation mode)
 		SimulationModule->ResolveVolumeBoundaryCollisions();

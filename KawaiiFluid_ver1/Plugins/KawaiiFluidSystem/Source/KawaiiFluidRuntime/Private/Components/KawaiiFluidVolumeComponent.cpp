@@ -420,7 +420,7 @@ void UKawaiiFluidVolumeComponent::DrawBoundsVisualization()
 		const FString InfoText = FString::Printf(
 			TEXT("Size: %.0fx%.0fx%.0f cm\nBounce: %.1f, Friction: %.1f"),
 			EffectiveSize.X, EffectiveSize.Y, EffectiveSize.Z,
-			WallBounce, WallFriction
+			GetWallBounce(), GetWallFriction()
 		);
 		DrawDebugString(World, ComponentLocation + FVector(0, 0, UserExtent.Z + 50.0f), InfoText, nullptr, ShapeColor, -1.0f, true);
 	}
@@ -452,6 +452,24 @@ float UKawaiiFluidVolumeComponent::GetParticleSpacing() const
 		return Preset->ParticleRadius * 2.0f;
 	}
 	return 10.0f;  // Default fallback
+}
+
+float UKawaiiFluidVolumeComponent::GetWallBounce() const
+{
+	if (Preset)
+	{
+		return Preset->Restitution;
+	}
+	return 0.0f;  // Default fallback
+}
+
+float UKawaiiFluidVolumeComponent::GetWallFriction() const
+{
+	if (Preset)
+	{
+		return Preset->Friction;
+	}
+	return 0.5f;  // Default fallback
 }
 
 //========================================

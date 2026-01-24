@@ -80,77 +80,74 @@ public:
 	//========================================
 
 	/** Enable or disable particle emission */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter")
 	bool bEnabled = true;
 
-	/** The target volume to emit particles into */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter")
+	/** The target volume to emit particles into.
+	 *  If not set, automatically finds the nearest volume at BeginPlay. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter")
 	TObjectPtr<AKawaiiFluidVolume> TargetVolume;
 
-	/** Whether to automatically find the nearest volume if TargetVolume is not set */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter")
-	bool bAutoFindVolume = true;
-
 	/** Emitter mode: Fill (one-time fill) or Stream (continuous emission) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter")
 	EKawaiiFluidEmitterMode EmitterMode = EKawaiiFluidEmitterMode::Stream;
 
 	/** Shape type for Fill mode */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter|Fill Shape",
 		meta = (EditCondition = "EmitterMode == EKawaiiFluidEmitterMode::Fill", EditConditionHides))
 	EKawaiiFluidEmitterShapeType ShapeType = EKawaiiFluidEmitterShapeType::Sphere;
 
 	/** Sphere radius */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter|Fill Shape",
 		meta = (EditCondition = "EmitterMode == EKawaiiFluidEmitterMode::Fill && ShapeType == EKawaiiFluidEmitterShapeType::Sphere", EditConditionHides, ClampMin = "1.0"))
 	float SphereRadius = 50.0f;
 
 	/** Cube half-size (size / 2) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter|Fill Shape",
 		meta = (EditCondition = "EmitterMode == EKawaiiFluidEmitterMode::Fill && ShapeType == EKawaiiFluidEmitterShapeType::Cube", EditConditionHides))
 	FVector CubeHalfSize = FVector(50.0f, 50.0f, 50.0f);
 
 	/** Cylinder radius */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter|Fill Shape",
 		meta = (EditCondition = "EmitterMode == EKawaiiFluidEmitterMode::Fill && ShapeType == EKawaiiFluidEmitterShapeType::Cylinder", EditConditionHides, ClampMin = "1.0"))
 	float CylinderRadius = 30.0f;
 
 	/** Cylinder half-height */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter|Fill Shape",
 		meta = (EditCondition = "EmitterMode == EKawaiiFluidEmitterMode::Fill && ShapeType == EKawaiiFluidEmitterShapeType::Cylinder", EditConditionHides, ClampMin = "1.0"))
 	float CylinderHalfHeight = 50.0f;
 
 	/** Stream cross-sectional radius */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter|Stream",
 		meta = (EditCondition = "EmitterMode == EKawaiiFluidEmitterMode::Stream", EditConditionHides, ClampMin = "1.0"))
 	float StreamRadius = 25.0f;
 
 	/** Use world space for velocity direction (if false, uses local space) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter|Velocity")
 	bool bUseWorldSpaceVelocity = false;
 
 	/** Initial velocity direction for spawned particles */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter|Velocity")
 	FVector InitialVelocityDirection = FVector(0, 0, -1);
 
 	/** Initial speed for spawned particles (cm/s) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter|Velocity",
 		meta = (ClampMin = "0.0"))
 	float InitialSpeed = 250.0f;
 
 	/** Maximum particles this emitter can spawn (0 = unlimited) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter|Limits",
 		meta = (ClampMin = "0"))
 	int32 MaxParticleCount = 100000;
 
 	/** Recycle oldest particles when MaxParticleCount is exceeded (instead of stopping spawn)
 	 *  Only applicable to Stream mode - Fill mode spawns once and doesn't need recycling */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter|Limits",
 		meta = (EditCondition = "MaxParticleCount > 0 && EmitterMode == EKawaiiFluidEmitterMode::Stream", EditConditionHides))
 	bool bRecycleOldestParticles = true;
 
 	/** Whether to automatically start spawning on BeginPlay */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Emitter")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter")
 	bool bAutoStartSpawning = true;
 
 	//========================================
@@ -295,6 +292,7 @@ protected:
 	float WireframeThickness = 2.0f;
 
 	// Advanced spawn settings (internal)
+	bool bAutoFindVolume = true;
 	bool bAutoCalculateParticleCount = true;
 	int32 ParticleCount = 500;
 	bool bUseJitter = true;

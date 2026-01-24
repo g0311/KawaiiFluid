@@ -173,24 +173,6 @@ public:
 	FRotator VolumeRotation = FRotator::ZeroRotator;
 
 	/**
-	 * Wall bounce (0 = no bounce, 1 = full bounce)
-	 * How much particles bounce when hitting the volume walls.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Simulation Volume",
-		meta = (EditCondition = "TargetSimulationVolume == nullptr", EditConditionHides,
-			DisplayName = "Wall Bounce", ClampMin = "0.0", ClampMax = "1.0"))
-	float WallBounce = 0.3f;
-
-	/**
-	 * Wall friction (0 = slippery, 1 = sticky)
-	 * How much particles slow down when sliding along walls.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Simulation Volume",
-		meta = (EditCondition = "TargetSimulationVolume == nullptr", EditConditionHides,
-			DisplayName = "Wall Friction", ClampMin = "0.0", ClampMax = "1.0"))
-	float WallFriction = 0.1f;
-
-	/**
 	 * Grid resolution preset (auto-selected based on volume size)
 	 * Read-only - the system automatically selects the optimal preset.
 	 */
@@ -676,7 +658,7 @@ public:
 	// Legacy API (Deprecated)
 	//========================================
 
-	/** @deprecated Use VolumeSize/UniformVolumeSize and WallBounce/WallFriction instead */
+	/** @deprecated Use VolumeSize/UniformVolumeSize. Bounce/Friction are now from Preset (Restitution/Friction) */
 	UFUNCTION(BlueprintCallable, Category = "Fluid|Containment", meta = (DeprecatedFunction, DeprecationMessage = "Use SetSimulationVolume instead"))
 	void SetContainment(bool bEnabled, const FVector& Center, const FVector& Extent,
 	                    const FQuat& Rotation, float Restitution, float Friction);

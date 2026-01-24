@@ -54,7 +54,7 @@ public:
 	 * Use uniform (cube) size for simulation volume
 	 * When checked, enter a single size value. When unchecked, enter separate X/Y/Z values.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume|Volume", meta = (DisplayName = "Uniform Size"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume", meta = (DisplayName = "Uniform Size"))
 	bool bUniformSize = true;
 
 	/**
@@ -64,7 +64,7 @@ public:
 	 *
 	 * Example: 400 cm means a 400x400x400 cm cube.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume|Volume",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume",
 		meta = (EditCondition = "bUniformSize", EditConditionHides, DisplayName = "Size", ClampMin = "10.0"))
 	float UniformVolumeSize = 2560.0f;
 
@@ -75,32 +75,16 @@ public:
 	 *
 	 * Example: (400, 300, 200) means a 400x300x200 cm box.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume|Volume",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume",
 		meta = (EditCondition = "bUniformSize == false", EditConditionHides, DisplayName = "Size"))
 	FVector VolumeSize = FVector(2560.0f, 2560.0f, 2560.0f);
-
-	/**
-	 * Wall bounce (0 = no bounce, 1 = full bounce)
-	 * How much particles bounce when hitting the volume walls.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume|Volume",
-		meta = (DisplayName = "Wall Bounce", ClampMin = "0.0", ClampMax = "1.0"))
-	float WallBounce = 0.3f;
-
-	/**
-	 * Wall friction (0 = slippery, 1 = sticky)
-	 * How much particles slow down when sliding along walls.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume|Volume",
-		meta = (DisplayName = "Wall Friction", ClampMin = "0.0", ClampMax = "1.0"))
-	float WallFriction = 0.1f;
 
 	//========================================
 	// Preset Configuration
 	//========================================
 
 	/** The fluid preset that defines physics and rendering parameters */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume|Preset")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume")
 	TObjectPtr<UKawaiiFluidPresetDataAsset> Preset;
 
 	//========================================
@@ -309,50 +293,31 @@ public:
 	FColor ZOrderSpaceWireframeColor = FColor::Red;
 
 	//========================================
-	// Z-Order Space Configuration (Advanced)
+	// Internal Grid Data (Auto-Calculated, access via getter functions)
 	//========================================
 
-	/**
-	 * Cell size for Z-Order grid (auto-derived from Preset->SmoothingRadius)
-	 * Determines the grid cell size for neighbor search.
-	 * This value is automatically set from the fluid preset's SmoothingRadius.
-	 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid Volume|Volume|Advanced", meta = (DisplayName = "Cell Size (from Preset)"))
+	/** Cell size for Z-Order grid (auto-derived from Preset->SmoothingRadius) */
 	float CellSize = 20.0f;
 
-	/**
-	 * Grid resolution preset for Z-Order sorting (auto-selected based on volume size)
-	 * Read-only - the system automatically selects the optimal preset.
-	 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid Volume|Volume|Advanced", meta = (DisplayName = "Internal Grid Preset (Auto)"))
+	/** Grid resolution preset for Z-Order sorting (auto-selected based on volume size) */
 	EGridResolutionPreset GridResolutionPreset = EGridResolutionPreset::Medium;
 
-	//========================================
-	// Internal Info (Read-Only, Auto-Calculated)
-	//========================================
-
 	/** Grid resolution bits per axis (derived from GridResolutionPreset) */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid Volume|Volume|Advanced")
 	int32 GridAxisBits = 7;
 
 	/** Grid resolution per axis (2^GridAxisBits) */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid Volume|Volume|Advanced")
 	int32 GridResolution = 128;
 
 	/** Total number of cells (GridResolution^3) */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid Volume|Volume|Advanced")
 	int32 MaxCells = 2097152;
 
 	/** Actual simulation bounds extent (may differ from requested VolumeSize due to grid constraints) */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid Volume|Volume|Advanced")
 	float BoundsExtent = 2560.0f;
 
 	/** World-space minimum bounds (Component location - Extent/2) */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid Volume|Volume|Advanced")
 	FVector WorldBoundsMin = FVector(-1280.0f, -1280.0f, -1280.0f);
 
 	/** World-space maximum bounds (Component location + Extent/2) */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Fluid Volume|Volume|Advanced")
 	FVector WorldBoundsMax = FVector(1280.0f, 1280.0f, 1280.0f);
 
 	//========================================
@@ -392,13 +357,13 @@ public:
 		return GetEffectiveVolumeSize() * 0.5f;
 	}
 
-	/** Get wall bounce coefficient */
+	/** Get wall bounce coefficient (from Preset's Restitution) */
 	UFUNCTION(BlueprintPure, Category = "Fluid Volume")
-	float GetWallBounce() const { return WallBounce; }
+	float GetWallBounce() const;
 
-	/** Get wall friction coefficient */
+	/** Get wall friction coefficient (from Preset's Friction) */
 	UFUNCTION(BlueprintPure, Category = "Fluid Volume")
-	float GetWallFriction() const { return WallFriction; }
+	float GetWallFriction() const;
 
 	/** Get cell size */
 	UFUNCTION(BlueprintPure, Category = "Fluid Volume")
@@ -429,7 +394,7 @@ public:
 	//========================================
 
 	/** Get the preset */
-	UFUNCTION(BlueprintPure, Category = "Fluid Volume|Preset")
+	UFUNCTION(BlueprintPure, Category = "Fluid Volume")
 	UKawaiiFluidPresetDataAsset* GetPreset() const { return Preset; }
 
 	/** Get fluid type */
@@ -441,7 +406,7 @@ public:
 	void SetFluidType(EFluidType InFluidType);
 
 	/** Get particle spacing from preset */
-	UFUNCTION(BlueprintPure, Category = "Fluid Volume|Preset")
+	UFUNCTION(BlueprintPure, Category = "Fluid Volume")
 	float GetParticleSpacing() const;
 
 	//========================================
