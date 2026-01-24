@@ -439,7 +439,8 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 	}
 
 	// Debug Draw: DrawDebugPoint 기반 Z-Order 시각화
-	if (DebugDrawMode == EKawaiiFluidDebugDrawMode::DebugDraw)
+	// Only render if bEnableRendering is true
+	if (bEnableRendering && DebugDrawMode == EKawaiiFluidDebugDrawMode::DebugDraw)
 	{
 		DrawDebugParticles();
 	}

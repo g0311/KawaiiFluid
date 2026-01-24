@@ -132,7 +132,8 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 	}
 
 	// Debug visualization (read from VolumeComponent)
-	if (VolumeComponent->DebugDrawMode == EKawaiiFluidDebugDrawMode::DebugDraw)
+	// Only render if bEnableRendering is true
+	if (VolumeComponent->bEnableRendering && VolumeComponent->DebugDrawMode == EKawaiiFluidDebugDrawMode::DebugDraw)
 	{
 		DrawDebugParticles();
 	}
@@ -822,45 +823,56 @@ void AKawaiiFluidVolume::DrawDebugParticles()
 		return;
 	}
 
-	// Get particle data
-	TArray<FVector> Positions = SimulationModule->GetParticlePositions();
+	// Get particle data (GPU or CPU) - same pattern as KawaiiFluidComponent
+	const TArray<FFluidParticle>* ParticlesPtr = nullptr;
+	TArray<FFluidParticle> GPUParticlesCache;
 
-	if (Positions.Num() == 0)
+	if (SimulationModule->IsGPUSimulationActive())
+	{
+		// GPU mode: Use readback data
+		FGPUFluidSimulator* Simulator = SimulationModule->GetGPUSimulator();
+		if (Simulator && Simulator->GetAllGPUParticles(GPUParticlesCache))
+		{
+			ParticlesPtr = &GPUParticlesCache;
+		}
+		else
+		{
+			// No readback data available
+			return;
+		}
+	}
+	else
+	{
+		// CPU mode: Direct particle array
+		ParticlesPtr = &SimulationModule->GetParticles();
+	}
+
+	if (!ParticlesPtr || ParticlesPtr->Num() == 0)
 	{
 		return;
 	}
 
-	// Get debug settings from VolumeComponent
-	const EFluidDebugVisualization VisualizationType = VolumeComponent->DebugVisualizationType;
+	const TArray<FFluidParticle>& Particles = *ParticlesPtr;
+	const int32 TotalCount = Particles.Num();
+
+	// Get debug point size from VolumeComponent
 	const float DebugPointSize = VolumeComponent->DebugPointSize;
 
-	// Get densities from particles if needed
-	TArray<float> Densities;
-	if (VisualizationType == EFluidDebugVisualization::Density)
-	{
-		const TArray<FFluidParticle>& Particles = SimulationModule->GetParticles();
-		Densities.Reserve(Particles.Num());
-		for (const FFluidParticle& P : Particles)
-		{
-			Densities.Add(P.Density);
-		}
-	}
-
 	// Update bounds for position-based coloring
-	DebugDrawBoundsMin = Positions[0];
-	DebugDrawBoundsMax = Positions[0];
-	for (const FVector& Pos : Positions)
+	DebugDrawBoundsMin = Particles[0].Position;
+	DebugDrawBoundsMax = Particles[0].Position;
+	for (const FFluidParticle& P : Particles)
 	{
-		DebugDrawBoundsMin = DebugDrawBoundsMin.ComponentMin(Pos);
-		DebugDrawBoundsMax = DebugDrawBoundsMax.ComponentMax(Pos);
+		DebugDrawBoundsMin = DebugDrawBoundsMin.ComponentMin(P.Position);
+		DebugDrawBoundsMax = DebugDrawBoundsMax.ComponentMax(P.Position);
 	}
 
-	const int32 TotalCount = Positions.Num();
+	// Draw particles
 	for (int32 i = 0; i < TotalCount; ++i)
 	{
-		const float Density = (i < Densities.Num()) ? Densities[i] : 0.0f;
-		FColor Color = ComputeDebugDrawColor(i, TotalCount, Positions[i], Density);
-		DrawDebugPoint(World, Positions[i], DebugPointSize, Color, false, -1.0f, 0);
+		const FFluidParticle& P = Particles[i];
+		FColor Color = ComputeDebugDrawColor(i, TotalCount, P.Position, P.Density);
+		DrawDebugPoint(World, P.Position, DebugPointSize, Color, false, -1.0f, 0);
 	}
 }
 
