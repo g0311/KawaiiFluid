@@ -259,251 +259,266 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 		DrawDebugStaticBoundaryParticles();
 	}
 
-	// VSM Integration: Update shadow proxy with particle data
+	// Particle data readback and VFX/Shadow update
 	if (SimulationModule)
 	{
-		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+		// Use member buffer to avoid per-frame allocation
+		ShadowPredictionBuffer.Reset();
+		TArray<FVector>& Positions = ShadowPredictionBuffer;
+		int32 NumParticles = 0;
+
+		// Check if GPU simulation is active
+		FGPUFluidSimulator* GPUSimulator = SimulationModule->GetGPUSimulator();
+		const bool bGPUActive = SimulationModule->IsGPUSimulationActive() && GPUSimulator != nullptr;
+
+		// Skip if no particles
+		const int32 ActualParticleCount = bGPUActive ? GPUSimulator->GetParticleCount() : SimulationModule->GetParticleCount();
+		if (ActualParticleCount <= 0)
 		{
-			TRACE_CPUPROFILER_EVENT_SCOPE(VSM Integration Volume)
-			if (RendererSubsystem->bEnableVSMIntegration && VolumeComponent->bEnableShadow)
+			CachedShadowPositions.Empty();
+			CachedShadowVelocities.Empty();
+			CachedNeighborCounts.Empty();
+
+			// Clear shadow instances if subsystem available
+			if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
 			{
-				// Use member buffer to avoid per-frame allocation
-				ShadowPredictionBuffer.Reset();
-				TArray<FVector>& Positions = ShadowPredictionBuffer;
-				int32 NumParticles = 0;
+				RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f);
+			}
+			return;
+		}
 
-				// Check if GPU simulation is active
-				FGPUFluidSimulator* GPUSimulator = SimulationModule->GetGPUSimulator();
-				const bool bGPUActive = SimulationModule->IsGPUSimulationActive() && GPUSimulator != nullptr;
+		// =====================================================
+		// Step 1: Get particle data (Position, Velocity, NeighborCount)
+		// This data is used by both VFX and Shadow systems
+		// =====================================================
+		if (bGPUActive)
+		{
+			// GPU Mode: Enable async readback and get positions
+			GPUSimulator->SetShadowReadbackEnabled(true);
+			GPUSimulator->SetAnisotropyReadbackEnabled(true);
 
-				// 파티클 수가 0이면 ISM 클리어하고 스킵
-				const int32 ActualParticleCount = bGPUActive ? GPUSimulator->GetParticleCount() : SimulationModule->GetParticleCount();
-				if (ActualParticleCount <= 0)
-				{
-					CachedShadowPositions.Empty();
-					CachedShadowVelocities.Empty();
-					RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f);
-					return;
-				}
+			TArray<FVector> NewVelocities;
+			TArray<FVector4> NewAnisotropyAxis1, NewAnisotropyAxis2, NewAnisotropyAxis3;
 
-				if (bGPUActive)
-				{
-					// GPU Mode: Enable async shadow readback and get positions
-					GPUSimulator->SetShadowReadbackEnabled(true);
-					GPUSimulator->SetAnisotropyReadbackEnabled(true);
-
-					TArray<FVector> NewVelocities;
-					TArray<FVector4> NewAnisotropyAxis1, NewAnisotropyAxis2, NewAnisotropyAxis3;
-
-					if (GPUSimulator->HasReadyShadowPositions())
-					{
-						// New readback data available - update cache (with anisotropy)
-						GPUSimulator->GetShadowDataWithAnisotropy(
-							Positions, NewVelocities,
-							NewAnisotropyAxis1, NewAnisotropyAxis2, NewAnisotropyAxis3);
-						NumParticles = Positions.Num();
-
-						if (NumParticles > 0)
-						{
-							// Use Move for arrays that won't be used after this (avoids deep copy)
-							CachedShadowPositions = Positions;  // Keep copy - needed for UpdateShadowInstances below
-							CachedShadowVelocities = MoveTemp(NewVelocities);
-							CachedAnisotropyAxis1 = MoveTemp(NewAnisotropyAxis1);
-							CachedAnisotropyAxis2 = MoveTemp(NewAnisotropyAxis2);
-							CachedAnisotropyAxis3 = MoveTemp(NewAnisotropyAxis3);
-							LastShadowReadbackFrame = GFrameCounter;
-							LastShadowReadbackTime = FPlatformTime::Seconds();
-
-							// Also cache neighbor counts for isolation detection
-							GPUSimulator->GetShadowNeighborCounts(CachedNeighborCounts);
-						}
-					}
-					else if (CachedShadowPositions.Num() > 0 && CachedShadowVelocities.Num() == CachedShadowPositions.Num())
-					{
-						// No new data - predict positions using cached velocity
-						const double CurrentTime = FPlatformTime::Seconds();
-						const float PredictionDelta = static_cast<float>(CurrentTime - LastShadowReadbackTime);
-
-						// Clamp prediction delta to avoid extreme extrapolation
-						const float ClampedDelta = FMath::Clamp(PredictionDelta, 0.0f, 0.1f);
-
-						NumParticles = CachedShadowPositions.Num();
-						Positions.SetNumUninitialized(NumParticles);
-
-						// Parallelize prediction loop
-						ParallelFor(NumParticles, [&](int32 i)
-						{
-							// Predict: Position += Velocity * DeltaTime
-							Positions[i] = CachedShadowPositions[i] + CachedShadowVelocities[i] * ClampedDelta;
-						});
-						// Note: Anisotropy is not predicted, use cached values directly
-					}
-					else if (CachedShadowPositions.Num() > 0)
-					{
-						// Fallback: use cached positions without prediction
-						Positions = CachedShadowPositions;
-						NumParticles = Positions.Num();
-					}
-				}
-				else
-				{
-					// CPU Mode: Get positions from CPU particles
-					const TArray<FFluidParticle>& Particles = SimulationModule->GetParticles();
-					NumParticles = Particles.Num();
-
-					if (NumParticles > 0)
-					{
-						Positions.SetNum(NumParticles);
-						CachedShadowVelocities.SetNum(NumParticles);
-						CachedNeighborCounts.SetNum(NumParticles);
-
-						for (int32 i = 0; i < NumParticles; ++i)
-						{
-							Positions[i] = Particles[i].Position;
-							CachedShadowVelocities[i] = Particles[i].Velocity;
-							CachedNeighborCounts[i] = Particles[i].NeighborIndices.Num();
-						}
-					}
-				}
+			if (GPUSimulator->HasReadyShadowPositions())
+			{
+				// New readback data available - update cache (with anisotropy)
+				GPUSimulator->GetShadowDataWithAnisotropy(
+					Positions, NewVelocities,
+					NewAnisotropyAxis1, NewAnisotropyAxis2, NewAnisotropyAxis3);
+				NumParticles = Positions.Num();
 
 				if (NumParticles > 0)
 				{
-					// Calculate fluid bounds from positions (Parallel Reduction)
-					FBox FluidBounds(ForceInit);
+					// Use Move for arrays that won't be used after this (avoids deep copy)
+					CachedShadowPositions = Positions;  // Keep copy - needed for UpdateShadowInstances below
+					CachedShadowVelocities = MoveTemp(NewVelocities);
+					CachedAnisotropyAxis1 = MoveTemp(NewAnisotropyAxis1);
+					CachedAnisotropyAxis2 = MoveTemp(NewAnisotropyAxis2);
+					CachedAnisotropyAxis3 = MoveTemp(NewAnisotropyAxis3);
+					LastShadowReadbackFrame = GFrameCounter;
+					LastShadowReadbackTime = FPlatformTime::Seconds();
 
-					if (NumParticles > 1024)
+					// Also cache neighbor counts for isolation detection
+					GPUSimulator->GetShadowNeighborCounts(CachedNeighborCounts);
+				}
+			}
+			else if (CachedShadowPositions.Num() > 0 && CachedShadowVelocities.Num() == CachedShadowPositions.Num())
+			{
+				// No new data - predict positions using cached velocity
+				const double CurrentTime = FPlatformTime::Seconds();
+				const float PredictionDelta = static_cast<float>(CurrentTime - LastShadowReadbackTime);
+
+				// Clamp prediction delta to avoid extreme extrapolation
+				const float ClampedDelta = FMath::Clamp(PredictionDelta, 0.0f, 0.1f);
+
+				NumParticles = CachedShadowPositions.Num();
+				Positions.SetNumUninitialized(NumParticles);
+
+				// Parallelize prediction loop
+				ParallelFor(NumParticles, [&](int32 i)
+				{
+					// Predict: Position += Velocity * DeltaTime
+					Positions[i] = CachedShadowPositions[i] + CachedShadowVelocities[i] * ClampedDelta;
+				});
+				// Note: Anisotropy is not predicted, use cached values directly
+			}
+			else if (CachedShadowPositions.Num() > 0)
+			{
+				// Fallback: use cached positions without prediction
+				Positions = CachedShadowPositions;
+				NumParticles = Positions.Num();
+			}
+		}
+		else
+		{
+			// CPU Mode: Get positions from CPU particles
+			const TArray<FFluidParticle>& Particles = SimulationModule->GetParticles();
+			NumParticles = Particles.Num();
+
+			if (NumParticles > 0)
+			{
+				Positions.SetNum(NumParticles);
+				CachedShadowVelocities.SetNum(NumParticles);
+				CachedNeighborCounts.SetNum(NumParticles);
+
+				for (int32 i = 0; i < NumParticles; ++i)
+				{
+					Positions[i] = Particles[i].Position;
+					CachedShadowVelocities[i] = Particles[i].Velocity;
+					CachedNeighborCounts[i] = Particles[i].NeighborIndices.Num();
+				}
+			}
+		}
+
+		if (NumParticles > 0)
+		{
+			// Calculate fluid bounds from positions (Parallel Reduction)
+			FBox FluidBounds(ForceInit);
+
+			if (NumParticles > 1024)
+			{
+				const int32 ChunkSize = 1024;
+				const int32 NumChunks = FMath::DivideAndRoundUp(NumParticles, ChunkSize);
+				TArray<FBox> ChunkBounds;
+				ChunkBounds.Init(FBox(ForceInit), NumChunks);
+
+				ParallelFor(NumChunks, [&](int32 ChunkIndex)
+				{
+					const int32 StartIndex = ChunkIndex * ChunkSize;
+					const int32 EndIndex = FMath::Min(StartIndex + ChunkSize, NumParticles);
+
+					FBox LocalBox(ForceInit);
+					for (int32 i = StartIndex; i < EndIndex; ++i)
 					{
-						const int32 ChunkSize = 1024;
-						const int32 NumChunks = FMath::DivideAndRoundUp(NumParticles, ChunkSize);
-						TArray<FBox> ChunkBounds;
-						ChunkBounds.Init(FBox(ForceInit), NumChunks);
-
-						ParallelFor(NumChunks, [&](int32 ChunkIndex)
-						{
-							const int32 StartIndex = ChunkIndex * ChunkSize;
-							const int32 EndIndex = FMath::Min(StartIndex + ChunkSize, NumParticles);
-
-							FBox LocalBox(ForceInit);
-							for (int32 i = StartIndex; i < EndIndex; ++i)
-							{
-								LocalBox += Positions[i];
-							}
-							ChunkBounds[ChunkIndex] = LocalBox;
-						});
-
-						// 각 청크의 결과를 메인 Bounds에 병합
-						for (const FBox& Box : ChunkBounds)
-						{
-							FluidBounds += Box;
-						}
+						LocalBox += Positions[i];
 					}
-					else
-					{
-						// 파티클 수가 적으면 단일 스레드에서 처리 (오버헤드 방지)
-						for (int32 i = 0; i < NumParticles; ++i)
-						{
-							FluidBounds += Positions[i];
-						}
-					}
+					ChunkBounds[ChunkIndex] = LocalBox;
+				});
 
-					// Expand bounds by particle radius
-					const float ParticleRadius = SimulationModule->GetParticleRadius();
-					FluidBounds = FluidBounds.ExpandBy(ParticleRadius * 2.0f);
+				// Merge each chunk's result into main Bounds
+				for (const FBox& Box : ChunkBounds)
+				{
+					FluidBounds += Box;
+				}
+			}
+			else
+			{
+				// Process in single thread if particle count is low (avoid overhead)
+				for (int32 i = 0; i < NumParticles; ++i)
+				{
+					FluidBounds += Positions[i];
+				}
+			}
+
+			// Expand bounds by particle radius
+			const float ParticleRadius = SimulationModule->GetParticleRadius();
+			FluidBounds = FluidBounds.ExpandBy(ParticleRadius * 2.0f);
+
+			// =====================================================
+			// Step 2: VSM/Shadow Integration (conditional)
+			// =====================================================
+			if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+			{
+				if (RendererSubsystem->bEnableVSMIntegration && VolumeComponent->bEnableShadow)
+				{
+					TRACE_CPUPROFILER_EVENT_SCOPE(VSM Integration Volume)
 
 					// Update shadow proxy state (creates HISM component if needed)
 					RendererSubsystem->UpdateShadowProxyState();
 
 					// Update HISM shadow instances with uniform spheres
-					// Volume doesn't have MaxParticleCount like Component, use current count
 					RendererSubsystem->UpdateShadowInstances(
 						Positions.GetData(),
 						NumParticles,
 						ParticleRadius
 					);
+				}
+			}
 
-					// Spawn splash VFX based on condition mode (read from VolumeComponent)
-					UNiagaraSystem* SplashVFX = VolumeComponent->SplashVFX;
-					if (SplashVFX)
+			// =====================================================
+			// Step 3: Splash VFX (independent of Shadow settings)
+			// =====================================================
+			UNiagaraSystem* SplashVFX = VolumeComponent->SplashVFX;
+			if (SplashVFX)
+			{
+				const float SplashVelocityThreshold = VolumeComponent->SplashVelocityThreshold;
+				const int32 MaxSplashVFXPerFrame = VolumeComponent->MaxSplashVFXPerFrame;
+				const ESplashConditionMode SplashConditionMode = VolumeComponent->SplashConditionMode;
+				const int32 IsolationNeighborThreshold = VolumeComponent->IsolationNeighborThreshold;
+
+				int32 SpawnCount = 0;
+				const bool bHasVelocityData = CachedShadowVelocities.Num() == NumParticles;
+				const bool bHasNeighborData = CachedNeighborCounts.Num() == NumParticles;
+				const bool bHasPrevNeighborData = PrevNeighborCounts.Num() == NumParticles;
+
+				for (int32 i = 0; i < NumParticles && SpawnCount < MaxSplashVFXPerFrame; ++i)
+				{
+					// Velocity condition: fast-moving particle
+					bool bFastMoving = false;
+					FVector VelocityDir = FVector::UpVector;
+					if (bHasVelocityData)
 					{
-						const float SplashVelocityThreshold = VolumeComponent->SplashVelocityThreshold;
-						const int32 MaxSplashVFXPerFrame = VolumeComponent->MaxSplashVFXPerFrame;
-						const ESplashConditionMode SplashConditionMode = VolumeComponent->SplashConditionMode;
-						const int32 IsolationNeighborThreshold = VolumeComponent->IsolationNeighborThreshold;
+						const float Speed = CachedShadowVelocities[i].Size();
+						bFastMoving = Speed > SplashVelocityThreshold;
+						VelocityDir = CachedShadowVelocities[i].GetSafeNormal();
+					}
 
-						int32 SpawnCount = 0;
-						const bool bHasVelocityData = CachedShadowVelocities.Num() == NumParticles;
-						const bool bHasNeighborData = CachedNeighborCounts.Num() == NumParticles;
-						const bool bHasPrevNeighborData = PrevNeighborCounts.Num() == NumParticles;
+					// Isolation condition: few neighbors
+					bool bIsolated = false;
+					bool bJustBecameIsolated = false;
+					if (bHasNeighborData)
+					{
+						bIsolated = CachedNeighborCounts[i] <= IsolationNeighborThreshold;
 
-						for (int32 i = 0; i < NumParticles && SpawnCount < MaxSplashVFXPerFrame; ++i)
+						// State change detection: was not isolated -> now isolated
+						if (bHasPrevNeighborData)
 						{
-							// Velocity condition: fast-moving particle
-							bool bFastMoving = false;
-							FVector VelocityDir = FVector::UpVector;
-							if (bHasVelocityData)
-							{
-								const float Speed = CachedShadowVelocities[i].Size();
-								bFastMoving = Speed > SplashVelocityThreshold;
-								VelocityDir = CachedShadowVelocities[i].GetSafeNormal();
-							}
-
-							// Isolation condition: few neighbors
-							bool bIsolated = false;
-							bool bJustBecameIsolated = false;
-							if (bHasNeighborData)
-							{
-								bIsolated = CachedNeighborCounts[i] <= IsolationNeighborThreshold;
-
-								// State change detection: was not isolated -> now isolated
-								if (bHasPrevNeighborData)
-								{
-									const bool bWasIsolated = PrevNeighborCounts[i] <= IsolationNeighborThreshold;
-									bJustBecameIsolated = bIsolated && !bWasIsolated;
-								}
-								else
-								{
-									// First frame with data - treat as state change if isolated
-									bJustBecameIsolated = bIsolated;
-								}
-							}
-
-							// Evaluate spawn condition based on mode
-							// For isolation-related modes, only spawn on state change (non-isolated -> isolated)
-							bool bShouldSpawn = false;
-							switch (SplashConditionMode)
-							{
-							case ESplashConditionMode::VelocityAndIsolation:
-								bShouldSpawn = bFastMoving && bJustBecameIsolated;
-								break;
-							case ESplashConditionMode::VelocityOrIsolation:
-								bShouldSpawn = bFastMoving || bJustBecameIsolated;
-								break;
-							case ESplashConditionMode::VelocityOnly:
-								bShouldSpawn = bFastMoving;
-								break;
-							case ESplashConditionMode::IsolationOnly:
-								bShouldSpawn = bJustBecameIsolated;
-								break;
-							}
-
-							if (bShouldSpawn)
-							{
-								UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-									this,
-									SplashVFX,
-									Positions[i],
-									VelocityDir.Rotation()
-								);
-								++SpawnCount;
-							}
+							const bool bWasIsolated = PrevNeighborCounts[i] <= IsolationNeighborThreshold;
+							bJustBecameIsolated = bIsolated && !bWasIsolated;
 						}
-
-						// Update previous neighbor counts for next frame's state change detection
-						if (bHasNeighborData)
+						else
 						{
-							PrevNeighborCounts = CachedNeighborCounts;
+							// First frame with data - treat as state change if isolated
+							bJustBecameIsolated = bIsolated;
 						}
 					}
+
+					// Evaluate spawn condition based on mode
+					// For isolation-related modes, only spawn on state change (non-isolated -> isolated)
+					bool bShouldSpawn = false;
+					switch (SplashConditionMode)
+					{
+					case ESplashConditionMode::VelocityAndIsolation:
+						bShouldSpawn = bFastMoving && bJustBecameIsolated;
+						break;
+					case ESplashConditionMode::VelocityOrIsolation:
+						bShouldSpawn = bFastMoving || bJustBecameIsolated;
+						break;
+					case ESplashConditionMode::VelocityOnly:
+						bShouldSpawn = bFastMoving;
+						break;
+					case ESplashConditionMode::IsolationOnly:
+						bShouldSpawn = bJustBecameIsolated;
+						break;
+					}
+
+					if (bShouldSpawn)
+					{
+						UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+							this,
+							SplashVFX,
+							Positions[i],
+							VelocityDir.Rotation()
+						);
+						++SpawnCount;
+					}
+				}
+
+				// Update previous neighbor counts for next frame's state change detection
+				if (bHasNeighborData)
+				{
+					PrevNeighborCounts = CachedNeighborCounts;
 				}
 			}
 		}
