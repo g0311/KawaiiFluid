@@ -346,46 +346,83 @@ void UKawaiiFluidEmitterComponent::ProcessStreamEmitter(float DeltaTime)
 	}
 	const float LayerSpacing = EffectiveSpacing * StreamLayerSpacingRatio;
 
-	float LayersToSpawn = 0.0f;
-
-	// Velocity-based layer spawning (only mode supported)
+	// Velocity-based layer spawning (accumulate distance traveled)
 	const float DistanceThisFrame = InitialSpeed * DeltaTime;
 	LayerDistanceAccumulator += DistanceThisFrame;
 
-	if (LayerDistanceAccumulator >= LayerSpacing)
+	if (LayerDistanceAccumulator < LayerSpacing)
 	{
-		LayersToSpawn = FMath::FloorToFloat(LayerDistanceAccumulator / LayerSpacing);
-		LayerDistanceAccumulator = FMath::Fmod(LayerDistanceAccumulator, LayerSpacing);
+		return;  // Not enough distance accumulated for a layer
 	}
 
-	const int32 LayerCount = FMath::FloorToInt(LayersToSpawn);
+	// Calculate number of layers to spawn and residual distance
+	const int32 LayerCount = FMath::FloorToInt(LayerDistanceAccumulator / LayerSpacing);
+	const float ResidualDistance = FMath::Fmod(LayerDistanceAccumulator, LayerSpacing);
+
 	if (LayerCount <= 0)
 	{
 		return;
 	}
 
-	const FVector SpawnPos = GetComponentLocation() + SpawnOffset;
+	// === Direction calculation ===
+	const FVector BaseLocation = GetComponentLocation() + SpawnOffset;
+	const FQuat ComponentQuat = GetComponentQuat();
 	
-	// Layer direction always follows component's local orientation
-	FVector LayerDir = InitialVelocityDirection.GetSafeNormal();
-	FVector LocalLayerDir = GetComponentQuat().RotateVector(LayerDir);
+	// Calculate layer and velocity directions based on bUseWorldSpaceVelocity
+	FVector LayerDir;
+	FVector VelocityDir;
+	FVector OffsetDir;  // Direction for layer position offset
 	
-	// Calculate velocity direction based on space mode
-	FVector VelocityDir = InitialVelocityDirection.GetSafeNormal();
-	if (!bUseWorldSpaceVelocity)
+	if (bUseWorldSpaceVelocity)
 	{
-		// Local space: rotate velocity direction with component
-		VelocityDir = GetComponentQuat().RotateVector(VelocityDir);
+		// World space: velocity direction is used directly (not rotated by component)
+		VelocityDir = InitialVelocityDirection.GetSafeNormal();
+		LayerDir = VelocityDir;  // Layer perpendicular to velocity
+		OffsetDir = VelocityDir;  // Offset along velocity direction
+	}
+	else
+	{
+		// Local space: rotate directions with component
+		FVector LocalDir = InitialVelocityDirection.GetSafeNormal();
+		LayerDir = ComponentQuat.RotateVector(LocalDir);
+		VelocityDir = LayerDir;
+		OffsetDir = LayerDir;
 	}
 
-	for (int32 i = 0; i < LayerCount; ++i)
+	// === Batch collection arrays ===
+	TArray<FVector> AllPositions;
+	TArray<FVector> AllVelocities;
+	
+	// Reserve estimated capacity
+	const float RadiusSq = StreamRadius * StreamRadius;
+	const int32 EstimatedPerLayer = FMath::CeilToInt((PI * RadiusSq) / (EffectiveSpacing * EffectiveSpacing));
+	AllPositions.Reserve(EstimatedPerLayer * LayerCount);
+	AllVelocities.Reserve(EstimatedPerLayer * LayerCount);
+
+	// === Spawn layers with position offset (reverse order - oldest first) ===
+	// Like UKawaiiFluidComponent: apply position offset to each layer to prevent overlap
+	for (int32 i = LayerCount - 1; i >= 0; --i)
 	{
-		SpawnStreamLayer(SpawnPos, LocalLayerDir, VelocityDir, InitialSpeed,
-			StreamRadius, EffectiveSpacing);
+		// Calculate position offset for each layer
+		// i = LayerCount-1: oldest layer (farthest from spawn point)
+		// i = 0: newest layer (closest to spawn point)
+		const float PositionOffset = static_cast<float>(i) * LayerSpacing + ResidualDistance;
+		const FVector OffsetLocation = BaseLocation + OffsetDir * PositionOffset;
+
+		SpawnStreamLayerBatch(OffsetLocation, LayerDir, VelocityDir, InitialSpeed,
+			StreamRadius, EffectiveSpacing, AllPositions, AllVelocities);
 	}
 
-	// Recycle (Stream mode only): After spawning, remove oldest particles if over MaxParticleCount
-	// This allows continuous emission by replacing old particles with new ones
+	// === Send all layers in single batch ===
+	if (AllPositions.Num() > 0)
+	{
+		QueueSpawnRequest(AllPositions, AllVelocities);
+	}
+
+	// === Update accumulator with residual distance ===
+	LayerDistanceAccumulator = ResidualDistance;
+
+	// === Recycle (Stream mode only): After spawning, remove oldest particles if over MaxParticleCount ===
 	if (bRecycleOldestParticles && MaxParticleCount > 0)
 	{
 		UKawaiiFluidSimulationModule* Module = GetSimulationModule();
@@ -770,6 +807,83 @@ void UKawaiiFluidEmitterComponent::SpawnStreamLayer(FVector Position, FVector La
 	}
 
 	QueueSpawnRequest(Positions, Velocities);
+}
+
+void UKawaiiFluidEmitterComponent::SpawnStreamLayerBatch(FVector Position, FVector LayerDirection, 
+	FVector VelocityDirection, float Speed, float Radius, float Spacing,
+	TArray<FVector>& OutPositions, TArray<FVector>& OutVelocities)
+{
+	if (Spacing <= 0.0f || Radius <= 0.0f) return;
+
+	// Use LayerDirection for particle placement (follows component rotation)
+	FVector Dir = LayerDirection.GetSafeNormal();
+	if (Dir.IsNearlyZero())
+	{
+		Dir = FVector(0, 0, -1);  // Default: downward
+	}
+
+	// Create local coordinate system for particle placement
+	FVector Right, Up;
+	Dir.FindBestAxisVectors(Right, Up);
+
+	// Calculate velocity (independent of layer direction in world space mode)
+	const FVector SpawnVel = VelocityDirection.GetSafeNormal() * Speed;
+
+	// NO HCP compensation for 2D hexagonal layer!
+	// This matches SimulationModule::SpawnParticleDirectionalHexLayerBatch exactly
+	const float RowSpacing = Spacing * FMath::Sqrt(3.0f) * 0.5f;  // ~0.866 * Spacing
+	const float RadiusSq = Radius * Radius;
+
+	// Jitter setup (matches SimulationModule)
+	const float Jitter = FMath::Clamp(StreamJitter, 0.0f, 0.5f);
+	const float MaxJitterOffset = Spacing * Jitter;
+	const bool bApplyJitter = Jitter > KINDA_SMALL_NUMBER;
+
+	// Row count calculation (matches SimulationModule)
+	const int32 NumRows = FMath::CeilToInt(Radius / RowSpacing) * 2 + 1;
+	const int32 HalfRows = NumRows / 2;
+
+	// Hexagonal grid iteration (matches SimulationModule exactly)
+	for (int32 RowIdx = -HalfRows; RowIdx <= HalfRows; ++RowIdx)
+	{
+		const float LocalY = RowIdx * RowSpacing;
+		const float LocalYSq = LocalY * LocalY;
+
+		// Skip rows outside the circle
+		if (LocalYSq > RadiusSq)
+		{
+			continue;
+		}
+
+		const float MaxX = FMath::Sqrt(RadiusSq - LocalYSq);
+
+		// Odd rows get X offset (Hexagonal Packing) - uses Abs like SimulationModule
+		const float XOffset = (FMath::Abs(RowIdx) % 2 != 0) ? Spacing * 0.5f : 0.0f;
+
+		// Calculate column count
+		const int32 NumCols = FMath::FloorToInt(MaxX / Spacing);
+
+		for (int32 ColIdx = -NumCols; ColIdx <= NumCols; ++ColIdx)
+		{
+			float LocalX = ColIdx * Spacing + XOffset;
+			float LocalYFinal = LocalY;
+
+			// Apply jitter
+			if (bApplyJitter)
+			{
+				LocalX += FMath::FRandRange(-MaxJitterOffset, MaxJitterOffset);
+				LocalYFinal += FMath::FRandRange(-MaxJitterOffset, MaxJitterOffset);
+			}
+
+			// Check inside circle (after jitter)
+			if (LocalX * LocalX + LocalYFinal * LocalYFinal <= RadiusSq)
+			{
+				FVector SpawnPos = Position + Right * LocalX + Up * LocalYFinal;
+				OutPositions.Add(SpawnPos);
+				OutVelocities.Add(SpawnVel);
+			}
+		}
+	}
 }
 
 void UKawaiiFluidEmitterComponent::QueueSpawnRequest(const TArray<FVector>& Positions, const TArray<FVector>& Velocities)

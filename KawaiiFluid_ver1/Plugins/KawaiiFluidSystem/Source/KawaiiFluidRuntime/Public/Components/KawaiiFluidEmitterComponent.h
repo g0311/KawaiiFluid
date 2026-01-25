@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -259,6 +259,11 @@ protected:
 
 	/** Spawn a hexagonal layer of particles for stream */
 	void SpawnStreamLayer(FVector Position, FVector LayerDirection, FVector VelocityDirection, float Speed, float Radius, float Spacing);
+
+	/** Spawn a hexagonal layer of particles for stream - batch collection version (no immediate GPU send) */
+	void SpawnStreamLayerBatch(FVector Position, FVector LayerDirection, FVector VelocityDirection, 
+	                           float Speed, float Radius, float Spacing,
+	                           TArray<FVector>& OutPositions, TArray<FVector>& OutVelocities);
 
 	//========================================
 	// Internal Helpers
