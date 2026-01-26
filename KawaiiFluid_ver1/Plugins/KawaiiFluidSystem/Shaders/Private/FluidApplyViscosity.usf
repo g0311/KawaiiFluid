@@ -111,7 +111,7 @@ uint GetMortonCellIDFromCellCoord(int3 cellCoord)
 		uint neighborIdx = ParticleIndices[startIdx + i]; \
 		if (neighborIdx == idx || neighborIdx >= (uint)ParticleCount) continue; \
 		FGPUFluidParticle neighbor = Particles[neighborIdx]; \
-		if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED)) continue; \
+		if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) || HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED)) continue; \
 		float3 r_cm = pos - neighbor.PredictedPosition; \
 		float r2_cm = dot(r_cm, r_cm); \
 		float r2 = r2_cm * CM_TO_M_SQ; \
@@ -145,8 +145,10 @@ void ApplyViscosityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	FGPUFluidParticle particle = Particles[idx];
 
-	// Skip attached particles
-	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+	// Skip attached particles (both regular attachment and boundary attachment)
+	// Attached particles follow bone position, not fluid physics
+	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) ||
+		HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
 	{
 		return;
 	}
@@ -193,8 +195,9 @@ void ApplyViscosityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 			FGPUFluidParticle neighbor = Particles[neighborIdx];
 
-			// Skip attached neighbors
-			if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+			// Skip attached neighbors (both regular and boundary attachment)
+			if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) ||
+				HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
 			{
 				continue;
 			}
@@ -287,8 +290,9 @@ void ApplyViscosityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 							FGPUFluidParticle neighbor = Particles[neighborIdx];
 
-							// Skip attached neighbors
-							if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+							// Skip attached neighbors (both regular and boundary attachment)
+							if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) ||
+								HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
 							{
 								continue;
 							}

@@ -12,18 +12,28 @@
 struct FGPUFluidParticle
 {
 	float3 Position;           // 12 bytes
-	float Mass;                // 4 bytes
+	float Mass;                // 4 bytes (total: 16)
 
 	float3 PredictedPosition;  // 12 bytes
-	float Density;             // 4 bytes
+	float Density;             // 4 bytes (total: 32)
 
 	float3 Velocity;           // 12 bytes
-	float Lambda;              // 4 bytes
+	float Lambda;              // 4 bytes (total: 48)
 
 	int ParticleID;            // 4 bytes
 	int SourceID;              // 4 bytes - Source Component ID (-1 = invalid)
 	uint Flags;                // 4 bytes
-	uint NeighborCount;        // 4 bytes - Number of neighbors (for stats)
+	uint NeighborCount;        // 4 bytes (total: 64)
+
+	// === Embedded Attachment Data (32 bytes) ===
+	// Reordered together with particle during Z-Order sorting
+	int AttachOwnerID;         // 4 bytes - Attached boundary owner ID (-1 = not attached)
+	int AttachBoneIndex;       // 4 bytes - Attached bone index (-1 = component transform)
+	float AttachmentTime;      // 4 bytes - Time when attached (for cooldown)
+	float AttachLocalDistance; // 4 bytes (total: 80)
+
+	float3 AttachLocalPosition; // 12 bytes - Position in bone's local space
+	float AttachPadding;       // 4 bytes (total: 96)
 };
 
 //=============================================================================
@@ -41,14 +51,16 @@ bool HasValidSource(int sourceID)
 // GPU Particle Flags
 //=============================================================================
 
-#define GPU_PARTICLE_FLAG_NONE          0
-#define GPU_PARTICLE_FLAG_IS_ATTACHED   (1 << 0)
-#define GPU_PARTICLE_FLAG_IS_SURFACE    (1 << 1)
-#define GPU_PARTICLE_FLAG_IS_CORE       (1 << 2)
-#define GPU_PARTICLE_FLAG_JUST_DETACHED (1 << 3)
-#define GPU_PARTICLE_FLAG_NEAR_GROUND   (1 << 4)
-#define GPU_PARTICLE_FLAG_HAS_COLLIDED  (1 << 5)
-#define GPU_PARTICLE_FLAG_IS_SLEEPING   (1 << 6)
+#define GPU_PARTICLE_FLAG_NONE                0
+#define GPU_PARTICLE_FLAG_IS_ATTACHED         (1 << 0)
+#define GPU_PARTICLE_FLAG_IS_SURFACE          (1 << 1)
+#define GPU_PARTICLE_FLAG_IS_CORE             (1 << 2)
+#define GPU_PARTICLE_FLAG_JUST_DETACHED       (1 << 3)
+#define GPU_PARTICLE_FLAG_NEAR_GROUND         (1 << 4)
+#define GPU_PARTICLE_FLAG_HAS_COLLIDED        (1 << 5)
+#define GPU_PARTICLE_FLAG_IS_SLEEPING         (1 << 6)
+#define GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED (1 << 7)  // Strong constraint to boundary particle
+#define GPU_PARTICLE_FLAG_ATTACH_COOLDOWN     (1 << 8)   // In cooldown, cannot re-attach
 
 //=============================================================================
 // Constants

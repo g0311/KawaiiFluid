@@ -675,6 +675,13 @@ private:
 		FRDGBufferSRVRef CellStartSRV = nullptr;
 		FRDGBufferSRVRef CellEndSRV = nullptr;
 
+		// Z-Order sorted indices buffer (maps sorted_idx -> original_idx)
+		// Used by AttachmentPass to access Attachments buffer with correct index mapping
+		// After Z-Order sort: Particles[sorted_idx] contains original particle at SortedIndices[sorted_idx]
+		FRDGBufferRef SortedIndicesBuffer = nullptr;
+		FRDGBufferSRVRef SortedIndicesSRV = nullptr;
+		bool bUseZOrderSorting = false;  // Whether Z-Order sorting is enabled
+
 		// Neighbor Cache buffers
 		FRDGBufferRef NeighborListBuffer = nullptr;
 		FRDGBufferRef NeighborCountsBuffer = nullptr;
@@ -911,6 +918,13 @@ private:
 		const FSimulationSpatialData& SpatialData,
 		const FGPUFluidSimulationParams& Params);
 
+	/** Add boundary attachment update pass (strong position constraint to boundary particles) */
+	void AddBoundaryAttachmentUpdatePass(
+		FRDGBuilder& GraphBuilder,
+		FRDGBufferUAVRef ParticlesUAV,
+		const FSimulationSpatialData& SpatialData,
+		const FGPUFluidSimulationParams& Params);
+
 	/** Add boundary skinning pass (GPU transform of bone-local particles to world space) */
 	void AddBoundarySkinningPass(
 		FRDGBuilder& GraphBuilder,
@@ -931,6 +945,7 @@ private:
 		FRDGBufferSRVRef& OutCellEndSRV,
 		FRDGBufferRef& OutCellStartBuffer,
 		FRDGBufferRef& OutCellEndBuffer,
+		FRDGBufferRef& OutSortedIndicesBuffer,
 		const FGPUFluidSimulationParams& Params);
 
 	//=============================================================================
@@ -1030,6 +1045,15 @@ private:
 	// Particle Sleeping (NVIDIA Flex stabilization)
 	TRefCountPtr<FRDGPooledBuffer> SleepCountersBuffer;
 	int32 SleepCountersCapacity = 0;
+
+	// Boundary Attachment is now embedded in FGPUFluidParticle (96 bytes)
+	// No separate buffer needed - attachment data reorders with particle during Z-Order sort
+
+	// Boundary Attachment Debug Counter (for logging attached particle count)
+	TRefCountPtr<FRDGPooledBuffer> BoundaryAttachmentCounterBuffer;
+	TUniquePtr<FRHIGPUBufferReadback> BoundaryAttachmentCounterReadback;
+	int32 LastBoundaryAttachedParticleCount = 0;
+	int32 BoundaryAttachmentLogFrameCounter = 0;
 
 	// Simulation bounds (local copy for GetSimulationBounds API)
 	FVector3f SimulationBoundsMin = FVector3f(-1280.0f, -1280.0f, -1280.0f);

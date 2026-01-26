@@ -236,14 +236,9 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	FGPUFluidParticle particle = Particles[idx];
 
-	// Skip attached particles
-	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
-	{
-		particle.Density = RestDensity;
-		particle.Lambda = 0.0f;
-		Particles[idx] = particle;
-		return;
-	}
+	// Check if this particle is attached to boundary (bone)
+	bool bIsAttached = HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) ||
+					   HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED);
 
 	// Skip sleeping particles - they are excluded from constraint solving
 	// This reduces micro-jitter and improves performance (NVIDIA Flex technique)
@@ -253,6 +248,22 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		particle.Density = RestDensity;
 		particle.Lambda = 0.0f;
 		// Position remains unchanged - sleeping particles don't move
+		Particles[idx] = particle;
+		return;
+	}
+
+	// Skip attached particles - they follow bone position, not fluid physics
+	// CRITICAL: Must skip ENTIRE density/pressure calculation!
+	// If attached particles participate in density calculation:
+	//   1. They cluster at bone position → extremely high density
+	//   2. High density → high Lambda (pressure)
+	//   3. Neighbors get pushed away violently → EXPLOSION!
+	// Solution: Treat attached particles like sleeping particles
+	if (bIsAttached)
+	{
+		particle.Density = RestDensity;
+		particle.Lambda = 0.0f;
+		// Position is controlled by BoundaryAttachment pass, not here
 		Particles[idx] = particle;
 		return;
 	}
@@ -688,9 +699,16 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	// Apply position correction
 	// PBF formula: Δp = (1/ρ₀) × Σⱼ (λᵢ + λⱼ + s_corr) × ∇W
 	// This is a SUM over neighbors, not an average
+	//
+	// IMPORTANT: Attached particles participate in density calculation
+	// (so free particles see them as neighbors) but do NOT move themselves.
+	// Their position is controlled by BoundaryAttachment pass.
 	//=========================================
-	float3 deltaP_cm = deltaP * invRestDensity;
-	particle.PredictedPosition += deltaP_cm;
+	if (!bIsAttached)
+	{
+		float3 deltaP_cm = deltaP * invRestDensity;
+		particle.PredictedPosition += deltaP_cm;
+	}
 
 	Particles[idx] = particle;
 }

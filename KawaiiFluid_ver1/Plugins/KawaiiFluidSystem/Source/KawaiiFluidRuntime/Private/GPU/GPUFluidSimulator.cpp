@@ -243,6 +243,12 @@ void FGPUFluidSimulator::ReleaseRHI()
 	SleepCountersBuffer.SafeRelease();
 	SleepCountersCapacity = 0;
 
+	// Boundary Attachment is now embedded in FGPUFluidParticle (96 bytes)
+	// No separate buffer to release
+	BoundaryAttachmentCounterBuffer.SafeRelease();
+	BoundaryAttachmentLogFrameCounter = 0;
+	LastBoundaryAttachedParticleCount = 0;
+
 	// Collision cleanup is handled by CollisionManager::Release()
 }
 
@@ -848,6 +854,7 @@ FGPUFluidSimulator::FSimulationSpatialData FGPUFluidSimulator::BuildSpatialStruc
 	// Pass 3: Spatial Data Structure
 	// Check both manager validity AND enabled flag for Z-Order sorting
 	const bool bUseZOrderSorting = ZOrderSortManager.IsValid() && ZOrderSortManager->IsZOrderSortingEnabled();
+	SpatialData.bUseZOrderSorting = bUseZOrderSorting;  // Store for AttachmentPass
 	if (bUseZOrderSorting)
 	{
 		// Z-Order Sorting
@@ -859,7 +866,11 @@ FGPUFluidSimulator::FSimulationSpatialData FGPUFluidSimulator::BuildSpatialStruc
 			CellStartUAVLocal, SpatialData.CellStartSRV,
 			CellEndUAVLocal, SpatialData.CellEndSRV,
 			SpatialData.CellStartBuffer, SpatialData.CellEndBuffer,
+			SpatialData.SortedIndicesBuffer,  // NEW: Output sorted indices for AttachmentPass
 			Params);
+
+		// Create SRV for AttachmentPass to use
+		SpatialData.SortedIndicesSRV = GraphBuilder.CreateSRV(SpatialData.SortedIndicesBuffer);
 
 		// Replace particle buffer with sorted version
 		InOutParticleBuffer = SortedParticleBuffer;
@@ -945,9 +956,33 @@ FGPUFluidSimulator::FSimulationSpatialData FGPUFluidSimulator::BuildSpatialStruc
 	}
 
 	// Pass 3.5: GPU Boundary Skinning (SkeletalMesh - same-frame)
+	// Debug: Log skinning pass execution (every 60 frames)
+	static int32 SkinningDebugCounter = 0;
+	const bool bSkinningDebugLog = (++SkinningDebugCounter % 60 == 1);
+
 	if (IsGPUBoundarySkinningEnabled())
 	{
+		if (bSkinningDebugLog)
+		{
+			UE_LOG(LogGPUFluidSimulator, Warning,
+				TEXT("[SpatialData] BEFORE Skinning: bSkinnedBoundaryPerformed=%d, Count=%d"),
+				SpatialData.bSkinnedBoundaryPerformed ? 1 : 0, SpatialData.SkinnedBoundaryParticleCount);
+		}
+
 		AddBoundarySkinningPass(GraphBuilder, SpatialData, Params);
+
+		if (bSkinningDebugLog)
+		{
+			UE_LOG(LogGPUFluidSimulator, Warning,
+				TEXT("[SpatialData] AFTER Skinning: bSkinnedBoundaryPerformed=%d, Count=%d, Buffer=%p"),
+				SpatialData.bSkinnedBoundaryPerformed ? 1 : 0, SpatialData.SkinnedBoundaryParticleCount,
+				SpatialData.SkinnedBoundaryBuffer);
+		}
+	}
+	else if (bSkinningDebugLog)
+	{
+		UE_LOG(LogGPUFluidSimulator, Warning,
+			TEXT("[SpatialData] SKIPPED Skinning: IsGPUBoundarySkinningEnabled()=false"));
 	}
 
 	// Pass 3.6: Skinned Boundary Z-Order Sorting (after skinning)
@@ -960,8 +995,20 @@ FGPUFluidSimulator::FSimulationSpatialData FGPUFluidSimulator::BuildSpatialStruc
 			SimulationBoundsMax);
 	}
 
-	if (BoundarySkinningManager.IsValid() && BoundarySkinningManager->IsBoundaryZOrderEnabled()
-		&& SpatialData.bSkinnedBoundaryPerformed)
+	const bool bZOrderCondition = BoundarySkinningManager.IsValid() && BoundarySkinningManager->IsBoundaryZOrderEnabled()
+		&& SpatialData.bSkinnedBoundaryPerformed;
+
+	if (bSkinningDebugLog)
+	{
+		UE_LOG(LogGPUFluidSimulator, Warning,
+			TEXT("[SpatialData] Z-Order Condition: BoundarySkinningManager=%d, IsBoundaryZOrderEnabled=%d, bSkinnedBoundaryPerformed=%d => Execute=%d"),
+			BoundarySkinningManager.IsValid() ? 1 : 0,
+			(BoundarySkinningManager.IsValid() && BoundarySkinningManager->IsBoundaryZOrderEnabled()) ? 1 : 0,
+			SpatialData.bSkinnedBoundaryPerformed ? 1 : 0,
+			bZOrderCondition ? 1 : 0);
+	}
+
+	if (bZOrderCondition)
 	{
 		// Pass same-frame buffer, get Z-Order buffers for same-frame use
 		SpatialData.bSkinnedZOrderPerformed = BoundarySkinningManager->ExecuteBoundaryZOrderSort(
@@ -1126,6 +1173,8 @@ void FGPUFluidSimulator::ExecuteCollisionAndAdhesion(
 		AdhesionManager->AddAdhesionPass(GraphBuilder, ParticlesUAV, AttachmentUAV, CollisionManager.Get(), CurrentParticleCount, Params);
 		GraphBuilder.QueueBufferExtraction(AttachmentBuffer, &PersistentAttachmentBuffer, ERHIAccess::UAVCompute);
 	}
+
+	// Note: Boundary Attachment Pass moved to ExecutePostSimulation (must run AFTER all other passes)
 }
 
 void FGPUFluidSimulator::ExecutePostSimulation(
@@ -1352,6 +1401,13 @@ void FGPUFluidSimulator::ExecutePostSimulation(
 			}
 		}
 	}
+
+	// ==========================================================================
+	// Boundary Attachment Pass (MUST be LAST - after all physics/forces)
+	// Strong position constraint to boundary particles
+	// Running this last ensures no other pass can disrupt the attachment
+	// ==========================================================================
+	AddBoundaryAttachmentUpdatePass(GraphBuilder, ParticlesUAV, SpatialData, Params);
 }
 
 //=============================================================================
@@ -1867,6 +1923,7 @@ FRDGBufferRef FGPUFluidSimulator::ExecuteZOrderSortingPipeline(
 	FRDGBufferUAVRef& OutCellStartUAV, FRDGBufferSRVRef& OutCellStartSRV,
 	FRDGBufferUAVRef& OutCellEndUAV, FRDGBufferSRVRef& OutCellEndSRV,
 	FRDGBufferRef& OutCellStartBuffer, FRDGBufferRef& OutCellEndBuffer,
+	FRDGBufferRef& OutSortedIndicesBuffer,
 	const FGPUFluidSimulationParams& Params)
 {
 	// Check both manager validity AND enabled flag
@@ -1877,6 +1934,7 @@ FRDGBufferRef FGPUFluidSimulator::ExecuteZOrderSortingPipeline(
 	return ZOrderSortManager->ExecuteZOrderSortingPipeline(GraphBuilder, InParticleBuffer,
 		OutCellStartUAV, OutCellStartSRV, OutCellEndUAV, OutCellEndSRV,
 		OutCellStartBuffer, OutCellEndBuffer,
+		OutSortedIndicesBuffer,
 		CurrentParticleCount, Params);
 }
 

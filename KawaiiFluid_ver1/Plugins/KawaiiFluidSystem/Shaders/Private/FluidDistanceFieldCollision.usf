@@ -98,8 +98,9 @@ void DistanceFieldCollisionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	FGPUFluidParticle particle = Particles[idx];
 
-	// Skip attached particles (handled by CPU for bone tracking)
-	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+	// Skip attached particles (CPU attachment or GPU boundary attachment)
+	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) ||
+		HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
 	{
 		return;
 	}

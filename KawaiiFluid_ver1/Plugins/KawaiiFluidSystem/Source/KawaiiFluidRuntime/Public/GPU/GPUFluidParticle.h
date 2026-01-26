@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -7,9 +7,13 @@
 
 /**
  * GPU Fluid Particle Structure
- * 64 bytes, 16-byte aligned for optimal GPU memory access
+ * 96 bytes, 16-byte aligned for optimal GPU memory access
  *
  * This structure mirrors the HLSL struct in FluidGPUPhysics.ush
+ *
+ * IMPORTANT: Attachment data is embedded in the particle structure so it gets
+ * automatically reordered during Z-Order sorting. This prevents index mismatch
+ * bugs that occurred when Attachments was a separate buffer.
  */
 struct FGPUFluidParticle
 {
@@ -27,6 +31,16 @@ struct FGPUFluidParticle
 	uint32 Flags;                 // 4 bytes  - Bitfield flags (see EGPUParticleFlags)
 	uint32 NeighborCount;         // 4 bytes  - Number of neighbors (for stats) (total: 64)
 
+	// === Embedded Attachment Data (32 bytes) ===
+	// This data is reordered together with particle during Z-Order sorting
+	int32 AttachOwnerID;          // 4 bytes  - Attached boundary owner ID (-1 = not attached)
+	int32 AttachBoneIndex;        // 4 bytes  - Attached bone index (-1 = component transform)
+	float AttachmentTime;         // 4 bytes  - Time when attached (for cooldown)
+	float AttachLocalDistance;    // 4 bytes  - Distance from surface in local space (total: 80)
+
+	FVector3f AttachLocalPosition; // 12 bytes - Position in bone's local space
+	float AttachPadding;          // 4 bytes  - Alignment padding (total: 96)
+
 	FGPUFluidParticle()
 		: Position(FVector3f::ZeroVector)
 		, Mass(1.0f)
@@ -35,15 +49,32 @@ struct FGPUFluidParticle
 		, Velocity(FVector3f::ZeroVector)
 		, Lambda(0.0f)
 		, ParticleID(0)
-		, SourceID(-1)  // InvalidSourceID = 0xFFFFFFFF
+		, SourceID(-1)
 		, Flags(0)
 		, NeighborCount(0)
+		, AttachOwnerID(-1)
+		, AttachBoneIndex(-1)
+		, AttachmentTime(0.0f)
+		, AttachLocalDistance(0.0f)
+		, AttachLocalPosition(FVector3f::ZeroVector)
+		, AttachPadding(0.0f)
 	{
+	}
+
+	// Helper methods for attachment
+	bool IsAttached() const { return AttachOwnerID >= 0; }
+	void ClearAttachment()
+	{
+		AttachOwnerID = -1;
+		AttachBoneIndex = -1;
+		AttachmentTime = 0.0f;
+		AttachLocalPosition = FVector3f::ZeroVector;
+		AttachLocalDistance = 0.0f;
 	}
 };
 
 // Compile-time size validation
-static_assert(sizeof(FGPUFluidParticle) == 64, "FGPUFluidParticle must be 64 bytes");
+static_assert(sizeof(FGPUFluidParticle) == 96, "FGPUFluidParticle must be 96 bytes");
 static_assert(alignof(FGPUFluidParticle) <= 16, "FGPUFluidParticle alignment must not exceed 16 bytes");
 
 /**
@@ -59,6 +90,8 @@ namespace EGPUParticleFlags
 	constexpr uint32 NearGround = 1 << 4;        // Particle is near the ground
 	constexpr uint32 HasCollided = 1 << 5;       // Particle collided this frame
 	constexpr uint32 IsSleeping = 1 << 6;        // Particle is in sleep state (low velocity)
+	constexpr uint32 IsBoundaryAttached = 1 << 7;  // Particle is attached to boundary particle (strong constraint)
+	constexpr uint32 AttachCooldown = 1 << 8;      // Particle is in attach cooldown (prevents re-attach)
 }
 
 /**
@@ -152,6 +185,14 @@ struct FGPUFluidSimulationParams
 	int32 SleepFrameThreshold;              // Number of consecutive low-velocity frames before sleeping
 	float WakeVelocityThreshold;            // cm/s, velocity above which sleeping particles wake up (external force)
 
+	// Boundary Attachment (Strong position constraint to boundary particles)
+	int32 bEnableBoundaryAttachment;        // Enable boundary attachment system
+	float BoundaryAttachRadius;             // cm, distance threshold for attachment
+	float BoundaryDetachDistanceMultiplier; // Detach when distance > AttachRadius * this
+	float BoundaryAttachDetachSpeedThreshold; // cm/s, detach when relative speed exceeds this
+	float BoundaryAttachCooldown;           // seconds, cooldown after detach before re-attach
+	float BoundaryAttachConstraintBlend;    // 0~1, position constraint strength (1 = fully follow boundary)
+
 	FGPUFluidSimulationParams()
 		: RestDensity(1000.0f)
 		, SmoothingRadius(20.0f)
@@ -197,6 +238,12 @@ struct FGPUFluidSimulationParams
 		, SleepVelocityThreshold(5.0f)
 		, SleepFrameThreshold(30)
 		, WakeVelocityThreshold(20.0f)
+		, bEnableBoundaryAttachment(1)
+		, BoundaryAttachRadius(25.0f)
+		, BoundaryDetachDistanceMultiplier(3.0f)
+		, BoundaryAttachDetachSpeedThreshold(500.0f)
+		, BoundaryAttachCooldown(0.2f)
+		, BoundaryAttachConstraintBlend(0.8f)
 	{
 	}
 
@@ -814,109 +861,136 @@ struct FGPUFluidSimulationResources
 //=============================================================================
 
 /**
- * GPU Boundary Particle Structure (48 bytes)
- * Represents a point on the mesh surface for Flex-style adhesion
- * Uploaded from FluidInteractionComponent each frame
+ * GPU Boundary Owner Transform
+ * World transform for a FluidInteractionComponent (boundary owner)
+ * Used to convert between local and world space for attachment
+ * 128 bytes (two 4x4 matrices), 16-byte aligned for GPU
  */
-struct FGPUBoundaryParticle
+struct FGPUBoundaryOwnerTransform
 {
-	FVector3f Position;       // 12 bytes - World position (updated each frame)
-	float Psi;                // 4 bytes  - Boundary particle "mass" (volume contribution)
-	FVector3f Normal;         // 12 bytes - Surface normal at this position
-	int32 OwnerID;            // 4 bytes  - Owner FluidInteractionComponent ID
-	FVector3f Velocity;       // 12 bytes - World velocity (for moving boundaries)
-	float FrictionCoeff;      // 4 bytes  - Coulomb friction coefficient (0~2)
+	FMatrix44f WorldMatrix;          // 64 bytes - Local to World transform
+	FMatrix44f InverseWorldMatrix;   // 64 bytes - World to Local transform
 
-	FGPUBoundaryParticle()
-		: Position(FVector3f::ZeroVector)
-		, Psi(1.0f)
-		, Normal(FVector3f(0.0f, 0.0f, 1.0f))
-		, OwnerID(-1)
-		, Velocity(FVector3f::ZeroVector)
-		, FrictionCoeff(0.6f)
+	FGPUBoundaryOwnerTransform()
+		: WorldMatrix(FMatrix44f::Identity)
+		, InverseWorldMatrix(FMatrix44f::Identity)
 	{
 	}
 
-	FGPUBoundaryParticle(const FVector3f& InPosition, const FVector3f& InNormal, int32 InOwnerID, float InPsi = 1.0f, const FVector3f& InVelocity = FVector3f::ZeroVector, float InFrictionCoeff = 0.6f)
-		: Position(InPosition)
-		, Psi(InPsi)
-		, Normal(InNormal)
-		, OwnerID(InOwnerID)
-		, Velocity(InVelocity)
-		, FrictionCoeff(InFrictionCoeff)
+	FGPUBoundaryOwnerTransform(const FMatrix44f& InWorldMatrix)
+		: WorldMatrix(InWorldMatrix)
+		, InverseWorldMatrix(InWorldMatrix.Inverse())
 	{
 	}
 };
-static_assert(sizeof(FGPUBoundaryParticle) == 48, "FGPUBoundaryParticle must be 48 bytes");
+static_assert(sizeof(FGPUBoundaryOwnerTransform) == 128, "FGPUBoundaryOwnerTransform must be 128 bytes");
 
 /**
- * GPU Boundary Particle Local Structure (48 bytes)
- * Stores bone-local coordinates for GPU skinning
- * Uploaded once at initialization, persistent on GPU
+ * GPU Boundary Attachment Data
+ * Per-particle attachment state for strong position constraints to boundary particles
+ * Uses Bone's local space for stable attachment (follows bone animation)
+ * 64 bytes, 4-byte aligned (must match HLSL struct in FluidBoundaryAttachment.usf)
+ *
+ * 메모리 레이아웃 (64 bytes):
+ *   OwnerID         (4 bytes)  - int32
+ *   BoneIndex       (4 bytes)  - int32 (스켈레톤 본 인덱스, -1 = component transform 사용)
+ *   AdhesionStrength(4 bytes)  - float
+ *   AttachmentTime  (4 bytes)  - float
+ *   SurfaceDistance (4 bytes)  - float
+ *   LocalDistance   (4 bytes)  - float
+ *   Padding1        (8 bytes)  - float2
+ *   LocalPosition   (12 bytes) - float3
+ *   Padding2        (4 bytes)  - float
+ *   LocalNormal     (12 bytes) - float3
+ *   Padding3        (4 bytes)  - float
  */
-struct FGPUBoundaryParticleLocal
+struct FGPUBoundaryAttachment
 {
-	FVector3f LocalPosition;  // 12 bytes - Bone-local position
-	float Psi;                // 4 bytes  - Volume contribution
-	FVector3f LocalNormal;    // 12 bytes - Bone-local surface normal
-	float FrictionCoeff;      // 4 bytes  - Coulomb friction coefficient (0~2)
-	int32 BoneIndex;          // 4 bytes  - Skeleton bone index (-1 for static mesh)
-	float Padding[3];         // 12 bytes - Alignment padding
+	int32 OwnerID;              // 4 bytes - FluidInteractionComponent ID (-1 = not attached)
+	int32 BoneIndex;            // 4 bytes - Bone index for local space transform (-1 = use component transform)
+	float AdhesionStrength;     // 4 bytes - Current adhesion strength
+	float AttachmentTime;       // 4 bytes - Time when attached/detached (for cooldown)
+	float SurfaceDistance;      // 4 bytes - Distance from surface at attach time
+	float LocalDistance;        // 4 bytes - Distance from surface in local space
+	float Padding1[2];          // 8 bytes - Alignment padding
+	FVector3f LocalPosition;    // 12 bytes - Position in Bone's local space
+	float Padding2;             // 4 bytes - Alignment
+	FVector3f LocalNormal;      // 12 bytes - Normal in Bone's local space
+	float Padding3;             // 4 bytes - Alignment
 
-	FGPUBoundaryParticleLocal()
-		: LocalPosition(FVector3f::ZeroVector)
-		, Psi(0.1f)
-		, LocalNormal(FVector3f(0.0f, 0.0f, 1.0f))
-		, FrictionCoeff(0.6f)
+	FGPUBoundaryAttachment()
+		: OwnerID(-1)
 		, BoneIndex(-1)
-		, Padding{0.0f, 0.0f, 0.0f}
+		, AdhesionStrength(0.0f)
+		, AttachmentTime(0.0f)
+		, SurfaceDistance(0.0f)
+		, LocalDistance(0.0f)
+		, Padding1{0.0f, 0.0f}
+		, LocalPosition(FVector3f::ZeroVector)
+		, Padding2(0.0f)
+		, LocalNormal(FVector3f::ZeroVector)
+		, Padding3(0.0f)
 	{
 	}
 
-	FGPUBoundaryParticleLocal(const FVector3f& InLocalPos, int32 InBoneIndex, const FVector3f& InLocalNormal, float InPsi, float InFrictionCoeff = 0.6f)
-		: LocalPosition(InLocalPos)
-		, Psi(InPsi)
-		, LocalNormal(InLocalNormal)
-		, FrictionCoeff(InFrictionCoeff)
-		, BoneIndex(InBoneIndex)
-		, Padding{0.0f, 0.0f, 0.0f}
+	bool IsAttached() const { return OwnerID >= 0; }
+
+	void Clear()
 	{
+		OwnerID = -1;
+		BoneIndex = -1;
+		AdhesionStrength = 0.0f;
+		AttachmentTime = 0.0f;
+		SurfaceDistance = 0.0f;
+		LocalDistance = 0.0f;
+		Padding1[0] = 0.0f;
+		Padding1[1] = 0.0f;
+		LocalPosition = FVector3f::ZeroVector;
+		Padding2 = 0.0f;
+		LocalNormal = FVector3f::ZeroVector;
+		Padding3 = 0.0f;
 	}
 };
-static_assert(sizeof(FGPUBoundaryParticleLocal) == 48, "FGPUBoundaryParticleLocal must be 48 bytes");
+static_assert(sizeof(FGPUBoundaryAttachment) == 64, "FGPUBoundaryAttachment must be 64 bytes");
 
 /**
- * GPU Boundary Adhesion Parameters
- * Passed to boundary adhesion compute shader
+ * GPU Boundary Attachment Parameters
+ * Passed to boundary attachment update compute shader
+ * Controls when particles attach/detach from boundary particles
+ * 48 bytes, 16-byte aligned
  */
-struct FGPUBoundaryAdhesionParams
+struct FGPUBoundaryAttachmentParams
 {
-	float AdhesionForceStrength;     // 4 bytes - Akinci 2013 adhesion force strength
-	float AdhesionVelocityStrength;  // 4 bytes - Velocity transfer strength
-	float AdhesionRadius;            // 4 bytes - Max distance for adhesion effect
-	float CohesionStrength;          // 4 bytes - Fluid-fluid cohesion near boundaries
-	float SmoothingRadius;           // 4 bytes - SPH kernel radius
-	int32 BoundaryParticleCount;     // 4 bytes - Number of boundary particles
+	float AttachRadius;              // 4 bytes - Distance threshold for attachment (cm)
+	float DetachDistanceMultiplier;  // 4 bytes - Detach when distance > AttachRadius * this
+	float DetachSpeedThreshold;      // 4 bytes - Detach when relative speed > this (cm/s)
+	float AttachCooldown;            // 4 bytes - Cooldown time after detach (seconds)
+	float ConstraintBlend;           // 4 bytes - Position constraint strength (0~1)
+	float CurrentTime;               // 4 bytes - Current simulation time (seconds)
+	float DeltaTime;                 // 4 bytes - Frame delta time (seconds)
+	int32 bEnabled;                  // 4 bytes - Enable attachment system
 	int32 FluidParticleCount;        // 4 bytes - Number of fluid particles
-	float DeltaTime;                 // 4 bytes - Time step
-	int32 bEnabled;                  // 4 bytes - Enable flag
-	int32 Padding;                   // 4 bytes - Alignment padding
+	int32 BoundaryParticleCount;     // 4 bytes - Number of boundary particles
+	float SmoothingRadius;           // 4 bytes - SPH smoothing radius (for Z-Order search)
+	float CellSize;                  // 4 bytes - Spatial hash cell size
 
-	FGPUBoundaryAdhesionParams()
-		: AdhesionForceStrength(5.0f)
-		, AdhesionVelocityStrength(0.5f)
-		, AdhesionRadius(25.0f)
-		, CohesionStrength(0.3f)
-		, SmoothingRadius(20.0f)
-		, BoundaryParticleCount(0)
-		, FluidParticleCount(0)
+	FGPUBoundaryAttachmentParams()
+		: AttachRadius(5.0f)
+		, DetachDistanceMultiplier(3.0f)
+		, DetachSpeedThreshold(500.0f)
+		, AttachCooldown(0.2f)
+		, ConstraintBlend(0.8f)
+		, CurrentTime(0.0f)
 		, DeltaTime(0.016f)
-		, bEnabled(0)
-		, Padding(0)
+		, bEnabled(1)
+		, FluidParticleCount(0)
+		, BoundaryParticleCount(0)
+		, SmoothingRadius(20.0f)
+		, CellSize(20.0f)
 	{
 	}
 };
-static_assert(sizeof(FGPUBoundaryAdhesionParams) == 40, "FGPUBoundaryAdhesionParams must be 40 bytes");
+static_assert(sizeof(FGPUBoundaryAttachmentParams) == 48, "FGPUBoundaryAttachmentParams must be 48 bytes");
 
 /**
  * GPU Boundary Owner AABB
@@ -1013,42 +1087,57 @@ struct FGPUBoundaryOwnerAABB
 static_assert(sizeof(FGPUBoundaryOwnerAABB) == 32, "FGPUBoundaryOwnerAABB must be 32 bytes");
 
 /**
- * GPU Boundary Attachment (Flex-style)
- * Tracks which boundary particle a fluid particle is attached to
- * 32 bytes, 16-byte aligned
+ * GPU Boundary Particle (World-space 경계 입자)
+ * GPU 셰이더와 메모리 레이아웃 일치 필요 (FluidBoundarySkinning.usf)
+ *
+ * 메모리 레이아웃 (64 bytes):
+ *   Position      (12 bytes) - float3
+ *   Psi           (4 bytes)  - float
+ *   Normal        (12 bytes) - float3
+ *   OwnerID       (4 bytes)  - int32
+ *   Velocity      (12 bytes) - float3
+ *   FrictionCoeff (4 bytes)  - float
+ *   BoneIndex     (4 bytes)  - int32 (스켈레톤 본 인덱스, -1 = static mesh)
+ *   Padding       (12 bytes) - float3 (alignment)
  */
-struct FGPUBoundaryAttachment
+struct FGPUBoundaryParticle
 {
-	int32 BoundaryIndex;      // 4 bytes - Index of boundary particle (-1 = not attached)
-	float AdhesionStrength;   // 4 bytes - Current adhesion strength (decays over time)
-	float AttachmentTime;     // 4 bytes - Time when attached (for decay calculation)
-	float SurfaceDistance;    // 4 bytes - Distance from surface (for constraint)
-	FVector3f LocalOffset;    // 12 bytes - Offset in tangent space (using normal as Z)
-	float Padding;            // 4 bytes - Alignment
+	FVector3f Position;      // 월드 좌표 위치
+	float Psi;               // Boundary psi 값 (밀도 기여)
+	FVector3f Normal;        // 표면 법선
+	int32 OwnerID;           // FluidInteractionComponent ID
+	FVector3f Velocity;      // 경계 입자 속도
+	float FrictionCoeff;     // 마찰 계수
+	int32 BoneIndex;         // 스켈레톤 본 인덱스 (-1 for static mesh)
+	FVector3f Padding;       // GPU 정렬용 패딩
 
-	FGPUBoundaryAttachment()
-		: BoundaryIndex(-1)
-		, AdhesionStrength(0.0f)
-		, AttachmentTime(0.0f)
-		, SurfaceDistance(0.0f)
-		, LocalOffset(FVector3f::ZeroVector)
-		, Padding(0.0f)
+	FGPUBoundaryParticle()
+		: Position(FVector3f::ZeroVector)
+		, Psi(1.0f)
+		, Normal(FVector3f::UpVector)
+		, OwnerID(-1)
+		, Velocity(FVector3f::ZeroVector)
+		, FrictionCoeff(0.6f)
+		, BoneIndex(-1)
+		, Padding(FVector3f::ZeroVector)
 	{
 	}
 
-	bool IsAttached() const { return BoundaryIndex >= 0; }
-
-	void Clear()
+	FGPUBoundaryParticle(const FVector3f& InPosition, const FVector3f& InNormal, int32 InOwnerID, 
+						 float InPsi = 1.0f, const FVector3f& InVelocity = FVector3f::ZeroVector, 
+						 float InFrictionCoeff = 0.6f, int32 InBoneIndex = -1)
+		: Position(InPosition)
+		, Psi(InPsi)
+		, Normal(InNormal)
+		, OwnerID(InOwnerID)
+		, Velocity(InVelocity)
+		, FrictionCoeff(InFrictionCoeff)
+		, BoneIndex(InBoneIndex)
+		, Padding(FVector3f::ZeroVector)
 	{
-		BoundaryIndex = -1;
-		AdhesionStrength = 0.0f;
-		AttachmentTime = 0.0f;
-		SurfaceDistance = 0.0f;
-		LocalOffset = FVector3f::ZeroVector;
-		Padding = 0.0f;
 	}
 };
-static_assert(sizeof(FGPUBoundaryAttachment) == 32, "FGPUBoundaryAttachment must be 32 bytes");
+static_assert(sizeof(FGPUBoundaryParticle) == 64, "FGPUBoundaryParticle must be 64 bytes for GPU alignment");
 
 /**
  * GPU Boundary Particles Collection
@@ -1077,4 +1166,69 @@ struct FGPUBoundaryParticles
 	{
 		Particles.Emplace(Position, Normal, OwnerID, Psi, FVector3f::ZeroVector, FrictionCoeff);
 	}
+};
+
+/**
+ * GPU Boundary Particle Local (Bone-local 경계 입자)
+ * 스켈레탈 메시의 본 좌표계 기준 경계 입자 - GPU 스키닝용
+ * 셰이더 FluidBoundarySkinning.usf의 FGPUBoundaryParticleLocal과 메모리 레이아웃 일치
+ *
+ * 메모리 레이아웃 (48 bytes):
+ *   LocalPosition (12 bytes) - float3
+ *   Psi           (4 bytes)  - float
+ *   LocalNormal   (12 bytes) - float3
+ *   FrictionCoeff (4 bytes)  - float
+ *   BoneIndex     (4 bytes)  - int32
+ *   Padding       (12 bytes) - float3 (alignment)
+ */
+struct FGPUBoundaryParticleLocal
+{
+	FVector3f LocalPosition;    // 본 로컬 좌표 위치
+	float Psi;                  // Volume contribution (밀도 기여)
+	FVector3f LocalNormal;      // 본 로컬 표면 법선
+	float FrictionCoeff;        // Coulomb 마찰 계수 (0~2)
+	int32 BoneIndex;            // 스켈레톤 본 인덱스 (-1 for static mesh)
+	FVector3f Padding;          // GPU 정렬용 패딩
+
+	FGPUBoundaryParticleLocal()
+		: LocalPosition(FVector3f::ZeroVector)
+		, Psi(1.0f)
+		, LocalNormal(FVector3f::UpVector)
+		, FrictionCoeff(0.6f)
+		, BoneIndex(-1)
+		, Padding(FVector3f::ZeroVector)
+	{
+	}
+
+	// Constructor matching the call: (LocalPosition, BoneIndex, LocalNormal, Psi, Friction)
+	FGPUBoundaryParticleLocal(const FVector3f& InLocalPosition, int32 InBoneIndex, 
+							  const FVector3f& InLocalNormal, float InPsi = 1.0f, float InFrictionCoeff = 0.6f)
+		: LocalPosition(InLocalPosition)
+		, Psi(InPsi)
+		, LocalNormal(InLocalNormal)
+		, FrictionCoeff(InFrictionCoeff)
+		, BoneIndex(InBoneIndex)
+		, Padding(FVector3f::ZeroVector)
+	{
+	}
+};
+static_assert(sizeof(FGPUBoundaryParticleLocal) == 48, "FGPUBoundaryParticleLocal must be 48 bytes for GPU alignment");
+
+/**
+ * GPU Boundary Adhesion Parameters
+ * Boundary Adhesion 패스에서 사용하는 파라미터 집합
+ */
+struct FGPUBoundaryAdhesionParams
+{
+	int32 bEnabled = 0;                        // Adhesion 활성화 여부 (0 or 1)
+	float AdhesionForceStrength = 1.0f;        // Adhesion 힘 강도
+	float AdhesionVelocityStrength = 0.5f;     // Adhesion 속도 전달 강도
+	float AdhesionRadius = 50.0f;              // Adhesion 최대 거리 (cm)
+	float CohesionStrength = 1.0f;             // Cohesion 힘 강도
+	float SmoothingRadius = 25.0f;             // SPH 스무딩 반경 (cm)
+	int32 BoundaryParticleCount = 0;           // Boundary 파티클 수
+	int32 FluidParticleCount = 0;              // Fluid 파티클 수
+	float DeltaTime = 0.016f;                  // 델타 타임
+
+	FGPUBoundaryAdhesionParams() = default;
 };

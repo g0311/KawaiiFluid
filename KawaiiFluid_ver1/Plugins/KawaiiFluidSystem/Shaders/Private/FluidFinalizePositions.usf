@@ -31,8 +31,10 @@ void FinalizePositionsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	FGPUFluidParticle particle = Particles[idx];
 
-	// Skip attached particles
-	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+	// Skip attached particles (CPU attachment or GPU boundary attachment)
+	// Check both IS_ATTACHED and IS_BOUNDARY_ATTACHED flags
+	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) || 
+		HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
 	{
 		// For attached particles, just sync position
 		particle.Position = particle.PredictedPosition;

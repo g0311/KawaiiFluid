@@ -302,6 +302,64 @@ public:
 	float BoundaryMaxDetachSpeed = 1500.0f;
 
 	//========================================
+	// Boundary Attachment (Strong Constraint)
+	//========================================
+
+	/**
+	 * Enable boundary particle attachment system
+	 * When enabled, fluid particles within AttachRadius of boundary particles
+	 * will be strongly constrained to follow them during character movement
+	 * This prevents fluid from falling off during animation/movement
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Boundary Attachment")
+	bool bEnableBoundaryAttachment = true;
+
+	/**
+	 * Distance threshold for attachment (cm)
+	 * Fluid particles within this distance from boundary particles will attach
+	 * Recommended: Similar to SmoothingRadius (default 25cm)
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Boundary Attachment",
+		meta = (EditCondition = "bEnableBoundaryAttachment", ClampMin = "1.0", ClampMax = "100.0"))
+	float BoundaryAttachRadius = 25.0f;
+
+	/**
+	 * Distance multiplier for detachment
+	 * Detach when distance > AttachRadius * this value
+	 * Higher = more tolerant of stretching before detach
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Boundary Attachment",
+		meta = (EditCondition = "bEnableBoundaryAttachment", ClampMin = "1.5", ClampMax = "10.0"))
+	float BoundaryDetachDistanceMultiplier = 3.0f;
+
+	/**
+	 * Relative speed threshold for detachment (cm/s)
+	 * Detach when fluid-boundary relative speed exceeds this
+	 * Higher = harder to shake off by movement
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Boundary Attachment",
+		meta = (EditCondition = "bEnableBoundaryAttachment", ClampMin = "100.0", ClampMax = "10000.0"))
+	float BoundaryAttachDetachSpeedThreshold = 500.0f;
+
+	/**
+	 * Cooldown time after detachment (seconds)
+	 * Prevents immediate re-attachment after detaching
+	 * Recommended: 0.1~0.5 seconds
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Boundary Attachment",
+		meta = (EditCondition = "bEnableBoundaryAttachment", ClampMin = "0.0", ClampMax = "2.0"))
+	float BoundaryAttachCooldown = 0.2f;
+
+	/**
+	 * Position constraint strength (0~1)
+	 * How strongly attached particles follow boundary position
+	 * 1.0 = rigid attachment, 0.5 = soft attachment with some simulation influence
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Boundary Attachment",
+		meta = (EditCondition = "bEnableBoundaryAttachment", ClampMin = "0.0", ClampMax = "1.0"))
+	float BoundaryAttachConstraintBlend = 0.8f;
+
+	//========================================
 	// Particle Sleeping (Stabilization)
 	//========================================
 

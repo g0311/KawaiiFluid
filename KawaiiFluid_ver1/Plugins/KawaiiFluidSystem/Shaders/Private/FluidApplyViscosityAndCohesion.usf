@@ -106,8 +106,9 @@ void ApplyViscosityAndCohesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	FGPUFluidParticle particle = Particles[idx];
 
-	// Skip attached particles
-	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+	// Skip attached particles (CPU attachment or GPU boundary attachment)
+	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) ||
+		HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
 	{
 		return;
 	}
@@ -157,7 +158,9 @@ void ApplyViscosityAndCohesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 			FGPUFluidParticle neighbor = Particles[neighborIdx];
 
-			if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+			// Skip attached neighbors
+			if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) ||
+				HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
 			{
 				continue;
 			}
@@ -244,7 +247,8 @@ void ApplyViscosityAndCohesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 						if (neighborIdx == idx || neighborIdx >= (uint)ParticleCount) continue;
 
 						FGPUFluidParticle neighbor = Particles[neighborIdx];
-						if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED)) continue;
+						if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) ||
+							HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED)) continue;
 
 						float3 r_cm = pos - neighbor.PredictedPosition;
 						float r2_cm = dot(r_cm, r_cm);

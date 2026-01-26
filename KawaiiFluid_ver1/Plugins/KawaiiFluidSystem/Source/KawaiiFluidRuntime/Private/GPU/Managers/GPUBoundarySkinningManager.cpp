@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 // FGPUBoundarySkinningManager - GPU Boundary Skinning and Adhesion System
 
 #include "GPU/Managers/GPUBoundarySkinningManager.h"
@@ -1476,4 +1476,180 @@ bool FGPUBoundarySkinningManager::ExecuteBoundaryZOrderSort(
 		BoundaryParticleCount, static_cast<int32>(GridResolutionPreset));
 
 	return true;
+}
+
+//=============================================================================
+// Owner Transform Buffer (for Boundary Attachment)
+//=============================================================================
+
+FRDGBufferRef FGPUBoundarySkinningManager::UpdateOwnerTransformBuffer(FRDGBuilder& GraphBuilder, int32& OutMaxOwnerID)
+{
+	FScopeLock Lock(&BoundarySkinningLock);
+
+	// Collect all owner IDs and their transforms
+	TArray<int32> OwnerIDs;
+	TArray<FGPUBoundaryOwnerTransform> Transforms;
+
+	MaxOwnerID = -1;
+
+	for (const auto& Pair : BoundarySkinningDataMap)
+	{
+		const int32 OwnerID = Pair.Key;
+		const FGPUBoundarySkinningData& Data = Pair.Value;
+
+		if (OwnerID >= 0 && Data.LocalParticles.Num() > 0)
+		{
+			MaxOwnerID = FMath::Max(MaxOwnerID, OwnerID);
+		}
+	}
+
+	OutMaxOwnerID = MaxOwnerID;
+
+	if (MaxOwnerID < 0)
+	{
+		// No owners, clear buffer
+		PersistentOwnerTransformBuffer.SafeRelease();
+		OwnerTransformBufferCapacity = 0;
+		return nullptr;
+	}
+
+	// Create array with transforms for all possible OwnerIDs (0 to MaxOwnerID)
+	const int32 BufferSize = MaxOwnerID + 1;
+	Transforms.SetNum(BufferSize);
+
+	// Initialize with identity transforms
+	for (int32 i = 0; i < BufferSize; ++i)
+	{
+		Transforms[i] = FGPUBoundaryOwnerTransform();
+	}
+
+	// Fill in actual transforms
+	for (const auto& Pair : BoundarySkinningDataMap)
+	{
+		const int32 OwnerID = Pair.Key;
+		const FGPUBoundarySkinningData& Data = Pair.Value;
+
+		if (OwnerID >= 0 && OwnerID < BufferSize)
+		{
+			Transforms[OwnerID] = FGPUBoundaryOwnerTransform(Data.ComponentTransform);
+		}
+	}
+
+	// Create or resize buffer
+	if (OwnerTransformBufferCapacity < BufferSize)
+	{
+		PersistentOwnerTransformBuffer.SafeRelease();
+		OwnerTransformBufferCapacity = BufferSize;
+	}
+
+	// Create RDG buffer and upload
+	FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateStructuredDesc(
+		sizeof(FGPUBoundaryOwnerTransform), BufferSize);
+	FRDGBufferRef OwnerTransformBuffer = GraphBuilder.CreateBuffer(BufferDesc, TEXT("GPUFluid.OwnerTransforms"));
+
+	// Upload transform data
+	GraphBuilder.QueueBufferUpload(OwnerTransformBuffer, Transforms.GetData(), BufferSize * sizeof(FGPUBoundaryOwnerTransform));
+
+	// Extract for persistence (for other passes that may need it later)
+	GraphBuilder.QueueBufferExtraction(OwnerTransformBuffer, &PersistentOwnerTransformBuffer);
+
+	bOwnerTransformDirty = false;
+
+	// Return the RDG buffer directly for immediate use in the same frame
+	return OwnerTransformBuffer;
+}
+
+//=============================================================================
+// Combined Bone Transforms Buffer (for Boundary Attachment)
+//=============================================================================
+
+FRDGBufferRef FGPUBoundarySkinningManager::CreateCombinedBoneTransformsBuffer(FRDGBuilder& GraphBuilder, int32& OutBoneCount, FRDGBufferRef& OutInverseBuffer)
+{
+	FScopeLock Lock(&BoundarySkinningLock);
+
+	OutBoneCount = 0;
+	OutInverseBuffer = nullptr;
+
+	// For now, use the first owner's bone transforms (single-character scenario)
+	// TODO: For multi-character support, we'd need to concatenate all bone transforms
+	// and offset BoneIndex per owner
+	for (const auto& Pair : BoundarySkinningDataMap)
+	{
+		const FGPUBoundarySkinningData& Data = Pair.Value;
+		if (Data.BoneTransforms.Num() > 0)
+		{
+			OutBoneCount = Data.BoneTransforms.Num();
+
+			// Create forward transforms buffer
+			FRDGBufferRef BoneTransformsBuffer = CreateStructuredBuffer(
+				GraphBuilder,
+				TEXT("GPUFluidAttachmentBoneTransforms"),
+				sizeof(FMatrix44f),
+				OutBoneCount,
+				Data.BoneTransforms.GetData(),
+				OutBoneCount * sizeof(FMatrix44f),
+				ERDGInitialDataFlags::NoCopy
+			);
+
+			// Create inverse transforms buffer (pre-computed on CPU for accuracy)
+			TArray<FMatrix44f> InverseTransforms;
+			InverseTransforms.SetNum(OutBoneCount);
+			for (int32 i = 0; i < OutBoneCount; ++i)
+			{
+				InverseTransforms[i] = Data.BoneTransforms[i].Inverse();
+			}
+
+			OutInverseBuffer = CreateStructuredBuffer(
+				GraphBuilder,
+				TEXT("GPUFluidAttachmentInverseBoneTransforms"),
+				sizeof(FMatrix44f),
+				OutBoneCount,
+				InverseTransforms.GetData(),
+				OutBoneCount * sizeof(FMatrix44f),
+				ERDGInitialDataFlags::NoCopy
+			);
+
+			return BoneTransformsBuffer;
+		}
+	}
+
+	// No bone transforms available - create dummy buffer
+	FMatrix44f Identity = FMatrix44f::Identity;
+	OutBoneCount = 1;
+
+	OutInverseBuffer = CreateStructuredBuffer(
+		GraphBuilder,
+		TEXT("GPUFluidAttachmentInverseBoneTransforms_Dummy"),
+		sizeof(FMatrix44f),
+		1,
+		&Identity,
+		sizeof(FMatrix44f),
+		ERDGInitialDataFlags::NoCopy
+	);
+
+	return CreateStructuredBuffer(
+		GraphBuilder,
+		TEXT("GPUFluidAttachmentBoneTransforms_Dummy"),
+		sizeof(FMatrix44f),
+		1,
+		&Identity,
+		sizeof(FMatrix44f),
+		ERDGInitialDataFlags::NoCopy
+	);
+}
+
+int32 FGPUBoundarySkinningManager::GetPrimaryBoneCount() const
+{
+	FScopeLock Lock(&BoundarySkinningLock);
+
+	for (const auto& Pair : BoundarySkinningDataMap)
+	{
+		const FGPUBoundarySkinningData& Data = Pair.Value;
+		if (Data.BoneTransforms.Num() > 0)
+		{
+			return Data.BoneTransforms.Num();
+		}
+	}
+
+	return 0;
 }

@@ -110,6 +110,14 @@ void SpawnParticlesCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	// NeighborCount will be calculated during density solve
 	newParticle.NeighborCount = 0;
 
+	// Initialize embedded attachment data (not attached on spawn)
+	newParticle.AttachOwnerID = -1;
+	newParticle.AttachBoneIndex = -1;
+	newParticle.AttachmentTime = 0.0f;
+	newParticle.AttachLocalDistance = 0.0f;
+	newParticle.AttachLocalPosition = float3(0.0f, 0.0f, 0.0f);
+	newParticle.AttachPadding = 0.0f;
+
 	// Write to particle buffer
 	Particles[particleIdx] = newParticle;
 
@@ -201,6 +209,14 @@ void SpawnParticlesBatchCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	newParticle.SourceID = request.SourceID; // Propagate source identification from spawn request
 	newParticle.Flags = GPU_PARTICLE_FLAG_NONE;
 	newParticle.NeighborCount = 0;
+
+	// Initialize embedded attachment data (not attached on spawn)
+	newParticle.AttachOwnerID = -1;
+	newParticle.AttachBoneIndex = -1;
+	newParticle.AttachmentTime = 0.0f;
+	newParticle.AttachLocalDistance = 0.0f;
+	newParticle.AttachLocalPosition = float3(0.0f, 0.0f, 0.0f);
+	newParticle.AttachPadding = 0.0f;
 
 	Particles[particleIdx] = newParticle;
 

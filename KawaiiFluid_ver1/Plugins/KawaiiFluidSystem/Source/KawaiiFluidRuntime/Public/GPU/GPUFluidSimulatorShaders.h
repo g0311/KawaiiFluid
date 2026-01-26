@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -736,6 +736,7 @@ public:
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FVector3f>, RenderVelocities)
 		SHADER_PARAMETER(int32, ParticleCount)
 		SHADER_PARAMETER(float, ParticleRadius)
+		SHADER_PARAMETER(float, DeltaTime)  // For 1-frame delay compensation: RenderPos = Pos + Vel * DeltaTime
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 256;
@@ -1164,7 +1165,8 @@ public:
 	   FRDGBufferUAVRef RenderPositionsUAV,
 	   FRDGBufferUAVRef RenderVelocitiesUAV,
 	   int32 ParticleCount,
-	   float ParticleRadius);
+	   float ParticleRadius,
+	   float DeltaTime);  // For 1-frame delay compensation
 };
 
 //=============================================================================
@@ -2320,6 +2322,79 @@ public:
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 512;
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+
+	static void ModifyCompilationEnvironment(
+		const FGlobalShaderPermutationParameters& Parameters,
+		FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
+
+		// Get grid resolution from permutation
+		const FPermutationDomain PermutationVector(Parameters.PermutationId);
+		const int32 GridPreset = PermutationVector.Get<FGridResolutionDim>();
+		const int32 AxisBits = GridResolutionPermutation::GetAxisBits(GridPreset);
+		const int32 MaxCells = GridResolutionPermutation::GetMaxCells(GridPreset);
+
+		OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), AxisBits);
+		OutEnvironment.SetDefine(TEXT("MAX_CELLS"), MaxCells);
+	}
+};
+
+//=============================================================================
+// Boundary Attachment Update Compute Shader
+// Manages strong position constraints between fluid and boundary particles
+// Handles: Attach, Detach, Cooldown, and Position Constraint
+//=============================================================================
+
+class FBoundaryAttachmentUpdateCS : public FGlobalShader
+{
+public:
+	DECLARE_GLOBAL_SHADER(FBoundaryAttachmentUpdateCS);
+	SHADER_USE_PARAMETER_STRUCT(FBoundaryAttachmentUpdateCS, FGlobalShader);
+
+	// Permutation for grid resolution (used in Z-Order search)
+	using FPermutationDomain = TShaderPermutationDomain<FGridResolutionDim>;
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		// Fluid particles (read-write) - now includes embedded attachment data (96 bytes)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, Particles)
+		// Boundary particles (Z-Order sorted, read-only)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoundaryParticle>, SortedBoundaryParticles)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, BoundaryCellStart)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, BoundaryCellEnd)
+		// Owner transforms (fallback for component-level transform)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoundaryOwnerTransform>, OwnerTransforms)
+		SHADER_PARAMETER(int32, MaxOwnerID)
+		// Bone transforms (for skeletal mesh attachment - follows bone animation)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FMatrix44f>, BoneTransforms)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FMatrix44f>, InverseBoneTransforms)
+		SHADER_PARAMETER(int32, BoneCount)
+		// Debug counter (atomic increment for attached particle count)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, AttachmentCounter)
+		// Particle counts
+		SHADER_PARAMETER(int32, ParticleCount)
+		SHADER_PARAMETER(int32, BoundaryParticleCount)
+		// Attachment parameters
+		SHADER_PARAMETER(float, AttachRadius)
+		SHADER_PARAMETER(float, DetachDistanceMultiplier)
+		SHADER_PARAMETER(float, DetachSpeedThreshold)
+		SHADER_PARAMETER(float, AttachCooldown)
+		SHADER_PARAMETER(float, ConstraintBlend)
+		SHADER_PARAMETER(float, CurrentTime)
+		SHADER_PARAMETER(float, DeltaTime)
+		// Z-Order parameters
+		SHADER_PARAMETER(float, SmoothingRadius)
+		SHADER_PARAMETER(float, CellSize)
+		SHADER_PARAMETER(FVector3f, MortonBoundsMin)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static constexpr int32 ThreadGroupSize = 256;
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{

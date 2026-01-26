@@ -54,6 +54,7 @@ FRDGBufferRef FGPUZOrderSortManager::ExecuteZOrderSortingPipeline(
 	FRDGBufferSRVRef& OutCellEndSRV,
 	FRDGBufferRef& OutCellStartBuffer,
 	FRDGBufferRef& OutCellEndBuffer,
+	FRDGBufferRef& OutSortedIndicesBuffer,
 	int32 CurrentParticleCount,
 	const FGPUFluidSimulationParams& Params)
 {
@@ -145,6 +146,10 @@ FRDGBufferRef FGPUZOrderSortManager::ExecuteZOrderSortingPipeline(
 		OutCellStartBuffer = CellStartRDG;
 		OutCellEndBuffer = CellEndRDG;
 	}
+
+	// Output sorted indices buffer (maps sorted_idx -> original_idx)
+	// Used by AttachmentPass to access Attachments buffer with correct index mapping
+	OutSortedIndicesBuffer = SortIndicesRDG;
 
 	ZOrderBufferParticleCapacity = CurrentParticleCount;
 

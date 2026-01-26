@@ -174,7 +174,8 @@ void UpdateSpringsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	FViscoelasticData springs = ViscoelasticBuffer[idx];
 
 	// Skip attached particles (they don't participate in viscoelasticity)
-	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) ||
+		HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
 	{
 		return;
 	}
@@ -193,8 +194,9 @@ void UpdateSpringsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 		FGPUFluidParticle neighbor = Particles[neighborIdx];
 
-		// Skip if neighbor is now attached
-		if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+		// Skip if neighbor is now attached (both regular and boundary attachment)
+		if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) ||
+			HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
 		{
 			// Remove spring
 			SetSpringNeighbor(springs, slot, -1);
@@ -266,8 +268,9 @@ void UpdateSpringsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 					FGPUFluidParticle neighbor = Particles[neighborIdx];
 
-					// Skip attached neighbors
-					if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+					// Skip attached neighbors (both regular and boundary attachment)
+					if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) ||
+						HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
 					{
 						continue;
 					}
@@ -324,8 +327,9 @@ void ApplySpringForcesCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	FGPUFluidParticle particle = Particles[idx];
 
-	// Skip attached particles
-	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+	// Skip attached particles (both regular and boundary attachment)
+	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) ||
+		HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
 	{
 		return;
 	}
@@ -349,8 +353,9 @@ void ApplySpringForcesCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 		FGPUFluidParticle neighbor = Particles[neighborIdx];
 
-		// Skip attached neighbors
-		if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+		// Skip attached neighbors (both regular and boundary attachment)
+		if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) ||
+			HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
 		{
 			continue;
 		}
@@ -413,8 +418,9 @@ void ApplySpringForcesCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 					FGPUFluidParticle neighbor = Particles[neighborIdx];
 
-					// Skip attached
-					if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+					// Skip attached (both regular and boundary attachment)
+					if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) ||
+						HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
 					{
 						continue;
 					}

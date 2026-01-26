@@ -31,8 +31,10 @@ void PredictPositionsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	FGPUFluidParticle particle = Particles[idx];
 
-	// Skip attached particles (they are handled by CPU)
-	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+	// Skip attached particles (they are handled by CPU or BoundaryAttachment pass)
+	// Check both IS_ATTACHED (CPU attachment) and IS_BOUNDARY_ATTACHED (GPU boundary attachment)
+	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) || 
+		HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
 	{
 		// Just copy position to predicted for attached particles
 		particle.PredictedPosition = particle.Position;

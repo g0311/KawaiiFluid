@@ -88,6 +88,7 @@ public:
 	 * @param OutCellEndSRV - Output cell end indices SRV
 	 * @param OutCellStartBuffer - Output cell start buffer ref (for persistent extraction)
 	 * @param OutCellEndBuffer - Output cell end buffer ref (for persistent extraction)
+	 * @param OutSortedIndicesBuffer - Output sorted indices buffer (maps sorted_idx -> original_idx)
 	 * @param CurrentParticleCount - Number of particles
 	 * @param Params - Simulation parameters (for CellSize)
 	 * @return Sorted particle buffer
@@ -101,6 +102,7 @@ public:
 		FRDGBufferSRVRef& OutCellEndSRV,
 		FRDGBufferRef& OutCellStartBuffer,
 		FRDGBufferRef& OutCellEndBuffer,
+		FRDGBufferRef& OutSortedIndicesBuffer,
 		int32 CurrentParticleCount,
 		const FGPUFluidSimulationParams& Params);
 

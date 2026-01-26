@@ -120,6 +120,10 @@ void FFluidSceneViewExtension::PreRenderViewFamily_RenderThread(
 
 	RDG_EVENT_SCOPE(GraphBuilder, "KawaiiFluid_PrepareRenderResources");
 
+	// Get DeltaTime for 1-frame delay compensation
+	// This compensates rendering lag where physics buffer is from previous frame
+	const float DeltaTime = InViewFamily.Time.GetDeltaWorldTimeSeconds();
+
 	// 중복 처리 방지를 위해 처리된 RenderResource 추적
 	TSet<FKawaiiFluidRenderResource*> ProcessedResources;
 
@@ -204,6 +208,7 @@ void FFluidSceneViewExtension::PreRenderViewFamily_RenderThread(
 		}
 
 		// SoA 버퍼 추출 (Position/Velocity)
+		// DeltaTime is used for 1-frame delay compensation: RenderPos = Pos + Vel * DeltaTime
 		if (PositionPooledBuffer.IsValid() && VelocityPooledBuffer.IsValid())
 		{
 			FRDGBufferRef PositionBuffer = GraphBuilder.RegisterExternalBuffer(
@@ -220,7 +225,8 @@ void FFluidSceneViewExtension::PreRenderViewFamily_RenderThread(
 				PositionUAV,
 				VelocityUAV,
 				ParticleCount,
-				ParticleRadius
+				ParticleRadius,
+				DeltaTime
 			);
 		}
 

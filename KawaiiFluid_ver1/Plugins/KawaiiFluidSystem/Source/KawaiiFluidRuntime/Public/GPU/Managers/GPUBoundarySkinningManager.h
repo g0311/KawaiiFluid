@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 // FGPUBoundarySkinningManager - GPU Boundary Skinning and Adhesion System
 
 #pragma once
@@ -255,6 +255,10 @@ public:
 	void SetBoundaryZOrderEnabled(bool bEnabled) { bUseBoundaryZOrder = bEnabled; }
 	bool IsBoundaryZOrderEnabled() const { return bUseBoundaryZOrder; }
 
+	/** Get Z-Order bounds (for use in other passes that need to match Boundary Z-Order cell IDs) */
+	const FVector3f& GetZOrderBoundsMin() const { return ZOrderBoundsMin; }
+	const FVector3f& GetZOrderBoundsMax() const { return ZOrderBoundsMax; }
+
 	/** Check if Z-Order data is valid */
 	bool HasBoundaryZOrderData() const
 	{
@@ -273,6 +277,45 @@ public:
 
 	/** Mark boundary Z-Order as dirty (needs re-sort) */
 	void MarkBoundaryZOrderDirty() { bBoundaryZOrderDirty = true; }
+
+	//=========================================================================
+	// Owner Transform Buffer (for Boundary Attachment local-to-world conversion)
+	//=========================================================================
+
+	/**
+	 * Get Owner Transform buffer for attachment pass
+	 * Contains FGPUBoundaryOwnerTransform for each registered owner
+	 * @return Pooled buffer containing owner transforms (indexed by OwnerID)
+	 */
+	TRefCountPtr<FRDGPooledBuffer>& GetOwnerTransformBuffer() { return PersistentOwnerTransformBuffer; }
+
+	/** Get maximum valid OwnerID (for bounds checking in shader) */
+	int32 GetMaxOwnerID() const { return MaxOwnerID; }
+
+	/** Check if owner transform buffer is valid */
+	bool HasOwnerTransformBuffer() const { return PersistentOwnerTransformBuffer.IsValid() && MaxOwnerID >= 0; }
+
+	/**
+	 * Update owner transform buffer with current component transforms
+	 * Called each frame before attachment pass
+	 * @param GraphBuilder - RDG builder
+	 * @param OutMaxOwnerID - Output: Maximum valid OwnerID for bounds checking (-1 if no owners)
+	 * @return RDG buffer containing owner transforms (valid for this frame's graph), or nullptr if no owners
+	 */
+	FRDGBufferRef UpdateOwnerTransformBuffer(FRDGBuilder& GraphBuilder, int32& OutMaxOwnerID);
+
+	/**
+	 * Create combined bone transforms buffer for all owners
+	 * Used by Boundary Attachment pass to access bone transforms for any attached particle
+	 * @param GraphBuilder - RDG builder
+	 * @param OutBoneCount - Output: Total number of bones in the buffer
+	 * @param OutInverseBuffer - Output: RDG buffer containing inverse bone transforms
+	 * @return RDG buffer containing all bone transforms, or nullptr if no bones
+	 */
+	FRDGBufferRef CreateCombinedBoneTransformsBuffer(FRDGBuilder& GraphBuilder, int32& OutBoneCount, FRDGBufferRef& OutInverseBuffer);
+
+	/** Get the first (primary) owner's bone count - simplified for single-character scenarios */
+	int32 GetPrimaryBoneCount() const;
 
 private:
 	//=========================================================================
@@ -362,6 +405,15 @@ private:
 
 	/** Recalculate combined AABB from all owner AABBs */
 	void RecalculateCombinedAABB();
+
+	//=========================================================================
+	// Owner Transform Buffer (for Boundary Attachment)
+	//=========================================================================
+
+	TRefCountPtr<FRDGPooledBuffer> PersistentOwnerTransformBuffer;
+	int32 OwnerTransformBufferCapacity = 0;
+	int32 MaxOwnerID = -1;
+	bool bOwnerTransformDirty = true;
 
 	//=========================================================================
 	// Thread Safety

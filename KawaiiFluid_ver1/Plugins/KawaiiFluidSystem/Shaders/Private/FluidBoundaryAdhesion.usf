@@ -27,7 +27,9 @@ struct FGPUBoundaryParticle
 	int OwnerID;          // 4 bytes  - Owner component ID
 	float3 Velocity;      // 12 bytes - World velocity (for moving boundaries)
 	float FrictionCoeff;  // 4 bytes  - Coulomb friction coefficient (0~2)
-};
+	int BoneIndex;        // 4 bytes  - Skeleton bone index (-1 for static mesh)
+	float3 Padding;       // 12 bytes - Alignment padding
+};  // Total: 64 bytes - must match C++ FGPUBoundaryParticle
 
 //=============================================================================
 // Shader Parameters
@@ -174,6 +176,13 @@ void BoundaryAdhesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	// Skip if already attached to primitive (existing adhesion system handles this)
 	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+	{
+		return;
+	}
+
+	// Skip if boundary-attached (position constraint system handles these particles)
+	// Force-based adhesion would conflict with position constraint
+	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
 	{
 		return;
 	}
