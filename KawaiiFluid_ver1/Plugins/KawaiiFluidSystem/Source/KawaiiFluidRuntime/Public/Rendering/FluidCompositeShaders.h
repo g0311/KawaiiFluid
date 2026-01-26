@@ -56,6 +56,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
     SHADER_PARAMETER(FLinearColor, AbsorptionColorCoefficients)  // Per-channel absorption (Beer's Law)
     SHADER_PARAMETER(float, SpecularStrength)
     SHADER_PARAMETER(float, SpecularRoughness)
+    SHADER_PARAMETER(float, AmbientIntensity)  // SkyLight contribution scale (default 0.15)
 
     // ------------------------------------------------------
     // Multi-Light Support

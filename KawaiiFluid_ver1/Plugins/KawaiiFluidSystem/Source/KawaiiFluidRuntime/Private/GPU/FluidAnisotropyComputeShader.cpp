@@ -210,9 +210,9 @@ void FFluidAnisotropyPassBuilder::AddAnisotropyPass(
 	PassParameters->ParticleCount = static_cast<uint32>(Params.ParticleCount);
 	PassParameters->AnisotropyMode = static_cast<uint32>(Params.Mode);
 	PassParameters->VelocityStretchFactor = Params.VelocityStretchFactor;
-	PassParameters->AnisotropyScale = Params.AnisotropyScale;
-	PassParameters->AnisotropyMin = Params.AnisotropyMin;
-	PassParameters->AnisotropyMax = Params.AnisotropyMax;
+	PassParameters->AnisotropyScale = Params.Strength;
+	PassParameters->AnisotropyMin = Params.MinStretch;
+	PassParameters->AnisotropyMax = Params.MaxStretch;
 	PassParameters->DensityWeight = Params.DensityWeight;
 	PassParameters->SmoothingRadius = Params.SmoothingRadius;
 	PassParameters->CellSize = Params.CellSize;

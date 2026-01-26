@@ -138,6 +138,15 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	float SpecularRoughness = 0.2f;
 
 	/**
+	 * Ambient light intensity from SkyLight.
+	 * Scales the SkyLightColor contribution to prevent over-brightness.
+	 * Default 0.15 is tuned for UE5's default SkyLight intensity.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float AmbientIntensity = 0.15f;
+
+	/**
 	 * F0 Override (base reflectivity at normal incidence).
 	 * 0 = auto-calculate from IOR, >0 = use this value directly.
 	 */
@@ -313,14 +322,15 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	FSurfaceDecorationParams SurfaceDecoration;
 
 	//========================================
-	// Ray Marching
+	// SDF Ray Marching
+	// (Active when PipelineType == RayMarching)
 	//========================================
 
 	/**
 	 * Ray Marching volume resolution.
 	 * Higher = more detail, more memory usage.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching",
 			ClampMin = "64", ClampMax = "512"))
 	int32 VolumeResolution = 256;
@@ -328,7 +338,7 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	/**
 	 * Maximum ray march steps. Higher = more accurate but more expensive.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching",
 			ClampMin = "16", ClampMax = "512"))
 	int32 RayMarchMaxSteps = 128;
@@ -336,155 +346,153 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	/**
 	 * Density threshold for surface detection.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching",
 			ClampMin = "0.01", ClampMax = "2.0"))
 	float DensityThreshold = 0.5f;
 
 	/** Enable Occupancy Bitmask optimization */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching"))
 	bool bEnableOccupancyMask = true;
 
 	/** Enable Min-Max Mipmap optimization */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching"))
 	bool bEnableMinMaxMipmap = true;
 
 	/** Enable Tile-based Culling optimization */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching"))
 	bool bEnableTileCulling = true;
 
 	/** Enable Temporal Reprojection optimization */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching"))
 	bool bEnableTemporalReprojection = true;
 
 	/** Temporal blend factor (0 = current frame only, 1 = history only) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bEnableTemporalReprojection",
 			ClampMin = "0.0", ClampMax = "0.99"))
 	float TemporalBlendFactor = 0.9f;
 
 	/** Adaptive step size multiplier */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching",
 			ClampMin = "1.0", ClampMax = "8.0"))
 	float AdaptiveStepMultiplier = 4.0f;
 
 	/** Early termination alpha threshold */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching",
 			ClampMin = "0.9", ClampMax = "1.0"))
 	float EarlyTerminationAlpha = 0.99f;
 
-	//========================================
-	// SDF (Signed Distance Field)
-	//========================================
+	// --- SDF Options ---
 
 	/**
 	 * Use SDF (Signed Distance Field) mode instead of density volume.
 	 * SDF uses Sphere Tracing for efficient empty space skipping.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching"))
 	bool bUseSDF = true;
 
 	/**
 	 * SDF SmoothMin parameter (K). Controls surface blending smoothness.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF",
 			ClampMin = "0.5", ClampMax = "100.0"))
 	float SDFSmoothK = 5.0f;
 
 	/** SDF Surface offset. Negative = larger volume, positive = smaller. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF",
 			ClampMin = "-50.0", ClampMax = "50.0"))
 	float SDFSurfaceOffset = 0.0f;
 
 	/** SDF surface hit epsilon (in voxels) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF",
 			ClampMin = "0.1", ClampMax = "5.0"))
 	float SDFSurfaceEpsilon = 1.0f;
 
 	/** SDF Sphere Tracing relaxation factor */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF",
 			ClampMin = "1.0", ClampMax = "2.0"))
 	float SDFRelaxationFactor = 1.2f;
 
 	/** SDF translucency maximum depth */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF",
 			ClampMin = "10.0", ClampMax = "500.0"))
 	float SDFTranslucencyDepth = 100.0f;
 
 	/** SDF translucency density */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF",
 			ClampMin = "0.001", ClampMax = "0.1"))
 	float SDFTranslucencyDensity = 0.02f;
 
 	/** SDF subsurface scattering strength */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF",
 			ClampMin = "0.0", ClampMax = "2.0"))
 	float SDFSubsurfaceScatterStrength = 0.5f;
 
 	/** SDF subsurface scattering color */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF", HideAlphaChannel))
 	FLinearColor SDFSubsurfaceColor = FLinearColor(0.8f, 0.6f, 0.4f, 1.0f);
 
 	/** SDF reflection strength */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF",
 			ClampMin = "0.0", ClampMax = "1.0"))
 	float SDFReflectionStrength = 0.3f;
 
 	/** Enable SDF Hybrid Mode (SDF Volume + Z-Order for precision) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF"))
 	bool bEnableSDFHybridMode = true;
 
 	/** Hybrid Mode threshold distance (cm) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF && bEnableSDFHybridMode",
 			ClampMin = "5.0", ClampMax = "100.0"))
 	float SDFHybridThreshold = 30.0f;
 
 	/** Use Tight AABB instead of simulation bounds */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF"))
 	bool bUseTightAABB = false;
 
 	/** AABB padding multiplier */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF && bUseTightAABB",
 			ClampMin = "1.0", ClampMax = "5.0"))
 	float AABBPaddingMultiplier = 2.0f;
 
 	/** Debug visualization for Tight AABB */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF && bUseTightAABB"))
 	bool bDebugVisualizeTightAABB = false;
 
 	/** Use Sparse Voxel structure */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF"))
 	bool bUseSparseVoxel = false;
 
 	/** Use Temporal Coherence */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF"))
 	bool bUseTemporalCoherence = false;
 
 	/** Temporal dirty threshold (cm/frame) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF && bUseTemporalCoherence",
 			ClampMin = "0.0", ClampMax = "50.0"))
 	float TemporalDirtyThreshold = 5.0f;
@@ -505,6 +513,7 @@ FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
 	Hash = HashCombine(Hash, GetTypeHash(Params.AbsorptionColorCoefficients.ToString()));
 	Hash = HashCombine(Hash, GetTypeHash(Params.SpecularStrength));
 	Hash = HashCombine(Hash, GetTypeHash(Params.SpecularRoughness));
+	Hash = HashCombine(Hash, GetTypeHash(Params.AmbientIntensity));
 	Hash = HashCombine(Hash, GetTypeHash(Params.ThicknessSensitivity));
 	Hash = HashCombine(Hash, GetTypeHash(Params.RefractionScale));
 	Hash = HashCombine(Hash, GetTypeHash(Params.FresnelReflectionBlend));
@@ -522,9 +531,9 @@ FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
 	// Anisotropy parameters
 	Hash = HashCombine(Hash, GetTypeHash(Params.AnisotropyParams.bEnabled));
 	Hash = HashCombine(Hash, GetTypeHash(static_cast<uint8>(Params.AnisotropyParams.Mode)));
-	Hash = HashCombine(Hash, GetTypeHash(Params.AnisotropyParams.AnisotropyScale));
-	Hash = HashCombine(Hash, GetTypeHash(Params.AnisotropyParams.AnisotropyMin));
-	Hash = HashCombine(Hash, GetTypeHash(Params.AnisotropyParams.AnisotropyMax));
+	Hash = HashCombine(Hash, GetTypeHash(Params.AnisotropyParams.Strength));
+	Hash = HashCombine(Hash, GetTypeHash(Params.AnisotropyParams.MinStretch));
+	Hash = HashCombine(Hash, GetTypeHash(Params.AnisotropyParams.MaxStretch));
 	// Surface Decoration parameters
 	Hash = HashCombine(Hash, GetTypeHash(Params.SurfaceDecoration.bEnabled));
 	Hash = HashCombine(Hash, GetTypeHash(Params.SurfaceDecoration.Foam.bEnabled));
@@ -574,6 +583,7 @@ FORCEINLINE bool operator==(const FFluidRenderingParameters& A, const FFluidRend
 		A.AbsorptionColorCoefficients.Equals(B.AbsorptionColorCoefficients, 0.001f) &&
 		FMath::IsNearlyEqual(A.SpecularStrength, B.SpecularStrength, 0.001f) &&
 		FMath::IsNearlyEqual(A.SpecularRoughness, B.SpecularRoughness, 0.001f) &&
+		FMath::IsNearlyEqual(A.AmbientIntensity, B.AmbientIntensity, 0.001f) &&
 		FMath::IsNearlyEqual(A.ThicknessSensitivity, B.ThicknessSensitivity, 0.001f) &&
 		FMath::IsNearlyEqual(A.RefractionScale, B.RefractionScale, 0.001f) &&
 		FMath::IsNearlyEqual(A.FresnelReflectionBlend, B.FresnelReflectionBlend, 0.001f) &&
@@ -591,12 +601,9 @@ FORCEINLINE bool operator==(const FFluidRenderingParameters& A, const FFluidRend
 		// Anisotropy parameters
 		A.AnisotropyParams.bEnabled == B.AnisotropyParams.bEnabled &&
 		A.AnisotropyParams.Mode == B.AnisotropyParams.Mode &&
-		FMath::IsNearlyEqual(A.AnisotropyParams.AnisotropyScale, B.AnisotropyParams.AnisotropyScale,
-		                     0.001f) &&
-		FMath::IsNearlyEqual(A.AnisotropyParams.AnisotropyMin, B.AnisotropyParams.AnisotropyMin,
-		                     0.001f) &&
-		FMath::IsNearlyEqual(A.AnisotropyParams.AnisotropyMax, B.AnisotropyParams.AnisotropyMax,
-		                     0.001f) &&
+		FMath::IsNearlyEqual(A.AnisotropyParams.Strength, B.AnisotropyParams.Strength, 0.001f) &&
+		FMath::IsNearlyEqual(A.AnisotropyParams.MinStretch, B.AnisotropyParams.MinStretch, 0.001f) &&
+		FMath::IsNearlyEqual(A.AnisotropyParams.MaxStretch, B.AnisotropyParams.MaxStretch, 0.001f) &&
 		// Surface Decoration parameters
 		A.SurfaceDecoration.bEnabled == B.SurfaceDecoration.bEnabled &&
 		A.SurfaceDecoration.Foam.bEnabled == B.SurfaceDecoration.Foam.bEnabled &&

@@ -33,6 +33,7 @@ float Opacity;                       // Fluid opacity (0 = transparent, 1 = opaq
 float4 AbsorptionColorCoefficients;  // Per-channel absorption coefficients (Beer's Law)
 float SpecularStrength;
 float SpecularRoughness;
+float AmbientIntensity;  // SkyLight contribution scale (default 0.15)
 
 // -----------------------------------------------------------------------------
 // Multi-Light Support
@@ -744,6 +745,7 @@ void MainPS(
 
 	// Ambient (prevents completely dark surfaces)
 	// Use SkyLightColor if available, otherwise fallback to DirectionalLightColor, then fixed value
+	// Scale by AmbientIntensity to prevent over-brightness (default 0.15 tuned for UE5 default SkyLight)
 	float3 EnvironmentColor = View.SkyLightColor.rgb;
 	if (dot(EnvironmentColor, float3(1, 1, 1)) < 0.001)
 	{
@@ -753,7 +755,7 @@ void MainPS(
 	{
 		EnvironmentColor = float3(1.0, 1.0, 1.0);  // White fallback
 	}
-	float3 AmbientColor = EnvironmentColor;
+	float3 AmbientColor = EnvironmentColor * AmbientIntensity;
 
 	// Total Lighting (diffuse + ambient, specular added separately)
 	float3 TotalLighting = TotalDiffuse + AmbientColor;

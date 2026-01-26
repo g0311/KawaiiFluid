@@ -56,7 +56,7 @@ static bool GenerateIntermediateTextures(
 	{
 		// Anisotropy can stretch particles up to AnisotropyMax (default 2.5) ratio
 		// This creates depth jumps proportional to the stretch, so multiply DepthFalloff accordingly
-		float AnisotropyMultiplier = FMath::Max(1.0f, RenderParams.AnisotropyParams.AnisotropyMax);
+		float AnisotropyMultiplier = FMath::Max(1.0f, RenderParams.AnisotropyParams.MaxStretch);
 		DepthFalloff *= AnisotropyMultiplier * 2.0f;
 	}
 	int32 NumIterations = 3;
@@ -80,7 +80,7 @@ static bool GenerateIntermediateTextures(
 	float AdjustedParticleRadius = AverageParticleRadius;
 	if (RenderParams.AnisotropyParams.bEnabled)
 	{
-		float AnisotropyMultiplier = FMath::Max(1.0f, RenderParams.AnisotropyParams.AnisotropyMax);
+		float AnisotropyMultiplier = FMath::Max(1.0f, RenderParams.AnisotropyParams.MaxStretch);
 		AdjustedParticleRadius *= AnisotropyMultiplier;
 	}
 
@@ -164,10 +164,23 @@ void FKawaiiMetaballScreenSpacePipeline::PrepareRender(
 	CachedIntermediateTextures.AccumulatedFlowTexture = nullptr;
 
 	// Flow Accumulation Pass (if enabled and using particle velocity)
-	if (RenderParams.SurfaceDecoration.bEnabled &&
+	const bool bShouldAccumulateFlow = RenderParams.SurfaceDecoration.bEnabled &&
 		RenderParams.SurfaceDecoration.FlowMap.bEnabled &&
 		RenderParams.SurfaceDecoration.FlowMap.bUseParticleVelocity &&
-		CachedIntermediateTextures.VelocityTexture != nullptr)
+		CachedIntermediateTextures.VelocityTexture != nullptr;
+
+	// Clear history when flow accumulation is disabled to prevent stale data and memory leak
+	if (!bShouldAccumulateFlow)
+	{
+		if (PrevAccumulatedFlowRT.IsValid())
+		{
+			PrevAccumulatedFlowRT = nullptr;
+			bHasPrevFrameData = false;
+			UE_LOG(LogTemp, Verbose, TEXT("FKawaiiMetaballScreenSpacePipeline: Flow accumulation disabled, cleared history buffer"));
+		}
+	}
+
+	if (bShouldAccumulateFlow)
 	{
 		// Get previous accumulated flow from history
 		FRDGTextureRef PrevAccumulatedFlowTexture = nullptr;

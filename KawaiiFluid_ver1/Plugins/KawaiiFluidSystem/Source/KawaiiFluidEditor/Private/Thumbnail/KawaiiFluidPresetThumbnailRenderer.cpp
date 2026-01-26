@@ -28,25 +28,25 @@ public:
 	FKawaiiFluidPresetThumbnailScene()
 		: FThumbnailPreviewScene()
 	{
-		// 1. 구체 메시 컴포넌트 생성 (Transient Package를 Outer로 지정하여 고아 객체 방지)
+		// 1. Create sphere mesh component (use Transient Package as Outer to prevent orphan objects)
 		PreviewMeshComponent = NewObject<UStaticMeshComponent>(GetTransientPackage(), NAME_None, RF_Transient);
-		
+
 		UStaticMesh* SphereMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/EditorMeshes/AssetViewer/Sphere.Sphere"));
 		if (!SphereMesh)
 		{
-			// 혹시라도 경로가 바뀌었을 경우를 대비해 엔진 기본 구체 시도
+			// Fallback to basic engine sphere in case path changed
 			SphereMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 		}
-		
+
 		if (SphereMesh)
 		{
 			PreviewMeshComponent->SetStaticMesh(SphereMesh);
 		}
 
-		// 씬에 추가
+		// Add to scene
 		AddComponent(PreviewMeshComponent, FTransform::Identity);
 
-		// 2. 머티리얼 설정 (기본 프리뷰 머티리얼 로드)
+		// 2. Material setup (load default preview material)
 		UMaterialInterface* BaseMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/KawaiiFluidSystem/PreviewMat"));
 		if (BaseMat)
 		{
@@ -54,14 +54,14 @@ public:
 			PreviewMeshComponent->SetMaterial(0, ThumbnailMID);
 		}
 
-		// 3. 조명 설정
+		// 3. Lighting setup
 		if (DirectionalLight)
 		{
 			DirectionalLight->SetRelativeRotation(FRotator(-45.0f, -45.0f, 0.0f));
 			DirectionalLight->SetIntensity(3.0f);
 		}
-		
-		// 스카이라이트 추가 (부드러운 음영)
+
+		// Skylight for soft shadows
 		if (SkyLight)
 		{
 			SkyLight->SetIntensity(1.0f);
@@ -72,16 +72,14 @@ public:
 	{
 		if (ThumbnailMID && Preset)
 		{
-			// 1. 기존 색상 설정
+			// 1. Set fluid color
 			ThumbnailMID->SetVectorParameterValue(TEXT("Base Color"), Preset->RenderingParameters.FluidColor);
 
 			//ThumbnailMID->SetScalarParameterValue(TEXT("Opacity"), Preset->RenderingParameters.ThicknessScale / 10.f);
 
-			// 2. 텍스처 설정
-			// Preset에 텍스처 변수가 있다고 가정 (예: Preset->FluidTexture)
-			if (UTexture2D* TargetTex = Preset->RenderingParameters.SurfaceDecoration.PrimaryLayer.Texture)
+			// 2. Set texture (if available from SurfaceDecoration Layer)
+			if (UTexture2D* TargetTex = Preset->RenderingParameters.SurfaceDecoration.Layer.Texture)
 			{
-				// SetTextureParameterValue를 사용하여 머티리얼의 'FluidTexture' 슬롯에 데이터 전달
 				ThumbnailMID->SetTextureParameterValue(TEXT("FluidTexture"), TargetTex);
 			}
 			else
@@ -94,7 +92,7 @@ public:
 		PreviewMeshComponent->MarkRenderStateDirty();
 	}
 	
-	// FThumbnailPreviewScene 인터페이스 구현 (필수)
+	// FThumbnailPreviewScene interface implementation (required)
 	virtual void GetViewMatrixParameters(const float InFOVDegrees, FVector& OutOrigin, float& OutOrbitPitch, float& OutOrbitYaw, float& OutOrbitZoom) const override
 	{
 		OutOrigin = FVector::ZeroVector;
@@ -107,7 +105,7 @@ public:
 	{
 		if (!PreviewMeshComponent || !PreviewMeshComponent->GetStaticMesh()) return;
 
-		// FGameTime 생성 (UE 5.7 대응)
+		// Create FGameTime (UE 5.7 compatible)
 		FGameTime GameTime = FGameTime::CreateUndilated(FApp::GetCurrentTime(), FApp::GetDeltaTime());
 
 		FSceneViewFamilyContext ViewFamily(FSceneViewFamily::ConstructionValues(
@@ -119,25 +117,25 @@ public:
 		ViewFamily.SetScreenPercentageInterface(new FLegacyScreenPercentageDriver(ViewFamily, 1.0f));
 		
 		ViewFamily.EngineShowFlags.DisableAdvancedFeatures();
-		ViewFamily.EngineShowFlags.ScreenPercentage = 0; // 스크린 퍼센테이지 비활성화
+		ViewFamily.EngineShowFlags.ScreenPercentage = 0; // Disable screen percentage
 		ViewFamily.EngineShowFlags.MotionBlur = 0;
 		ViewFamily.EngineShowFlags.LOD = 0;
 
-		// 뷰 매트릭스 계산 (FOV 30도로 조정하여 왜곡 감소)
+		// Calculate view matrix (use 30 degree FOV to reduce distortion)
 		FVector Origin;
 		float Pitch, Yaw, Zoom;
 		const float FOV = 30.0f;
 		GetViewMatrixParameters(FOV, Origin, Pitch, Yaw, Zoom);
 
 		const float HalfFOVRadians = FMath::DegreesToRadians(FOV) * 0.5f;
-		// 줌 거리가 0이면 바운즈 기반으로 자동 계산
+		// Auto-calculate based on bounds if zoom distance is 0
 		const float DistanceFromMesh = (Zoom > 0.0f) ? Zoom : (PreviewMeshComponent->Bounds.SphereRadius / FMath::Tan(HalfFOVRadians));
 		
 		FSceneViewInitOptions ViewInitOptions;
 		ViewInitOptions.ViewFamily = &ViewFamily;
 		ViewInitOptions.SetViewRectangle(Rect);
 		
-		// 궤도(Orbit) 회전 적용
+		// Apply orbit rotation
 		FRotator ViewRotation(Pitch, Yaw, 0.0f);
 		ViewInitOptions.ViewOrigin = Origin - (ViewRotation.Vector() * DistanceFromMesh);
 		ViewInitOptions.ViewRotationMatrix = FInverseRotationMatrix(ViewRotation) * FMatrix(
@@ -155,7 +153,7 @@ public:
 		FSceneView* View = new FSceneView(ViewInitOptions);
 		ViewFamily.Views.Add(View);
 
-		// Renderer 모듈 안전하게 호출
+		// Safely invoke the Renderer module
 		IRendererModule& RendererModule = FModuleManager::GetModuleChecked<IRendererModule>("Renderer");
 		RendererModule.BeginRenderingViewFamily(Canvas, &ViewFamily);
 	}

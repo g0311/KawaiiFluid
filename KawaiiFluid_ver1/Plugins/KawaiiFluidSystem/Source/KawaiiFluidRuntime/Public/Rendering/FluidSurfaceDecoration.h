@@ -83,11 +83,31 @@ struct KAWAIIFLUIDRUNTIME_API FFoamSettings
 {
 	GENERATED_BODY()
 
+	//========================================
+	// Common
+	//========================================
+
 	/** Enable foam effect */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Foam")
 	bool bEnabled = false;
 
-	/** Foam texture (noise-based pattern) */
+	//========================================
+	// Color
+	//========================================
+
+	/** Foam color (multiplied with texture) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Foam", meta = (EditCondition = "bEnabled"))
+	FLinearColor FoamColor = FLinearColor::White;
+
+	/** Foam intensity multiplier */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Foam", meta = (EditCondition = "bEnabled", ClampMin = "0.0", ClampMax = "5.0"))
+	float Intensity = 1.0f;
+
+	//========================================
+	// Texture
+	//========================================
+
+	/** Foam texture (noise-based pattern, optional - solid color if not set) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Foam", meta = (EditCondition = "bEnabled"))
 	TObjectPtr<UTexture2D> FoamTexture = nullptr;
 
@@ -95,33 +115,21 @@ struct KAWAIIFLUIDRUNTIME_API FFoamSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Foam", meta = (EditCondition = "bEnabled && FoamTexture != nullptr"))
 	ETextureAddressingMode AddressingMode = ETextureAddressingMode::Wrap;
 
-	/** Foam color */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Foam", meta = (EditCondition = "bEnabled"))
-	FLinearColor FoamColor = FLinearColor::White;
-
-	/** Velocity threshold to start generating foam */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Foam", meta = (EditCondition = "bEnabled", ClampMin = "0.0", ClampMax = "1000.0"))
-	float VelocityThreshold = 100.0f;
-
-	/** Foam intensity multiplier */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Foam", meta = (EditCondition = "bEnabled", ClampMin = "0.0", ClampMax = "5.0"))
-	float Intensity = 1.0f;
-
-	/** Foam decay rate (how fast foam disappears) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Foam", meta = (EditCondition = "bEnabled", ClampMin = "0.0", ClampMax = "10.0"))
-	float DecayRate = 1.0f;
-
-	/** Foam appears at wave crests (depth gradient) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Foam", meta = (EditCondition = "bEnabled"))
-	bool bWaveCrestFoam = true;
-
-	/** Foam appears at collision points */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Foam", meta = (EditCondition = "bEnabled"))
-	bool bCollisionFoam = true;
-
 	/** Texture tiling scale (0.01 = 1 tile per 100 units/1m, 0.1 = 1 tile per 10 units) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Foam", meta = (EditCondition = "bEnabled", ClampMin = "0.0001", ClampMax = "1.0"))
 	float TilingScale = 0.02f;
+
+	//========================================
+	// Generation
+	//========================================
+
+	/** Velocity threshold to start generating foam (cm/s) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Foam", meta = (EditCondition = "bEnabled", ClampMin = "0.0", ClampMax = "1000.0"))
+	float VelocityThreshold = 100.0f;
+
+	/** Generate foam at wave crests (sharp depth changes) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Foam", meta = (EditCondition = "bEnabled"))
+	bool bWaveCrestFoam = true;
 };
 
 /**
@@ -141,44 +149,56 @@ struct KAWAIIFLUIDRUNTIME_API FEmissiveSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Emissive", meta = (EditCondition = "bEnabled", HDR))
 	FLinearColor EmissiveColor = FLinearColor(1.0f, 0.3f, 0.05f, 1.0f);
 
-	/** Emissive intensity multiplier */
+	//========================================
+	// Brightness
+	//========================================
+
+	/**
+	 * Base emissive brightness (HDR, always applied even when stationary).
+	 * This is the minimum glow level. Velocity and Pulse add on top of this.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Emissive", meta = (EditCondition = "bEnabled", ClampMin = "0.0", ClampMax = "100.0"))
+	float MinEmissive = 2.0f;
+
+	/**
+	 * Intensity multiplier for dynamic emissive (velocity and pulse).
+	 * Does NOT affect MinEmissive - that's a direct HDR value.
+	 * Final = MinEmissive + (VelocityFactor + PulseFactor) * Intensity
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Emissive", meta = (EditCondition = "bEnabled", ClampMin = "0.0", ClampMax = "100.0"))
 	float Intensity = 10.0f;
 
-	/** Crack/pattern texture that reveals emissive underneath */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Emissive", meta = (EditCondition = "bEnabled"))
-	TObjectPtr<UTexture2D> CrackTexture = nullptr;
+	//========================================
+	// Pulse
+	//========================================
 
-	/** UV addressing mode when texture coordinates exceed [0,1] range */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Emissive", meta = (EditCondition = "bEnabled && CrackTexture != nullptr"))
-	ETextureAddressingMode AddressingMode = ETextureAddressingMode::Wrap;
+	/** Pulsation period in seconds (0 = no pulse, 2.0 = pulse every 2 seconds) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Emissive", meta = (EditCondition = "bEnabled", ClampMin = "0.0", ClampMax = "10.0"))
+	float PulsePeriod = 0.0f;
 
-	/** Crack texture tiling scale (0.01 = 1 tile per 100 units/1m, 0.1 = 1 tile per 10 units) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Emissive", meta = (EditCondition = "bEnabled", ClampMin = "0.0001", ClampMax = "1.0"))
-	float CrackTilingScale = 0.02f;
+	/** Pulsation amplitude (0~1 normalized, scaled by Intensity) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Emissive", meta = (EditCondition = "bEnabled && PulsePeriod > 0", ClampMin = "0.0", ClampMax = "1.0"))
+	float PulseAmplitude = 0.2f;
+
+	//========================================
+	// Velocity
+	//========================================
 
 	/**
-	 * Temperature mode: emissive based on velocity/turbulence
-	 * High velocity = hot = more emissive
+	 * Velocity-based emissive: faster flow = brighter glow.
+	 * Useful for lava (fast = hot = bright) or magic fluids.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Emissive", meta = (EditCondition = "bEnabled"))
-	bool bTemperatureMode = true;
+	bool bVelocityEmissive = true;
 
-	/** Velocity for maximum temperature (emissive) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Emissive", meta = (EditCondition = "bEnabled && bTemperatureMode", ClampMin = "1.0", ClampMax = "1000.0"))
-	float MaxTemperatureVelocity = 200.0f;
-
-	/** Minimum emissive (even when stationary) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Emissive", meta = (EditCondition = "bEnabled", ClampMin = "0.0", ClampMax = "1.0"))
-	float MinEmissive = 0.2f;
-
-	/** Pulsation frequency (0 = no pulse) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Emissive", meta = (EditCondition = "bEnabled", ClampMin = "0.0", ClampMax = "10.0"))
-	float PulseFrequency = 0.0f;
-
-	/** Pulsation amplitude */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Emissive", meta = (EditCondition = "bEnabled", ClampMin = "0.0", ClampMax = "1.0"))
-	float PulseAmplitude = 0.2f;
+	/**
+	 * How sensitive emissive is to velocity.
+	 * Low (0.5): only fast flows glow brightly
+	 * Normal (1.0): moderate response
+	 * High (2.0): even slow flows glow brightly
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Emissive", meta = (EditCondition = "bEnabled && bVelocityEmissive", ClampMin = "0.1", ClampMax = "5.0"))
+	float VelocitySensitivity = 1.0f;
 };
 
 /**
@@ -284,44 +304,40 @@ struct KAWAIIFLUIDRUNTIME_API FSurfaceDecorationParams
 	FFlowMapSettings FlowMap;
 
 	//========================================
-	// Custom Layers
+	// Custom Layer
 	//========================================
 
-	/** Primary surface texture layer */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Layers", meta = (EditCondition = "bEnabled", ShowOnlyInnerProperties))
-	FSurfaceDecorationLayer PrimaryLayer;
-
-	/** Secondary surface texture layer (for detail) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Layers", meta = (EditCondition = "bEnabled", ShowOnlyInnerProperties))
-	FSurfaceDecorationLayer SecondaryLayer;
+	/** Surface texture layer (albedo, normal map, flow animation) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Layer", meta = (EditCondition = "bEnabled", ShowOnlyInnerProperties))
+	FSurfaceDecorationLayer Layer;
 
 	//========================================
-	// Global Settings
+	// Layer Blending
 	//========================================
 
-	/** Global opacity for all decoration effects */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration", meta = (EditCondition = "bEnabled", ClampMin = "0.0", ClampMax = "1.0"))
-	float GlobalOpacity = 1.0f;
+	/** Final opacity for layer texture (multiplied with layer's own opacity) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Layer", meta = (EditCondition = "bEnabled", ClampMin = "0.0", ClampMax = "1.0"))
+	float LayerFinalOpacity = 1.0f;
 
-	/** Blend decoration with base fluid color */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration", meta = (EditCondition = "bEnabled", ClampMin = "0.0", ClampMax = "1.0"))
-	float BlendWithFluidColor = 0.5f;
+	/** Blend layer texture with base fluid color (0 = replace, 1 = multiply with fluid color) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Layer", meta = (EditCondition = "bEnabled", ClampMin = "0.0", ClampMax = "1.0"))
+	float LayerBlendWithFluidColor = 0.5f;
 
 	//========================================
-	// Texture Lighting
+	// Layer Lighting
 	//========================================
 
-	/** Apply lighting to texture layers (preserves fluid surface normals) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Lighting", meta = (EditCondition = "bEnabled"))
-	bool bApplyLightingToTextures = true;
+	/** Apply lighting to layer texture (preserves fluid surface normals) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Layer", meta = (EditCondition = "bEnabled"))
+	bool bApplyLightingToLayer = true;
 
-	/** Specular strength for textured surfaces */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Lighting", meta = (EditCondition = "bEnabled && bApplyLightingToTextures", ClampMin = "0.0", ClampMax = "2.0"))
-	float TextureSpecularStrength = 0.3f;
+	/** Specular strength for layer texture */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Layer", meta = (EditCondition = "bEnabled && bApplyLightingToLayer", ClampMin = "0.0", ClampMax = "2.0"))
+	float LayerSpecularStrength = 0.3f;
 
-	/** Specular roughness for textured surfaces (0 = sharp, 1 = diffuse) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Lighting", meta = (EditCondition = "bEnabled && bApplyLightingToTextures", ClampMin = "0.0", ClampMax = "1.0"))
-	float TextureSpecularRoughness = 0.5f;
+	/** Specular roughness for layer texture (0 = sharp, 1 = diffuse) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration|Layer", meta = (EditCondition = "bEnabled && bApplyLightingToLayer", ClampMin = "0.0", ClampMax = "1.0"))
+	float LayerSpecularRoughness = 0.5f;
 
 	FSurfaceDecorationParams() = default;
 };

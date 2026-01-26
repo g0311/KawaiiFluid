@@ -22,10 +22,8 @@ SamplerState BilinearMirrorSampler;
 //=============================================================================
 
 Texture2D<float4> FoamTexture;
-Texture2D<float4> EmissiveCrackTexture;
-Texture2D<float4> PrimaryLayerTexture;
-Texture2D<float4> PrimaryLayerNormalMap;
-Texture2D<float4> SecondaryLayerTexture;
+Texture2D<float4> LayerTexture;
+Texture2D<float4> LayerNormalMap;
 Texture2D<float2> FlowMapTexture;
 Texture2D<float2> VelocityMapTexture;     // Screen-space velocity from Depth pass (RDG)
 Texture2D<float2> AccumulatedFlowTexture; // Accumulated flow offset in world units (velocity-based, RDG)
@@ -61,16 +59,14 @@ float FoamTilingScale;
 int bWaveCrestFoam;
 int FoamAddressingMode;  // 0 = Wrap (repeat), 1 = Mirror
 
-// Emissive
+// Emissive (dynamic glow)
 int bEmissiveEnabled;
 float4 EmissiveColor;
 float EmissiveIntensity;
-float CrackTilingScale;
-int EmissiveAddressingMode;  // 0 = Wrap (repeat), 1 = Mirror
-int bTemperatureMode;
-float MaxTemperatureVelocity;
+int bVelocityEmissive;
+float VelocitySensitivity;
 float MinEmissive;
-float PulseFrequency;
+float PulsePeriod;
 float PulseAmplitude;
 
 // Flow
@@ -79,23 +75,16 @@ int bUseAccumulatedFlow;  // Use accumulated flow (velocity-based) instead of Ti
 float FlowSpeed;
 float FlowDistortionStrength;
 
-// Primary Layer
-int bPrimaryLayerEnabled;
-float PrimaryTilingScale;
-int PrimaryAddressingMode;  // 0 = Wrap (repeat), 1 = Mirror
-float PrimaryOpacity;
-float PrimaryNormalZThreshold;
-float PrimaryFlowInfluence;
-float2 PrimaryScrollSpeed;
-int bPrimaryNormalMapEnabled;
-float PrimaryNormalStrength;
-
-// Secondary Layer
-int bSecondaryLayerEnabled;
-float SecondaryTilingScale;
-int SecondaryAddressingMode;  // 0 = Wrap (repeat), 1 = Mirror
-float SecondaryOpacity;
-float SecondaryNormalZThreshold;
+// Layer
+int bLayerEnabled;
+float LayerTilingScale;
+int LayerAddressingMode;  // 0 = Wrap (repeat), 1 = Mirror
+float LayerOpacity;
+float LayerNormalZThreshold;
+float LayerFlowInfluence;
+float2 LayerScrollSpeed;
+int bLayerNormalMapEnabled;
+float LayerNormalStrength;
 
 // Lighting parameters for texture shading
 int bApplyLightingToTextures;
@@ -115,8 +104,17 @@ RWTexture2D<float4> OutputTexture;
 // Helper Functions
 //=============================================================================
 
-// Background depth threshold (matches FluidSmoothing.usf)
+// Background depth threshold (matches FluidSmoothing.usf and FluidFlowAccumulation.usf)
+// This value should be consistent across all fluid shaders
 #define BACKGROUND_DEPTH_THRESH 3.0e30f
+
+// Minimum foam amount to process (avoids unnecessary work for negligible foam)
+#define FOAM_MIN_AMOUNT 0.01
+
+// Fallback thresholds for velocity-based flow when accumulated flow is near zero
+// These help diagnose flow accumulation issues
+#define ACCUMULATED_FLOW_MIN_THRESHOLD 0.1
+#define VELOCITY_FALLBACK_THRESHOLD 1.0
 
 // Reconstruct view-space position from linear depth
 float3 ReconstructViewPosition(float2 ScreenUV, float LinearDepth)
@@ -228,81 +226,65 @@ float4 SampleFoamTexture(float2 UV)
 	}
 }
 
-// Sample emissive crack texture with addressing mode support
-float4 SampleEmissiveCrackTexture(float2 UV)
+// Sample layer texture with addressing mode support
+float4 SampleLayerTexture(float2 UV)
 {
-	if (EmissiveAddressingMode == 1)
+	if (LayerAddressingMode == 1)
 	{
 		// Mirror addressing mode
-		return EmissiveCrackTexture.SampleLevel(BilinearMirrorSampler, UV, 0);
+		return LayerTexture.SampleLevel(BilinearMirrorSampler, UV, 0);
 	}
 	else
 	{
 		// Wrap (repeat) addressing mode (default)
-		return EmissiveCrackTexture.SampleLevel(BilinearWrapSampler, UV, 0);
+		return LayerTexture.SampleLevel(BilinearWrapSampler, UV, 0);
 	}
 }
 
-// Sample primary layer texture with addressing mode support
-float4 SamplePrimaryLayerTexture(float2 UV)
-{
-	if (PrimaryAddressingMode == 1)
-	{
-		// Mirror addressing mode
-		return PrimaryLayerTexture.SampleLevel(BilinearMirrorSampler, UV, 0);
-	}
-	else
-	{
-		// Wrap (repeat) addressing mode (default)
-		return PrimaryLayerTexture.SampleLevel(BilinearWrapSampler, UV, 0);
-	}
-}
-
-// Sample secondary layer texture with addressing mode support
-float4 SampleSecondaryLayerTexture(float2 UV)
-{
-	if (SecondaryAddressingMode == 1)
-	{
-		// Mirror addressing mode
-		return SecondaryLayerTexture.SampleLevel(BilinearMirrorSampler, UV, 0);
-	}
-	else
-	{
-		// Wrap (repeat) addressing mode (default)
-		return SecondaryLayerTexture.SampleLevel(BilinearWrapSampler, UV, 0);
-	}
-}
-
-// Sample primary layer normal map with addressing mode support
-float3 SamplePrimaryLayerNormalMap(float2 UV)
+// Sample layer normal map with addressing mode support
+float3 SampleLayerNormalMap(float2 UV)
 {
 	float4 NormalSample;
-	if (PrimaryAddressingMode == 1)
+	if (LayerAddressingMode == 1)
 	{
-		NormalSample = PrimaryLayerNormalMap.SampleLevel(BilinearMirrorSampler, UV, 0);
+		NormalSample = LayerNormalMap.SampleLevel(BilinearMirrorSampler, UV, 0);
 	}
 	else
 	{
-		NormalSample = PrimaryLayerNormalMap.SampleLevel(BilinearWrapSampler, UV, 0);
+		NormalSample = LayerNormalMap.SampleLevel(BilinearWrapSampler, UV, 0);
 	}
 	// Decode from [0,1] to [-1,1]
 	return NormalSample.xyz * 2.0 - 1.0;
 }
 
 // Blend two normals using Reoriented Normal Mapping (RNM)
-// BaseNormal: existing surface normal (world space)
-// DetailNormal: texture normal (tangent space, Z-up)
+// Reference: "Blending in Detail" by Colin Barré-Brisebois & Stephen Hill
+// BaseNormal: existing surface normal (world space, normalized)
+// DetailNormal: texture normal (tangent space, Z-up, in [-1,1] range)
 // Strength: blend strength (0 = base only, 1 = full detail)
 float3 BlendNormalsRNM(float3 BaseNormal, float3 DetailNormal, float Strength)
 {
-	// Scale detail normal by strength
-	DetailNormal.xy *= Strength;
+	// Scale detail normal XY by strength, keep Z unchanged
+	float3 ScaledDetail = float3(DetailNormal.xy * Strength, DetailNormal.z);
 
-	// RNM blend formula
-	// Reorient detail normal to base normal's tangent space
-	float3 t = BaseNormal + float3(0, 0, 1);
-	float3 u = DetailNormal * float3(-1, -1, 1);
-	return normalize(t * dot(t, u) - u * t.z);
+	// Ensure both normals are normalized
+	float3 n1 = normalize(BaseNormal);
+	float3 n2 = normalize(ScaledDetail);
+
+	// RNM blend formula (correct version)
+	// This reorients n2 from tangent space to the coordinate frame defined by n1
+	float3 t = n1 + float3(0, 0, 1);
+	float3 u = n2 * float3(-1, -1, 1);
+
+	// Avoid division by zero when base normal is (0, 0, -1)
+	float tDotU = dot(t, u);
+	if (abs(t.z) < 0.0001f)
+	{
+		// Fallback to simple lerp for edge case
+		return normalize(lerp(n1, n2, Strength));
+	}
+
+	return normalize(t * tDotU / t.z - u);
 }
 
 // Build TBN matrix from world normal (for Z-axis projection)
@@ -401,25 +383,35 @@ float ComputeFoamIntensity(float2 UV, float3 WorldNormal, float Depth, float2 De
 }
 
 // Compute emissive intensity (for lava, magic, etc.)
+// BaseVelocity: internal reference velocity (200 cm/s = typical lava flow)
+#define EMISSIVE_BASE_VELOCITY 200.0
+
+// Returns HDR emissive value directly
+// MinEmissive: HDR base brightness (always applied)
+// EmissiveIntensity: scales dynamic parts (velocity, pulse) only
 float ComputeEmissiveIntensity(float VelocityMag, float3 WorldNormal)
 {
-	float Emissive = MinEmissive;
+	// Dynamic part: velocity and pulse contributions (0~1+ normalized)
+	float DynamicPart = 0.0;
 
-	if (bTemperatureMode > 0)
+	if (bVelocityEmissive > 0)
 	{
-		// Higher velocity = higher temperature = more emissive
-		float Temperature = saturate(VelocityMag / MaxTemperatureVelocity);
-		Emissive = lerp(MinEmissive, 1.0, Temperature);
+		// Higher velocity = brighter emissive (useful for lava, magic fluids)
+		// VelocitySensitivity scales how quickly it reaches max brightness
+		// Sensitivity 1.0 = max at 200 cm/s, 2.0 = max at 100 cm/s, 0.5 = max at 400 cm/s
+		float VelocityFactor = saturate(VelocityMag * VelocitySensitivity / EMISSIVE_BASE_VELOCITY);
+		DynamicPart += VelocityFactor;
 	}
 
-	// Pulsation effect
-	if (PulseFrequency > 0.0)
+	// Pulsation effect (PulsePeriod = seconds per cycle, 0 = disabled)
+	if (PulsePeriod > 0.0)
 	{
-		float Pulse = sin(Time * PulseFrequency * 6.28318) * 0.5 + 0.5;
-		Emissive *= 1.0 + Pulse * PulseAmplitude;
+		float Pulse = sin(Time * 2.0 * PI / PulsePeriod) * 0.5 + 0.5;
+		DynamicPart += Pulse * PulseAmplitude;
 	}
 
-	return Emissive;
+	// MinEmissive (HDR direct) + DynamicPart * Intensity
+	return MinEmissive + DynamicPart * EmissiveIntensity;
 }
 
 //=============================================================================
@@ -484,8 +476,10 @@ void SurfaceDecorationCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	// Occlusion check - if pixel is occluded by scene geometry, pass through scene color
 	// OcclusionMask: 1.0 = fluid is visible, 0.0 = fluid is occluded by closer scene geometry
+	// Threshold 0.5 provides hysteresis to prevent flickering at boundaries
 	float OcclusionMask = OcclusionMaskTexture.Load(int3(SSFRPixelCoord, 0));
-	if (OcclusionMask < 0.5)
+	const float OcclusionThreshold = 0.5;
+	if (OcclusionMask < OcclusionThreshold)
 	{
 		OutputTexture[PixelCoord] = SceneColor;
 		return;
@@ -534,7 +528,7 @@ void SurfaceDecorationCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	{
 		float FoamAmount = ComputeFoamIntensity(UV, WorldNormal, Depth, DepthGradient, VelocityMag);
 
-		if (FoamAmount > 0.01)
+		if (FoamAmount > FOAM_MIN_AMOUNT)
 		{
 			// Flow offset for foam (AccumulatedFlow is in world-space units cm)
 			float2 FoamFlowOffset = float2(0, 0);
@@ -546,7 +540,7 @@ void SurfaceDecorationCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 				// Debug fallback: if accumulated flow is zero but we have velocity
 				float AccumMag = length(AccumulatedFlow);
-				if (AccumMag < 0.1 && VelocityMag > 1.0)
+				if (AccumMag < ACCUMULATED_FLOW_MIN_THRESHOLD && VelocityMag > VELOCITY_FALLBACK_THRESHOLD)
 				{
 					// Use instantaneous velocity as fallback (diagnostic)
 					FoamFlowOffset = Velocity * FoamTilingScale * 0.01;
@@ -579,115 +573,83 @@ void SurfaceDecorationCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	}
 
 	//-------------------------------------------------------------------------
-	// Emissive Effect (Lava cracks, magic glow) - Z-axis projection
+	// Emissive Effect (dynamic glow for lava, magic, etc.)
+	// - MinEmissive: HDR base brightness (always applied)
+	// - VelocityEmissive: faster flow = brighter (scaled by Intensity)
+	// - Pulse: periodic brightness variation (scaled by Intensity)
+	// - Thickness compensation: thicker areas get boosted to appear consistent
 	//-------------------------------------------------------------------------
 	if (bEmissiveEnabled > 0)
 	{
+		// ComputeEmissiveIntensity returns HDR value: MinEmissive + DynamicPart * Intensity
 		float EmissiveAmount = ComputeEmissiveIntensity(VelocityMag, WorldNormal);
 
-		// Flow offset for cracks (AccumulatedFlow is in world-space units)
-		float2 CrackFlowOffset = float2(0, 0);
-		if (bUseAccumulatedFlow > 0)
-		{
-			// Scale to UV space and apply a subtle effect (0.1 multiplier)
-			CrackFlowOffset = AccumulatedFlow * CrackTilingScale * 0.1;
-		}
-		else
-		{
-			CrackFlowOffset = FlowDir * Time * FlowSpeed * 0.1;
-		}
+		// Thickness compensation: thicker areas appear darker due to FluidComposite absorption
+		// Boost emissive in thicker areas to maintain visual consistency
+		// ThicknessBoost: 1.0 at Thickness=0, ~1.5 at Thickness=5, ~2.0 at Thickness=10
+		float ThicknessBoost = 1.0 + Thickness * 0.1;
 
-		// Z-axis projection UV (XY plane)
-		// Subtract flow offset so texture moves with flow direction
-		float2 CrackUV = WorldUV * CrackTilingScale - CrackFlowOffset;
-
-		// Sample crack texture (single projection) with addressing mode support
-		float4 CrackSample = SampleEmissiveCrackTexture(CrackUV);
-
-		// Crack texture: dark areas = cracks = emissive visible
-		float CrackMask = 1.0 - CrackSample.r;
-
-		// Combine with temperature/emissive amount
-		float FinalEmissive = CrackMask * EmissiveAmount * EmissiveIntensity;
+		float FinalEmissive = EmissiveAmount * ThicknessBoost;
 
 		EmissiveAccum += EmissiveColor.rgb * FinalEmissive;
 	}
 
 	//-------------------------------------------------------------------------
-	// Primary Layer (custom texture overlay) - Z-axis projection
-	// Now with normal map and lighting support
+	// Layer (custom texture overlay) - Z-axis projection
+	// With normal map, flow animation, and lighting support
 	//-------------------------------------------------------------------------
-	if (bPrimaryLayerEnabled > 0)
+	if (bLayerEnabled > 0)
 	{
 		// Flow offset (in UV space - scaled by TilingScale to match WorldUV scale)
 		// SUBTRACT flow offset so texture appears to move WITH the fluid direction
 		float2 FlowOffset = float2(0, 0);
-		if (PrimaryFlowInfluence > 0.0)
+		if (LayerFlowInfluence > 0.0)
 		{
 			if (bUseAccumulatedFlow > 0)
 			{
 				// AccumulatedFlow is in world-space units (cm), scale to UV space
 				// FlowOffset = AccumulatedFlow (cm) * TilingScale (1/cm-per-tile) * Influence
-				FlowOffset = AccumulatedFlow * PrimaryTilingScale * PrimaryFlowInfluence;
+				FlowOffset = AccumulatedFlow * LayerTilingScale * LayerFlowInfluence;
 
 				// Debug fallback: if AccumulatedFlow is near zero but velocity is non-zero,
 				// use time-based flow as fallback (helps diagnose accumulation issues)
 				float AccumMag = length(AccumulatedFlow);
-				if (AccumMag < 0.1 && VelocityMag > 1.0)
+				if (AccumMag < ACCUMULATED_FLOW_MIN_THRESHOLD && VelocityMag > VELOCITY_FALLBACK_THRESHOLD)
 				{
 					// Fallback to velocity-based instant flow (diagnostic mode)
-					FlowOffset = Velocity * PrimaryTilingScale * PrimaryFlowInfluence * 0.01;
+					FlowOffset = Velocity * LayerTilingScale * LayerFlowInfluence * 0.01;
 				}
 			}
 			else
 			{
-				FlowOffset = FlowDir * Time * FlowSpeed * PrimaryFlowInfluence;
+				FlowOffset = FlowDir * Time * FlowSpeed * LayerFlowInfluence;
 			}
 		}
-		float2 ScrollOffset = PrimaryScrollSpeed * Time;
+		float2 ScrollOffset = LayerScrollSpeed * Time;
 
 		// Z-axis projection UV (XY plane)
 		// Subtract FlowOffset so texture moves in the direction of flow
-		float2 PrimaryUV = WorldUV * PrimaryTilingScale - FlowOffset + ScrollOffset;
+		float2 LayerUV = WorldUV * LayerTilingScale - FlowOffset + ScrollOffset;
 
 		// Sample texture (single projection) with addressing mode support
-		float4 LayerSample = SamplePrimaryLayerTexture(PrimaryUV);
+		float4 LayerSample = SampleLayerTexture(LayerUV);
 
 		// Use texture alpha if available (> 0), otherwise use full opacity
 		float TextureAlpha = LayerSample.a > 0.001 ? LayerSample.a : 1.0;
-		float LayerAlpha = TextureAlpha * PrimaryOpacity;
+		float LayerAlpha = TextureAlpha * LayerOpacity;
 
 		// Apply normal map if enabled
 		float3 ShadingNormal = WorldNormal;
-		if (bPrimaryNormalMapEnabled > 0 && PrimaryNormalStrength > 0.0)
+		if (bLayerNormalMapEnabled > 0 && LayerNormalStrength > 0.0)
 		{
-			float3 TangentNormal = SamplePrimaryLayerNormalMap(PrimaryUV);
-			ShadingNormal = ApplyNormalMap(WorldNormal, TangentNormal, PrimaryNormalStrength);
+			float3 TangentNormal = SampleLayerNormalMap(LayerUV);
+			ShadingNormal = ApplyNormalMap(WorldNormal, TangentNormal, LayerNormalStrength);
 		}
 
 		// Compute lighting for texture albedo
 		float3 LitLayerColor = ComputeTextureLighting(LayerSample.rgb, ShadingNormal, WorldPos);
 
 		DecorationColor = lerp(DecorationColor, LitLayerColor, LayerAlpha);
-		DecorationAlpha = max(DecorationAlpha, LayerAlpha);
-	}
-
-	//-------------------------------------------------------------------------
-	// Secondary Layer (detail overlay) - Z-axis projection
-	//-------------------------------------------------------------------------
-	if (bSecondaryLayerEnabled > 0)
-	{
-		// Z-axis projection UV (XY plane)
-		float2 SecondaryUV = WorldUV * SecondaryTilingScale;
-
-		// Sample texture (single projection) with addressing mode support
-		float4 LayerSample = SampleSecondaryLayerTexture(SecondaryUV);
-
-		// Use texture alpha if available (> 0), otherwise use full opacity
-		float TextureAlpha = LayerSample.a > 0.001 ? LayerSample.a : 1.0;
-		float LayerAlpha = TextureAlpha * SecondaryOpacity;
-
-		DecorationColor = lerp(DecorationColor, LayerSample.rgb, LayerAlpha);
 		DecorationAlpha = max(DecorationAlpha, LayerAlpha);
 	}
 

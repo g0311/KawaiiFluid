@@ -22,16 +22,13 @@ FFluidPresetEditorViewportClient::FFluidPresetEditorViewportClient(
 	// Orbit camera around origin
 	SetLookAtLocation(FVector(0.0f, 0.0f, 100.0f));
 
-	// Enable grid
-	DrawHelper.bDrawGrid = true;
+	// Disable grid for cleaner fluid preview (transparent fluids look better without grid showing through)
+	DrawHelper.bDrawGrid = false;
 	DrawHelper.bDrawPivot = false;
 	DrawHelper.bDrawWorldBox = false;
-	DrawHelper.GridColorAxis = FColor(80, 80, 80);
-	DrawHelper.GridColorMajor = FColor(40, 40, 40);
-	DrawHelper.GridColorMinor = FColor(20, 20, 20);
 
 	// Visibility settings
-	EngineShowFlags.SetGrid(true);
+	EngineShowFlags.SetGrid(false);
 	EngineShowFlags.SetAntiAliasing(true);
 }
 

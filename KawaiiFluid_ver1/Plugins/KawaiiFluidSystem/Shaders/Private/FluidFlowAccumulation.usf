@@ -125,21 +125,23 @@ void FlowAccumulationCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		return;
 	}
 
-	// Sample current velocity first (in world units, e.g., cm/sec)
+	// Sample current velocity (world-space XY velocity in cm/sec from Depth pass)
 	float2 Velocity = VelocityTexture.Load(int3(PixelCoord, 0));
 	float VelocityMag = length(Velocity);
 
 	// Sample previous accumulated flow with temporal reprojection
-	// This handles BOTH camera movement AND fluid movement
+	// This handles camera movement correctly
 	float3 WorldPos = ReconstructWorldPosition(CurrentUV, Depth);
 
-	// Key insight: To find where THIS fluid was in the previous frame,
-	// we need to trace back along the fluid velocity
-	// PrevWorldPos = CurrentWorldPos - Velocity * DeltaTime
-	float3 PrevWorldPos = WorldPos - float3(Velocity.x, Velocity.y, 0.0) * DeltaTime;
-
-	// Now reproject this previous world position to previous frame's screen space
-	float2 PrevUV = ReprojectToPrevFrame(PrevWorldPos);
+	// Temporal reprojection: find where this world position was in the previous frame's screen space
+	// NOTE: We do NOT subtract velocity from world position here because:
+	// 1. Velocity is 2D (XY only), missing Z component
+	// 2. Subtracting screen-space velocity from world position mixes coordinate systems
+	// 3. The velocity accumulation is handled separately in the flow offset calculation below
+	//
+	// Instead, we only do pure camera motion compensation via reprojection.
+	// The fluid motion effect is captured by accumulating velocity over time (line 156).
+	float2 PrevUV = ReprojectToPrevFrame(WorldPos);
 
 	// Check if reprojected UV is valid (within screen bounds)
 	float2 PrevFlow = float2(0, 0);

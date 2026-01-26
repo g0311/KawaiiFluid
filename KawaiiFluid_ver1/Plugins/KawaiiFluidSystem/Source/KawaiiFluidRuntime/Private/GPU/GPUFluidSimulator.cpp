@@ -1326,9 +1326,9 @@ void FGPUFluidSimulator::ExecutePostSimulation(
 				// Params Mapping
 				AnisotropyParams.Mode = (EGPUAnisotropyMode)CachedAnisotropyParams.Mode;
 				AnisotropyParams.VelocityStretchFactor = CachedAnisotropyParams.VelocityStretchFactor;
-				AnisotropyParams.AnisotropyScale = CachedAnisotropyParams.AnisotropyScale;
-				AnisotropyParams.AnisotropyMin = CachedAnisotropyParams.AnisotropyMin;
-				AnisotropyParams.AnisotropyMax = CachedAnisotropyParams.AnisotropyMax;
+				AnisotropyParams.Strength = CachedAnisotropyParams.Strength;
+				AnisotropyParams.MinStretch = CachedAnisotropyParams.MinStretch;
+				AnisotropyParams.MaxStretch = CachedAnisotropyParams.MaxStretch;
 				AnisotropyParams.DensityWeight = CachedAnisotropyParams.DensityWeight;
 
 				// Use same radius as simulation (per Yu & Turk 2013, NVIDIA FleX)

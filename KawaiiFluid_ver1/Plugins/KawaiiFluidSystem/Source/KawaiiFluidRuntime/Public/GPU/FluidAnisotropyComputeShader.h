@@ -49,9 +49,9 @@ struct KAWAIIFLUIDRUNTIME_API FAnisotropyComputeParams
 	float VelocityStretchFactor = 0.01f;
 
 	// Common params
-	float AnisotropyScale = 1.0f;
-	float AnisotropyMin = 0.2f;
-	float AnisotropyMax = 2.5f;
+	float Strength = 1.0f;
+	float MinStretch = 0.2f;
+	float MaxStretch = 2.5f;
 
 	// Density-based params
 	float DensityWeight = 0.5f;

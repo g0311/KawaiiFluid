@@ -40,9 +40,9 @@ enum class EGPUAnisotropyMode : uint8
  * @brief Parameters for anisotropy calculation.
  * @param bEnabled Enable anisotropy calculation.
  * @param Mode Calculation mode (velocity, density, hybrid).
- * @param AnisotropyScale Overall scale factor for ellipsoid stretching.
- * @param AnisotropyMin Minimum scale to prevent too thin ellipsoids.
- * @param AnisotropyMax Maximum scale to prevent excessive stretching.
+ * @param Strength Intensity multiplier (0=sphere, 1=normal, >1=amplified).
+ * @param MinStretch Minimum axis scale to prevent paper-thin ellipsoids.
+ * @param MaxStretch Maximum axis scale to limit elongation.
  * @param VelocityStretchFactor How much velocity affects stretching.
  * @param DensityWeight Weight for density-based component in hybrid mode.
  */
@@ -59,17 +59,20 @@ struct KAWAIIFLUIDRUNTIME_API FFluidAnisotropyParams
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Anisotropy")
 	EFluidAnisotropyMode Mode = EFluidAnisotropyMode::DensityBased;
 
-	/** Overall anisotropy scale (higher = more stretched ellipsoids) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Anisotropy", meta = (ClampMin = "0.5", ClampMax = "10", UIMin = "0.5", UIMax = "10"))
-	float AnisotropyScale = 1.0f;
+	/**
+	 * Anisotropy strength (intensity multiplier).
+	 * 0 = spheres only, 1 = normal effect, >1 = amplified stretching
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Anisotropy", meta = (ClampMin = "0", ClampMax = "5", UIMin = "0", UIMax = "5"))
+	float Strength = 1.0f;
 
-	/** Minimum ellipsoid scale (prevents too thin shapes) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Anisotropy", meta = (ClampMin = "0.1", ClampMax = "1", UIMin = "0.1", UIMax = "1"))
-	float AnisotropyMin = 0.2f;
+	/** Minimum axis stretch (prevents paper-thin ellipsoids, should be < 1.0) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Anisotropy", meta = (ClampMin = "0.1", ClampMax = "0.9", UIMin = "0.1", UIMax = "0.9"))
+	float MinStretch = 0.2f;
 
-	/** Maximum ellipsoid scale (prevents excessive stretching) - FleX recommends 1.0~2.0, but higher values can improve surface smoothing */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Anisotropy", meta = (ClampMin = "1", ClampMax = "10", UIMin = "1", UIMax = "10"))
-	float AnisotropyMax = 2.0f;
+	/** Maximum axis stretch (limits elongation, should be >= 1.0) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Anisotropy", meta = (ClampMin = "1.0", ClampMax = "5.0", UIMin = "1.0", UIMax = "5.0"))
+	float MaxStretch = 2.0f;
 
 	/** Velocity stretch factor (velocity-based mode) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Anisotropy", meta = (ClampMin = "0", ClampMax = "0.1", UIMin = "0", UIMax = "0.1", EditCondition = "Mode == EFluidAnisotropyMode::VelocityBased || Mode == EFluidAnisotropyMode::Hybrid"))

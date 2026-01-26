@@ -146,6 +146,7 @@ void KawaiiScreenSpaceShading::RenderPostProcessShading(
 	PassParameters->AbsorptionColorCoefficients = RenderParams.AbsorptionColorCoefficients;
 	PassParameters->SpecularStrength = RenderParams.SpecularStrength;
 	PassParameters->SpecularRoughness = RenderParams.SpecularRoughness;
+	PassParameters->AmbientIntensity = RenderParams.AmbientIntensity;
 
 	// Lighting scale parameters
 	PassParameters->ThicknessSensitivity = RenderParams.ThicknessSensitivity;
