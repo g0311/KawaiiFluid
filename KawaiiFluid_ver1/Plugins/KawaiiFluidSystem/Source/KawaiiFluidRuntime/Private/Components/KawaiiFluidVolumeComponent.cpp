@@ -3,7 +3,10 @@
 #include "Components/KawaiiFluidVolumeComponent.h"
 #include "Core/KawaiiFluidSimulatorSubsystem.h"
 #include "Modules/KawaiiFluidSimulationModule.h"
+#include "Modules/KawaiiFluidRenderingModule.h"
 #include "Data/KawaiiFluidPresetDataAsset.h"
+#include "Actors/KawaiiFluidVolume.h"
+#include "Rendering/KawaiiFluidMetaballRenderer.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "UObject/ConstructorHelpers.h"
@@ -165,6 +168,21 @@ void UKawaiiFluidVolumeComponent::PostEditChangeProperty(FPropertyChangedEvent& 
 			if (UKawaiiFluidSimulationModule* Module = WeakModule.Get())
 			{
 				Module->UpdateVolumeInfoDisplay();
+			}
+		}
+	}
+
+	// Update MetaballRenderer's preset when Preset property changes
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(UKawaiiFluidVolumeComponent, Preset))
+	{
+		if (AKawaiiFluidVolume* Volume = Cast<AKawaiiFluidVolume>(GetOwner()))
+		{
+			if (UKawaiiFluidRenderingModule* RenderingMod = Volume->GetRenderingModule())
+			{
+				if (UKawaiiFluidMetaballRenderer* MR = RenderingMod->GetMetaballRenderer())
+				{
+					MR->SetPreset(Preset);
+				}
 			}
 		}
 	}
