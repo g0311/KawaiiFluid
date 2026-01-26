@@ -7,13 +7,9 @@
 
 /**
  * GPU Fluid Particle Structure
- * 96 bytes, 16-byte aligned for optimal GPU memory access
  *
  * This structure mirrors the HLSL struct in FluidGPUPhysics.ush
  *
- * IMPORTANT: Attachment data is embedded in the particle structure so it gets
- * automatically reordered during Z-Order sorting. This prevents index mismatch
- * bugs that occurred when Attachments was a separate buffer.
  */
 struct FGPUFluidParticle
 {
@@ -30,16 +26,7 @@ struct FGPUFluidParticle
 	int32 SourceID;               // 4 bytes  - Source Component ID (-1 = invalid)
 	uint32 Flags;                 // 4 bytes  - Bitfield flags (see EGPUParticleFlags)
 	uint32 NeighborCount;         // 4 bytes  - Number of neighbors (for stats) (total: 64)
-
-	// === Embedded Attachment Data (32 bytes) ===
-	// This data is reordered together with particle during Z-Order sorting
-	int32 AttachOwnerID;          // 4 bytes  - Attached boundary owner ID (-1 = not attached)
-	int32 AttachBoneIndex;        // 4 bytes  - Attached bone index (-1 = component transform)
-	float AttachmentTime;         // 4 bytes  - Time when attached (for cooldown)
-	float AttachLocalDistance;    // 4 bytes  - Distance from surface in local space (total: 80)
-
-	FVector3f AttachLocalPosition; // 12 bytes - Position in bone's local space
-	float AttachPadding;          // 4 bytes  - Alignment padding (total: 96)
+	
 
 	FGPUFluidParticle()
 		: Position(FVector3f::ZeroVector)
@@ -52,29 +39,12 @@ struct FGPUFluidParticle
 		, SourceID(-1)
 		, Flags(0)
 		, NeighborCount(0)
-		, AttachOwnerID(-1)
-		, AttachBoneIndex(-1)
-		, AttachmentTime(0.0f)
-		, AttachLocalDistance(0.0f)
-		, AttachLocalPosition(FVector3f::ZeroVector)
-		, AttachPadding(0.0f)
 	{
-	}
-
-	// Helper methods for attachment
-	bool IsAttached() const { return AttachOwnerID >= 0; }
-	void ClearAttachment()
-	{
-		AttachOwnerID = -1;
-		AttachBoneIndex = -1;
-		AttachmentTime = 0.0f;
-		AttachLocalPosition = FVector3f::ZeroVector;
-		AttachLocalDistance = 0.0f;
 	}
 };
 
 // Compile-time size validation
-static_assert(sizeof(FGPUFluidParticle) == 96, "FGPUFluidParticle must be 96 bytes");
+static_assert(sizeof(FGPUFluidParticle) == 64, "FGPUFluidParticle must be 64 bytes");
 static_assert(alignof(FGPUFluidParticle) <= 16, "FGPUFluidParticle alignment must not exceed 16 bytes");
 
 /**
@@ -90,8 +60,6 @@ namespace EGPUParticleFlags
 	constexpr uint32 NearGround = 1 << 4;        // Particle is near the ground
 	constexpr uint32 HasCollided = 1 << 5;       // Particle collided this frame
 	constexpr uint32 IsSleeping = 1 << 6;        // Particle is in sleep state (low velocity)
-	constexpr uint32 IsBoundaryAttached = 1 << 7;  // Particle is attached to boundary particle (strong constraint)
-	constexpr uint32 AttachCooldown = 1 << 8;      // Particle is in attach cooldown (prevents re-attach)
 }
 
 /**

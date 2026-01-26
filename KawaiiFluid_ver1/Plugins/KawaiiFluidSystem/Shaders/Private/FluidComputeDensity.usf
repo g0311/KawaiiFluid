@@ -45,8 +45,7 @@ void ComputeDensityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	// Skip attached particles (CPU or boundary) from density calculation
 	// CRITICAL: Attached particles cluster at bone position → high density → explosion!
-	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) ||
-	    HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
+	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
 	{
 		particle.Density = RestDensity;
 		particle.Lambda = 0.0f;
@@ -96,13 +95,6 @@ void ComputeDensityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 					}
 
 					FGPUFluidParticle neighbor = Particles[neighborIdx];
-
-					// Skip attached neighbors - they cluster at bone and cause explosion
-					if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) ||
-					    HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
-					{
-						continue;
-					}
 
 					float3 neighborPos = neighbor.PredictedPosition;
 					float3 r_cm = pos - neighborPos;           // Distance in cm

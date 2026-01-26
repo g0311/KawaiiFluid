@@ -31,9 +31,6 @@ float ParticleRadius;
 RWStructuredBuffer<float3> RenderPositions;   // 12B per particle (SDF 핫패스)
 RWStructuredBuffer<float3> RenderVelocities;  // 12B per particle (모션블러용)
 
-// 1-frame delay compensation: RenderPos = Position + Velocity * DeltaTime
-// This compensates for the rendering lag where we use previous frame's physics buffer
-float DeltaTime;
 
 //=============================================================================
 // Main Compute Shader (Legacy AoS 출력)
@@ -76,7 +73,6 @@ void ExtractRenderDataCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 //=============================================================================
 // SoA Compute Shader (메모리 대역폭 최적화)
 // - 32B/particle → 12B/particle (Position만 사용 시 62% 절감)
-// - 1-frame delay compensation: RenderPos = Position + Velocity * DeltaTime
 //=============================================================================
 
 [numthreads(THREAD_GROUP_SIZE, 1, 1)]
@@ -103,9 +99,6 @@ void ExtractRenderDataSoACS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		pos = float3(1e20, 1e20, 1e20);
 		vel = float3(0, 0, 0);
 	}
-	// NOTE: 1-frame delay compensation disabled - caused particles to overshoot
-	// The physics simulation already handles position correctly
-	// pos = pos + vel * DeltaTime;
 
 	// SoA 출력 - 각 속성을 별도 버퍼에 저장
 	RenderPositions[idx] = pos;

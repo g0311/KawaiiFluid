@@ -29,8 +29,6 @@ struct FGPUBoundaryParticle
 	int OwnerID;            // 4 bytes  - Owner component ID
 	float3 Velocity;        // 12 bytes - World velocity (for moving boundaries)
 	float FrictionCoeff;    // 4 bytes  - Coulomb friction coefficient (0~2)
-	int BoneIndex;          // 4 bytes  - Skeleton bone index (-1 for static mesh)
-	float3 Padding;         // 12 bytes - Alignment padding
 };
 
 //=============================================================================
@@ -114,8 +112,6 @@ void BoundarySkinningCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	output.OwnerID = OwnerID;
 	output.Velocity = velocity;
 	output.FrictionCoeff = local.FrictionCoeff;
-	output.BoneIndex = local.BoneIndex;  // Pass through bone index for attachment system
-	output.Padding = float3(0, 0, 0);
 
 	WorldBoundaryParticles[idx] = output;
 }

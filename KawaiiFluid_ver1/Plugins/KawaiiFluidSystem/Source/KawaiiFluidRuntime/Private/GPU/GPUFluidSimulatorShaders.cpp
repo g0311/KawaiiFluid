@@ -238,14 +238,6 @@ IMPLEMENT_GLOBAL_SHADER(FComputeBoundaryCellStartEndCS,
 	"ComputeBoundaryCellStartEndCS", SF_Compute);
 
 //=============================================================================
-// Boundary Attachment Shaders
-//=============================================================================
-
-IMPLEMENT_GLOBAL_SHADER(FBoundaryAttachmentUpdateCS,
-	"/Plugin/KawaiiFluidSystem/Private/FluidBoundaryAttachment.usf",
-	"BoundaryAttachmentUpdateCS", SF_Compute);
-
-//=============================================================================
 // Pass Builder Implementation
 //=============================================================================
 
@@ -389,8 +381,7 @@ void FGPUFluidSimulatorPassBuilder::AddExtractRenderDataSoAPass(
 	FRDGBufferUAVRef RenderPositionsUAV,
 	FRDGBufferUAVRef RenderVelocitiesUAV,
 	int32 ParticleCount,
-	float ParticleRadius,
-	float DeltaTime)
+	float ParticleRadius)
 {
 	if (ParticleCount <= 0 || !PhysicsParticlesSRV || !RenderPositionsUAV || !RenderVelocitiesUAV)
 	{
@@ -408,7 +399,6 @@ void FGPUFluidSimulatorPassBuilder::AddExtractRenderDataSoAPass(
 	PassParameters->RenderVelocities = RenderVelocitiesUAV;
 	PassParameters->ParticleCount = ParticleCount;
 	PassParameters->ParticleRadius = ParticleRadius;
-	PassParameters->DeltaTime = DeltaTime;
 
 	const int32 ThreadGroupSize = FExtractRenderDataSoACS::ThreadGroupSize;
 	const int32 NumGroups = FMath::DivideAndRoundUp(ParticleCount, ThreadGroupSize);

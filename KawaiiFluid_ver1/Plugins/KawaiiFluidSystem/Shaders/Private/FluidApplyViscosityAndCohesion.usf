@@ -59,8 +59,6 @@ struct FGPUBoundaryParticle
 	int OwnerID;          // 4 bytes  - Owner component ID (total: 32)
 	float3 Velocity;      // 12 bytes - World velocity
 	float FrictionCoeff;  // 4 bytes  - Coulomb friction coefficient (total: 48)
-	int BoneIndex;        // 4 bytes  - Skeleton bone index (-1 for static mesh)
-	float3 Padding;       // 12 bytes - Alignment padding (total: 64)
 };
 
 StructuredBuffer<FGPUBoundaryParticle> BoundaryParticles;

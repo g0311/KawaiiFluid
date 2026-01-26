@@ -51,8 +51,7 @@ void SolvePressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	// Skip attached particles (CPU or boundary) from pressure solving
 	// CRITICAL: Attached particles must be excluded to prevent explosion!
-	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) ||
-	    HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
+	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
 	{
 		return;
 	}
@@ -95,13 +94,6 @@ void SolvePressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 					}
 
 					FGPUFluidParticle neighbor = Particles[neighborIdx];
-
-					// Skip attached neighbors - they cluster at bone and cause explosion
-					if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED) ||
-					    HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_BOUNDARY_ATTACHED))
-					{
-						continue;
-					}
 
 					float3 neighborPos = neighbor.PredictedPosition;
 					float3 r_cm = pos - neighborPos;           // Distance in cm

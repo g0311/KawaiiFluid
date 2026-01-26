@@ -20,14 +20,6 @@ struct FGPUFluidParticle
 	int SourceID;              // 4 bytes
 	uint Flags;                // 4 bytes
 	uint NeighborCount;        // 4 bytes (total: 64)
-
-	// === Embedded Attachment Data (32 bytes) ===
-	int AttachOwnerID;         // 4 bytes
-	int AttachBoneIndex;       // 4 bytes
-	float AttachmentTime;      // 4 bytes
-	float AttachLocalDistance; // 4 bytes (total: 80)
-	float3 AttachLocalPosition; // 12 bytes
-	float AttachPadding;       // 4 bytes (total: 96)
 };
 
 // ===================================================================================

@@ -19,8 +19,6 @@ struct FGPUBoundaryParticle
 	int OwnerID;          // 4 bytes  - Owner component ID
 	float3 Velocity;      // 12 bytes - World velocity (for moving boundaries)
 	float FrictionCoeff;  // 4 bytes  - Coulomb friction coefficient (0~2)
-	int BoneIndex;        // 4 bytes  - Skeleton bone index (-1 for static mesh)
-	float3 Padding;       // 12 bytes - Alignment padding
 };  // Total: 64 bytes - must match C++ FGPUBoundaryParticle
 
 //=============================================================================

@@ -430,14 +430,7 @@ FGPUFluidSimulationParams UKawaiiFluidSimulationContext::BuildGPUSimParams(
 	GPUParams.SleepVelocityThreshold = Preset->SleepVelocityThreshold;
 	GPUParams.SleepFrameThreshold = Preset->SleepFrameThreshold;
 	GPUParams.WakeVelocityThreshold = Preset->WakeVelocityThreshold;
-
-	// Boundary Attachment (Strong position constraint to boundary particles)
-	GPUParams.bEnableBoundaryAttachment = Preset->bEnableBoundaryAttachment ? 1 : 0;
-	GPUParams.BoundaryAttachRadius = Preset->BoundaryAttachRadius;
-	GPUParams.BoundaryDetachDistanceMultiplier = Preset->BoundaryDetachDistanceMultiplier;
-	GPUParams.BoundaryAttachDetachSpeedThreshold = Preset->BoundaryAttachDetachSpeedThreshold;
-	GPUParams.BoundaryAttachCooldown = Preset->BoundaryAttachCooldown;
-	GPUParams.BoundaryAttachConstraintBlend = Preset->BoundaryAttachConstraintBlend;
+	
 
 	// Gravity from preset
 	GPUParams.Gravity = FVector3f(Preset->Gravity);
