@@ -295,14 +295,24 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 		// =====================================================
 		if (bGPUActive)
 		{
-			// GPU Mode: Enable async readback and get positions
-			GPUSimulator->SetShadowReadbackEnabled(true);
-			GPUSimulator->SetAnisotropyReadbackEnabled(true);
+			// Determine if readback is needed:
+			// 1. VSM/Shadow enabled (needs position/anisotropy data for HISM)
+			// 2. SplashVFX assigned (needs velocity/neighbor data)
+			UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>();
+			const bool bNeedShadow = RendererSubsystem && 
+			                         RendererSubsystem->bEnableVSMIntegration && 
+			                         VolumeComponent->bEnableShadow;
+			const bool bNeedVFX = VolumeComponent->SplashVFX != nullptr;
+			const bool bNeedReadback = bNeedShadow || bNeedVFX;
+			
+			// Only enable readback when actually needed (avoids GPU barrier overhead)
+			GPUSimulator->SetShadowReadbackEnabled(bNeedReadback);
+			GPUSimulator->SetAnisotropyReadbackEnabled(bNeedShadow); // Anisotropy only for shadow rendering
 
 			TArray<FVector> NewVelocities;
 			TArray<FVector4> NewAnisotropyAxis1, NewAnisotropyAxis2, NewAnisotropyAxis3;
 
-			if (GPUSimulator->HasReadyShadowPositions())
+			if (bNeedReadback && GPUSimulator->HasReadyShadowPositions())
 			{
 				// New readback data available - update cache (with anisotropy)
 				GPUSimulator->GetShadowDataWithAnisotropy(
@@ -325,7 +335,7 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 					GPUSimulator->GetShadowNeighborCounts(CachedNeighborCounts);
 				}
 			}
-			else if (CachedShadowPositions.Num() > 0 && CachedShadowVelocities.Num() == CachedShadowPositions.Num())
+			else if (bNeedReadback && CachedShadowPositions.Num() > 0 && CachedShadowVelocities.Num() == CachedShadowPositions.Num())
 			{
 				// No new data - predict positions using cached velocity
 				const double CurrentTime = FPlatformTime::Seconds();
@@ -345,12 +355,13 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 				});
 				// Note: Anisotropy is not predicted, use cached values directly
 			}
-			else if (CachedShadowPositions.Num() > 0)
+			else if (bNeedReadback && CachedShadowPositions.Num() > 0)
 			{
 				// Fallback: use cached positions without prediction
 				Positions = CachedShadowPositions;
 				NumParticles = Positions.Num();
 			}
+			// If !bNeedReadback, NumParticles remains 0 and no readback processing occurs
 		}
 		else
 		{
