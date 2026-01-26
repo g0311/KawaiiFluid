@@ -93,64 +93,21 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 {
 	GENERATED_BODY()
 
+	//========================================
+	// General
+	//========================================
+
 	/** Enable rendering */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|General")
 	bool bEnableRendering = true;
 
 	/** Pipeline type (how surface is computed) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|General")
 	EMetaballPipelineType PipelineType = EMetaballPipelineType::ScreenSpace;
 
-	// Removed: ShadingMode (all pipelines now use PostProcess lighting only)
-
-	/** Particle render radius (screen space, cm) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Depth",
-		meta = (ClampMin = "0.5", ClampMax = "100.0"))
-	float ParticleRenderRadius = 15.0f;
-
-	/**
-	 * Depth smoothing filter radius in pixels.
-	 * Controls how many neighboring pixels are sampled during smoothing.
-	 * Larger values produce smoother surfaces but may blur fine details.
-	 * Recommended: 10~30 for typical fluid, 30~50 for slime/gel.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing",
-		meta = (ClampMin = "1", ClampMax = "50"))
-	int32 SmoothingRadius = 20;
-
-	/**
-	 * Depth difference threshold for including neighbor samples.
-	 * Calculated as: threshold = ParticleRadius * ThresholdRatio.
-	 * Samples with depth difference > threshold are excluded to preserve edges.
-	 * Lower values (1~3): Sharp edges, visible particle boundaries.
-	 * Higher values (5~10): Smoother surface, less edge definition.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing",
-		meta = (ClampMin = "0.5", ClampMax = "20.0", DisplayName = "Threshold Ratio"))
-	float NarrowRangeThresholdRatio = 3.0f;
-
-	/**
-	 * Clamp ratio for front-facing depth samples.
-	 * Limits how much a pixel can be "pulled forward" toward the camera.
-	 * Prevents holes while allowing surface to extend naturally.
-	 * Lower values (0.5~1.0): Tighter clamping, fewer artifacts.
-	 * Higher values (1.5~3.0): More aggressive smoothing.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing",
-		meta = (ClampMin = "0.1", ClampMax = "5.0", DisplayName = "Clamp Ratio"))
-	float NarrowRangeClampRatio = 1.0f;
-
-	/**
-	 * Boost smoothing at shallow viewing angles (grazing angles).
-	 * Fluid surfaces viewed at steep angles often appear bumpy.
-	 * This multiplies the threshold at grazing angles for more aggressive smoothing.
-	 * 0.0: No boost (same smoothing everywhere).
-	 * 1.0: 2x threshold at grazing angles.
-	 * 2.0: 3x threshold at grazing angles.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing",
-		meta = (ClampMin = "0.0", ClampMax = "2.0", DisplayName = "Grazing Angle Boost"))
-	float NarrowRangeGrazingBoost = 1.0f;
+	//========================================
+	// Appearance (Basic)
+	//========================================
 
 	/** Fluid color */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
@@ -158,47 +115,17 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	FLinearColor FluidColor = FLinearColor(0.2f, 0.5f, 0.8f, 1.0f);
 
 	/**
-	 * F0 Override (base reflectivity at normal incidence).
-	 * 0 = auto-calculate from IOR, >0 = use this value directly.
-	 * 0.02 = water, 0.04 = glass, 0.1 = artistic stylized.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
-		meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float F0Override = 0.0f;
-
-	/**
-	 * Fresnel strength multiplier (applied after F0 is auto-calculated from IOR).
-	 * 1.0 = physically accurate reflection, 2.0 = exaggerated, 0.5 = weak.
-	 * F0 = ((1-IOR)/(1+IOR))^2 * FresnelStrength.
-	 * Ignored when F0Override > 0.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
-		meta = (ClampMin = "0.0", ClampMax = "5.0"))
-	float FresnelStrength = 1.0f;
-
-	/** Index of Refraction (IOR). Ignored when F0Override > 0. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
-		meta = (ClampMin = "1.0", ClampMax = "2.0"))
-	float RefractiveIndex = 1.33f;
-
-	/**
 	 * Fluid opacity (0 = fully transparent, 1 = fully opaque).
 	 * Controls overall light absorption strength through the fluid.
-	 * 0 = see-through like clear water, 1 = opaque like thick paint.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
 		meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float Opacity = 0.5f;
 
-	/**
-	 * Per-channel absorption coefficients (Beer's Law).
-	 * Water: R=0.4, G=0.1, B=0.05 (absorbs red, appears blue).
-	 * Slime: R=0.1, G=0.3, B=0.4 (absorbs blue, appears green/yellow).
-	 * Higher value = that color is absorbed faster (invisible in thick areas).
-	 */
+	/** Index of Refraction (IOR). Water=1.33, Glass=1.5 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
-		meta = (HideAlphaChannel))
-	FLinearColor AbsorptionColorCoefficients = FLinearColor(0.4f, 0.1f, 0.05f, 1.0f);
+		meta = (ClampMin = "1.0", ClampMax = "2.0"))
+	float RefractiveIndex = 1.33f;
 
 	/** Specular strength */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
@@ -211,413 +138,353 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	float SpecularRoughness = 0.2f;
 
 	/**
+	 * F0 Override (base reflectivity at normal incidence).
+	 * 0 = auto-calculate from IOR, >0 = use this value directly.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float F0Override = 0.0f;
+
+	/**
+	 * Fresnel strength multiplier (applied after F0 is auto-calculated from IOR).
+	 * Ignored when F0Override > 0.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "0.0", ClampMax = "5.0"))
+	float FresnelStrength = 1.0f;
+
+	/**
+	 * Per-channel absorption coefficients (Beer's Law).
+	 * Water: R=0.4, G=0.1, B=0.05 (absorbs red, appears blue).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (HideAlphaChannel))
+	FLinearColor AbsorptionColorCoefficients = FLinearColor(0.4f, 0.1f, 0.05f, 1.0f);
+
+	/**
 	 * Thickness sensitivity (0 = uniform opacity, 1 = thickness-dependent).
-	 * Controls how much fluid thickness affects transparency.
-	 * 0 = same opacity everywhere, 1 = thin areas transparent, thick areas opaque.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
 		meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float ThicknessSensitivity = 0.5f;
 
 	/**
-	 * Refraction offset scale.
-	 * UV offset strength from refraction.
-	 * 0 = no refraction, higher = stronger distortion.
+	 * Refraction offset scale. 0 = no refraction, higher = stronger distortion.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
 		meta = (ClampMin = "0.0", ClampMax = "0.2"))
 	float RefractionScale = 0.05f;
 
 	/**
-	 * Fresnel reflection blend ratio.
-	 * How much Fresnel affects BaseColor/ReflectedColor blending.
-	 * 0 = no reflection, 1 = strong reflection.
-	 * 0.8+ recommended: at grazing angles, reflection naturally hides surface detail.
+	 * Fresnel reflection blend ratio. 0 = no reflection, 1 = strong reflection.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
 		meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float FresnelReflectionBlend = 0.8f;
 
 	/**
-	 * Absorption bias (for Ray Marching).
-	 * Added to absorption contribution when blending BaseColor.
-	 * Higher = FluidColor appears stronger.
+	 * Absorption bias (for Ray Marching). Higher = FluidColor appears stronger.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
 		meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float AbsorptionBias = 0.7f;
 
+	/** Thickness rendering scale */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Appearance",
+		meta = (ClampMin = "0.1", ClampMax = "10.0"))
+	float ThicknessScale = 1.0f;
+
 	//========================================
-	// Reflection Mode (mutually exclusive)
+	// Depth
+	//========================================
+
+	/** Particle render radius (screen space, cm) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Depth",
+		meta = (ClampMin = "0.5", ClampMax = "100.0"))
+	float ParticleRenderRadius = 15.0f;
+
+	//========================================
+	// Smoothing
+	//========================================
+
+	/**
+	 * Depth smoothing filter radius in pixels.
+	 * Larger values produce smoother surfaces but may blur fine details.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing",
+		meta = (ClampMin = "1", ClampMax = "50"))
+	int32 SmoothingRadius = 20;
+
+	/**
+	 * Depth difference threshold ratio. Lower = sharper edges, higher = smoother.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing",
+		meta = (ClampMin = "0.5", ClampMax = "20.0", DisplayName = "Threshold Ratio"))
+	float NarrowRangeThresholdRatio = 3.0f;
+
+	/**
+	 * Clamp ratio for front-facing depth samples. Prevents holes.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing",
+		meta = (ClampMin = "0.1", ClampMax = "5.0", DisplayName = "Clamp Ratio"))
+	float NarrowRangeClampRatio = 1.0f;
+
+	/**
+	 * Boost smoothing at shallow viewing angles (grazing angles).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Smoothing",
+		meta = (ClampMin = "0.0", ClampMax = "2.0", DisplayName = "Grazing Angle Boost"))
+	float NarrowRangeGrazingBoost = 1.0f;
+
+	//========================================
+	// Reflection
 	//========================================
 
 	/**
 	 * Reflection Mode.
-	 * None: No reflection (base color and refraction only).
-	 * Cubemap: Static environment map reflection.
-	 * ScreenSpaceReflection: Real-time scene reflection (SSR, no fallback on miss).
-	 * SSR + Cubemap: SSR with Cubemap fallback (SSR hit uses scene, miss uses Cubemap).
+	 * None: No reflection. Cubemap: Static environment map.
+	 * SSR: Real-time scene reflection. SSR+Cubemap: SSR with fallback.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection")
 	EFluidReflectionMode ReflectionMode = EFluidReflectionMode::Cubemap;
 
-	//========================================
-	// Cubemap Reflection Parameters
-	//========================================
-
 	/**
 	 * Reflection Cubemap (environment map).
 	 * If not set, uses scene Sky Light color as fallback.
-	 * Can assign scene Reflection Capture or HDRI Cubemap.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection|Cubemap",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
 		meta = (EditCondition = "ReflectionMode == EFluidReflectionMode::Cubemap || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap"))
 	TObjectPtr<UTextureCube> ReflectionCubemap = nullptr;
 
-	/** Cubemap reflection intensity (0 = no reflection, 1 = full reflection) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection|Cubemap",
+	/** Cubemap reflection intensity */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
 		meta = (EditCondition = "ReflectionMode == EFluidReflectionMode::Cubemap || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap", ClampMin = "0.0", ClampMax = "2.0"))
 	float ReflectionIntensity = 1.0f;
 
-	/** Cubemap mip level (higher = blurrier reflection, linked to roughness) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection|Cubemap",
+	/** Cubemap mip level (higher = blurrier reflection) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
 		meta = (EditCondition = "ReflectionMode == EFluidReflectionMode::Cubemap || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap", ClampMin = "0.0", ClampMax = "10.0"))
 	float ReflectionMipLevel = 2.0f;
 
-	//========================================
-	// Screen Space Reflection Parameters
-	//========================================
-
-	/**
-	 * SSR ray march max steps.
-	 * Higher = more accurate but more expensive.
-	 * DDA-style: 1 step per pixel, so this limits max ray length in pixels.
-	 * 128: short rays, 256: medium, 512: long rays (high quality).
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection|SSR",
+	/** SSR ray march max steps */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
 		meta = (EditCondition = "ReflectionMode == EFluidReflectionMode::ScreenSpaceReflection || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap", ClampMin = "64", ClampMax = "512"))
 	int32 ScreenSpaceReflectionMaxSteps = 256;
 
-	/**
-	 * SSR step size (in pixels).
-	 * Smaller = more precise but shorter reach.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection|SSR",
+	/** SSR step size (in pixels) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
 		meta = (EditCondition = "ReflectionMode == EFluidReflectionMode::ScreenSpaceReflection || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap", ClampMin = "0.5", ClampMax = "20.0"))
 	float ScreenSpaceReflectionStepSize = 4.0f;
 
-	/**
-	 * SSR hit detection thickness.
-	 * Higher = more lenient hit detection (fewer misses), lower = more precise.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection|SSR",
+	/** SSR hit detection thickness */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
 		meta = (EditCondition = "ReflectionMode == EFluidReflectionMode::ScreenSpaceReflection || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap", ClampMin = "0.5", ClampMax = "5.0"))
 	float ScreenSpaceReflectionThickness = 2.0f;
 
-	/**
-	 * SSR intensity.
-	 * 0 = no reflection, 1 = full reflection.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection|SSR",
+	/** SSR intensity */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
 		meta = (EditCondition = "ReflectionMode == EFluidReflectionMode::ScreenSpaceReflection || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap", ClampMin = "0.0", ClampMax = "1.0"))
 	float ScreenSpaceReflectionIntensity = 0.8f;
 
-	/**
-	 * SSR screen edge fade.
-	 * Smoothly fades reflections going off screen.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection|SSR",
+	/** SSR screen edge fade */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
 		meta = (EditCondition = "ReflectionMode == EFluidReflectionMode::ScreenSpaceReflection || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap", ClampMin = "0.0", ClampMax = "0.5"))
 	float ScreenSpaceReflectionEdgeFade = 0.1f;
 
-	/**
-	 * SSR debug visualization mode.
-	 * Helps diagnose SSR issues at runtime.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection|SSR",
+	/** SSR debug visualization mode */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
 		meta = (EditCondition = "ReflectionMode == EFluidReflectionMode::ScreenSpaceReflection || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap"))
 	EScreenSpaceReflectionDebugMode ScreenSpaceReflectionDebugMode = EScreenSpaceReflectionDebugMode::None;
 
-	/** Thickness rendering scale */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Thickness",
-		meta = (ClampMin = "0.1", ClampMax = "10.0"))
-	float ThicknessScale = 1.0f;
-
-	/** Render target resolution scale (1.0 = screen resolution) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Performance",
-		meta = (ClampMin = "0.25", ClampMax = "1.0"))
-	float RenderTargetScale = 1.0f;
+	//========================================
+	// Anisotropy
+	//========================================
 
 	/** Anisotropy parameters for ellipsoid rendering */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Anisotropy")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Anisotropy", meta = (ShowOnlyInnerProperties))
 	FFluidAnisotropyParams AnisotropyParams;
 
 	//========================================
-	// Surface Decoration (Foam, Lava, etc.)
+	// Surface Decoration
 	//========================================
 
 	/** Surface decoration parameters (foam, emissive, texture overlays) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration", meta = (ShowOnlyInnerProperties))
 	FSurfaceDecorationParams SurfaceDecoration;
 
-
-	// Removed: G-Buffer Mode Parameters (GBuffer/Opaque/Translucent modes removed)
-
 	//========================================
-	// Ray Marching Parameters
+	// Ray Marching
 	//========================================
 
 	/**
 	 * Ray Marching volume resolution.
 	 * Higher = more detail, more memory usage.
-	 * 128: ~8MB, 256: ~64MB (with optimizations ~57MB total)
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching",
 			ClampMin = "64", ClampMax = "512"))
 	int32 VolumeResolution = 256;
 
 	/**
-	 * Maximum ray march steps.
-	 * Higher = more accurate but more expensive.
-	 * 64~128 recommended with optimizations.
+	 * Maximum ray march steps. Higher = more accurate but more expensive.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching",
 			ClampMin = "16", ClampMax = "512"))
 	int32 RayMarchMaxSteps = 128;
 
 	/**
 	 * Density threshold for surface detection.
-	 * When accumulated density exceeds this, consider surface found.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching",
 			ClampMin = "0.01", ClampMax = "2.0"))
 	float DensityThreshold = 0.5f;
 
-	/**
-	 * Enable Occupancy Bitmask optimization.
-	 * Uses 32³ bit mask (4KB) for O(1) empty block detection.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|Optimization",
+	/** Enable Occupancy Bitmask optimization */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching"))
 	bool bEnableOccupancyMask = true;
 
-	/**
-	 * Enable Min-Max Mipmap optimization.
-	 * Uses hierarchical volume for empty space skipping.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|Optimization",
+	/** Enable Min-Max Mipmap optimization */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching"))
 	bool bEnableMinMaxMipmap = true;
 
-	/**
-	 * Enable Tile-based Culling optimization.
-	 * Skips tiles with no fluid intersection.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|Optimization",
+	/** Enable Tile-based Culling optimization */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching"))
 	bool bEnableTileCulling = true;
 
-	/**
-	 * Enable Temporal Reprojection optimization.
-	 * Reuses ~90% of previous frame data.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|Optimization",
+	/** Enable Temporal Reprojection optimization */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching"))
 	bool bEnableTemporalReprojection = true;
 
-	/**
-	 * Temporal blend factor (0 = current frame only, 1 = history only).
-	 * 0.9 recommended for fluid motion.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|Optimization",
+	/** Temporal blend factor (0 = current frame only, 1 = history only) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bEnableTemporalReprojection",
 			ClampMin = "0.0", ClampMax = "0.99"))
 	float TemporalBlendFactor = 0.9f;
 
-	/**
-	 * Adaptive step size multiplier.
-	 * Step size increases in empty regions for faster traversal.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|Optimization",
+	/** Adaptive step size multiplier */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching",
 			ClampMin = "1.0", ClampMax = "8.0"))
 	float AdaptiveStepMultiplier = 4.0f;
 
-	/**
-	 * Early termination alpha threshold.
-	 * Stop ray marching when accumulated alpha exceeds this value.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|Optimization",
+	/** Early termination alpha threshold */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Ray Marching",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching",
 			ClampMin = "0.9", ClampMax = "1.0"))
 	float EarlyTerminationAlpha = 0.99f;
 
 	//========================================
-	// SDF (Signed Distance Field) Parameters
+	// SDF (Signed Distance Field)
 	//========================================
 
 	/**
 	 * Use SDF (Signed Distance Field) mode instead of density volume.
 	 * SDF uses Sphere Tracing for efficient empty space skipping.
-	 * Better quality with translucency support.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching"))
 	bool bUseSDF = true;
 
 	/**
-	 * SDF SmoothMin parameter (K).
-	 * Controls the smoothness of fluid surface blending.
-	 * Higher = smoother surface, lower = more defined particles.
-	 * Recommended: 0.5x ~ 1.5x of ParticleRadius
+	 * SDF SmoothMin parameter (K). Controls surface blending smoothness.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|SDF",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF",
 			ClampMin = "0.5", ClampMax = "100.0"))
 	float SDFSmoothK = 5.0f;
 
-	/**
-	 * SDF Surface offset.
-	 * Negative = larger fluid volume, positive = smaller.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|SDF",
+	/** SDF Surface offset. Negative = larger volume, positive = smaller. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF",
 			ClampMin = "-50.0", ClampMax = "50.0"))
 	float SDFSurfaceOffset = 0.0f;
 
-	/**
-	 * SDF surface hit epsilon (in voxels).
-	 * Smaller = more precise surface detection.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|SDF",
+	/** SDF surface hit epsilon (in voxels) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF",
 			ClampMin = "0.1", ClampMax = "5.0"))
 	float SDFSurfaceEpsilon = 1.0f;
 
-	/**
-	 * SDF Sphere Tracing relaxation factor.
-	 * 1.0 = standard Sphere Tracing, >1.0 = over-relaxation (faster but less stable).
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|SDF",
+	/** SDF Sphere Tracing relaxation factor */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF",
 			ClampMin = "1.0", ClampMax = "2.0"))
 	float SDFRelaxationFactor = 1.2f;
 
-	/**
-	 * SDF translucency maximum depth.
-	 * How far light travels through the fluid for translucency calculation.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|SDF",
+	/** SDF translucency maximum depth */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF",
 			ClampMin = "10.0", ClampMax = "500.0"))
 	float SDFTranslucencyDepth = 100.0f;
 
-	/**
-	 * SDF translucency density.
-	 * Controls internal light absorption for translucency.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|SDF",
+	/** SDF translucency density */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF",
 			ClampMin = "0.001", ClampMax = "0.1"))
 	float SDFTranslucencyDensity = 0.02f;
 
-	/**
-	 * SDF subsurface scattering strength.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|SDF",
+	/** SDF subsurface scattering strength */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF",
 			ClampMin = "0.0", ClampMax = "2.0"))
 	float SDFSubsurfaceScatterStrength = 0.5f;
 
-	/**
-	 * SDF subsurface scattering color (RGB only, alpha channel not used).
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|SDF",
+	/** SDF subsurface scattering color */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF", HideAlphaChannel))
 	FLinearColor SDFSubsurfaceColor = FLinearColor(0.8f, 0.6f, 0.4f, 1.0f);
 
-	/**
-	 * SDF reflection strength.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|SDF",
+	/** SDF reflection strength */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF",
 			ClampMin = "0.0", ClampMax = "1.0"))
 	float SDFReflectionStrength = 0.3f;
 
-	/**
-	 * Enable SDF Hybrid Mode.
-	 * Uses SDF Volume for fast approach + Z-Order neighbor search for precise near-surface evaluation.
-	 * Provides better quality normals with minimal performance overhead.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|SDF",
+	/** Enable SDF Hybrid Mode (SDF Volume + Z-Order for precision) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF"))
 	bool bEnableSDFHybridMode = true;
 
-	/**
-	 * Hybrid Mode threshold distance (in cm).
-	 * Switch from SDF Volume to Z-Order when distance to surface is less than this value.
-	 * Lower = less Z-Order usage (faster), Higher = more precise normals.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|SDF",
+	/** Hybrid Mode threshold distance (cm) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF && bEnableSDFHybridMode",
 			ClampMin = "5.0", ClampMax = "100.0"))
 	float SDFHybridThreshold = 30.0f;
 
-	//========================================
-	// SDF Optimization Options
-	//========================================
-
-	/**
-	 * Use Tight AABB (computed from actual fluid particles) instead of simulation bounds.
-	 * Dramatically reduces SDF volume build time by focusing only on fluid region.
-	 * NOTE: Currently disabled - requires async GPU readback implementation.
-	 * See: Docs/SDF_Optimization_TODO.md
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|SDF|Optimization",
+	/** Use Tight AABB instead of simulation bounds */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF"))
 	bool bUseTightAABB = false;
 
-	/**
-	 * AABB padding multiplier (multiplied by particle radius).
-	 * Higher values provide more safety margin for fast-moving fluids.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|SDF|Optimization",
+	/** AABB padding multiplier */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF && bUseTightAABB",
 			ClampMin = "1.0", ClampMax = "5.0"))
 	float AABBPaddingMultiplier = 2.0f;
 
-	/**
-	 * Debug visualization for Tight AABB.
-	 * Shows: R = bUseTightAABB, G = bounds valid, B = bounds size.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|SDF|Optimization",
+	/** Debug visualization for Tight AABB */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF && bUseTightAABB"))
 	bool bDebugVisualizeTightAABB = false;
 
-	/**
-	 * Use Sparse Voxel structure (only compute SDF where particles exist).
-	 * Additional optimization on top of Tight AABB.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|SDF|Optimization",
+	/** Use Sparse Voxel structure */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF"))
 	bool bUseSparseVoxel = false;
 
-	/**
-	 * Use Temporal Coherence (reuse previous frame's SDF, only update changed regions).
-	 * Best for slow-moving or static fluids.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|SDF|Optimization",
+	/** Use Temporal Coherence */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF"))
 	bool bUseTemporalCoherence = false;
 
-	/**
-	 * Temporal dirty threshold (cm/frame).
-	 * Particles moving faster than this threshold are marked dirty and recomputed.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|RayMarching|SDF|Optimization",
+	/** Temporal dirty threshold (cm/frame) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|SDF",
 		meta = (EditCondition = "PipelineType == EMetaballPipelineType::RayMarching && bUseSDF && bUseTemporalCoherence",
 			ClampMin = "0.0", ClampMax = "50.0"))
 	float TemporalDirtyThreshold = 5.0f;
@@ -662,7 +529,6 @@ FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
 	Hash = HashCombine(Hash, GetTypeHash(Params.SurfaceDecoration.bEnabled));
 	Hash = HashCombine(Hash, GetTypeHash(Params.SurfaceDecoration.Foam.bEnabled));
 	Hash = HashCombine(Hash, GetTypeHash(Params.SurfaceDecoration.Emissive.bEnabled));
-	Hash = HashCombine(Hash, GetTypeHash(Params.RenderTargetScale));
 	Hash = HashCombine(Hash, GetTypeHash(Params.ThicknessScale));
 	// Reflection parameters
 	Hash = HashCombine(Hash, GetTypeHash(static_cast<uint8>(Params.ReflectionMode)));
@@ -735,7 +601,6 @@ FORCEINLINE bool operator==(const FFluidRenderingParameters& A, const FFluidRend
 		A.SurfaceDecoration.bEnabled == B.SurfaceDecoration.bEnabled &&
 		A.SurfaceDecoration.Foam.bEnabled == B.SurfaceDecoration.Foam.bEnabled &&
 		A.SurfaceDecoration.Emissive.bEnabled == B.SurfaceDecoration.Emissive.bEnabled &&
-		FMath::IsNearlyEqual(A.RenderTargetScale, B.RenderTargetScale, 0.001f) &&
 		FMath::IsNearlyEqual(A.ThicknessScale, B.ThicknessScale, 0.001f) &&
 		// Reflection parameters
 		A.ReflectionMode == B.ReflectionMode &&
