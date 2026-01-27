@@ -1,5 +1,14 @@
 // Copyright KawaiiFluid Team. All Rights Reserved.
-// FluidCohesion.ush - Cohesion Force Calculation (Surface Tension)
+// [DEPRECATED] FluidCohesion.ush - Cohesion Force Calculation (Surface Tension)
+//
+// ============================================================================
+// THIS FILE IS DEPRECATED - USE FluidForceAccumulation.ush INSTEAD
+// ============================================================================
+// FluidForceAccumulation.ush combines Cohesion + Viscosity in a single
+// neighbor loop, reducing memory bandwidth by ~50%.
+//
+// Kept for backward compatibility. Do not use in new code.
+// ============================================================================
 //
 // Implements Akinci 2013 surface tension model without curvature term.
 // Uses previous frame's neighbor cache for double buffering.

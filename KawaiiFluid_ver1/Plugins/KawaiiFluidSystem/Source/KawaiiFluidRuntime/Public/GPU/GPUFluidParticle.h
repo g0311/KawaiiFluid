@@ -144,9 +144,11 @@ struct FGPUFluidSimulationParams
 	// Boundary Interaction (Moving Characters/Objects)
 	int32 bEnableRelativeVelocityDamping;   // Enable relative velocity pressure damping
 	float RelativeVelocityDampingStrength;  // 0~1, how much to reduce pressure when boundary approaches
+	int32 bEnableBoundaryVelocityTransfer;  // Enable boundary velocity transfer (fluid following boundaries)
 	float BoundaryVelocityTransferStrength; // 0~1, how much fluid follows boundary velocity
 	float BoundaryDetachSpeedThreshold;     // cm/s, relative speed where detachment begins
 	float BoundaryMaxDetachSpeed;           // cm/s, relative speed for full detachment
+	float BoundaryAdhesionStrength;         // 0~1, adhesion strength for velocity transfer
 
 	// Particle Sleeping (NVIDIA Flex stabilization technique)
 	int32 bEnableParticleSleeping;          // Enable particle sleeping for stability
@@ -200,9 +202,11 @@ struct FGPUFluidSimulationParams
 		, StackPressureScale(0.0f)
 		, bEnableRelativeVelocityDamping(1)
 		, RelativeVelocityDampingStrength(0.6f)
+		, bEnableBoundaryVelocityTransfer(1)
 		, BoundaryVelocityTransferStrength(0.8f)
 		, BoundaryDetachSpeedThreshold(500.0f)
 		, BoundaryMaxDetachSpeed(1500.0f)
+		, BoundaryAdhesionStrength(0.5f)
 		, bEnableParticleSleeping(0)
 		, SleepVelocityThreshold(5.0f)
 		, SleepFrameThreshold(30)

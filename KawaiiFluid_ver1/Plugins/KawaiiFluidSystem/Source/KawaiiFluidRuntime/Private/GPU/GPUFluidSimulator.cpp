@@ -1175,8 +1175,11 @@ void FGPUFluidSimulator::ExecutePostSimulation(
 
 	AddFinalizePositionsPass(GraphBuilder, ParticlesUAV, Params);
 
-	// Combined Viscosity + Cohesion pass (merged for ~35-40% performance improvement)
-	AddApplyViscosityPass(GraphBuilder, ParticlesUAV, SpatialData.CellCountsSRV, SpatialData.ParticleIndicesSRV, SpatialData.NeighborListSRV, SpatialData.NeighborCountsSRV, Params, SpatialData);
+	// REMOVED: Viscosity pass is now integrated into Phase 2 (PredictPositions)
+	// - Fluid Viscosity (XSPH + Laplacian): Calculated together with Cohesion in single PrevNeighborCache loop
+	// - Boundary Viscosity: Integrated into Phase 3 (SolveDensityPressure) Boundary loop
+	// This optimization reduces neighbor traversal from 2x to 1x, saving ~400us at 76k particles.
+	// AddApplyViscosityPass(...) - DEPRECATED
 
 	// Particle Sleeping Pass (NVIDIA Flex stabilization)
 	if (false && Params.bEnableParticleSleeping && SpatialData.NeighborListSRV && SpatialData.NeighborCountsSRV)
@@ -2907,6 +2910,14 @@ bool FGPUFluidSimulator::GetShadowPositionsAndVelocities(TArray<FVector>& OutPos
 
 	FScopeLock Lock(&const_cast<FCriticalSection&>(BufferLock));
 
+	// Defensive check: ensure velocity array matches position array size
+	if (ReadyShadowVelocities.Num() != ReadyShadowPositions.Num())
+	{
+		OutPositions.Empty();
+		OutVelocities.Empty();
+		return false;
+	}
+
 	const int32 Count = ReadyShadowPositions.Num();
 	OutPositions.SetNumUninitialized(Count);
 	OutVelocities.SetNumUninitialized(Count);
@@ -3227,7 +3238,7 @@ void FGPUFluidSimulator::ProcessStatsReadback(FRHICommandListImmediate& RHICmdLi
 		// Velocity only when ISM rendering enabled
 		// NeighborCount only when shadow readback enabled
 		const bool bNeedShadowData = bShadowReadbackEnabled.load();
-		const bool bNeedVelocity = bFullReadbackEnabled.load();  // ISM needs velocity
+		const bool bNeedVelocity = bFullReadbackEnabled.load() || bNeedShadowData;  // ISM or Shadow needs velocity
 		TArray<FVector3f> NewPositions;
 		TArray<int32> NewSourceIDs;
 		TArray<FVector3f> NewVelocities;

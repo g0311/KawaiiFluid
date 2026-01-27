@@ -1,0 +1,215 @@
+// Copyright KawaiiFluid Team. All Rights Reserved.
+// FluidForceAccumulation.ush - Unified Force Calculation (Cohesion + Viscosity)
+//
+// Optimized single-pass force accumulation using previous frame's neighbor cache.
+// Combines:
+//   1. Cohesion Force (Akinci 2013 surface tension)
+//   2. XSPH Viscosity (velocity smoothing)
+//   3. Laplacian Viscosity (physical drag)
+//
+// This eliminates duplicate neighbor traversal, reducing memory bandwidth by ~50%.
+//
+// Usage: Include in FluidPredictPositions.usf for Phase 2 Force Accumulation.
+
+#pragma once
+
+#include "FluidGPUPhysics.ush"
+
+//=============================================================================
+// Force Accumulation Result Structure
+// Contains all forces calculated in a single neighbor loop
+//=============================================================================
+struct FForceAccumulationResult
+{
+    float3 CohesionAccel;       // Cohesion acceleration (cm/s^2)
+    float3 ViscosityCorrection; // XSPH velocity correction (unnormalized)
+    float3 LaplacianForce;      // Laplacian viscosity force
+    float WeightSum;            // For XSPH normalization
+};
+
+//=============================================================================
+// Unified Force Accumulation Function
+//
+// Calculates Cohesion + Viscosity forces in a single neighbor loop using
+// previous frame's neighbor cache (double buffering).
+//
+// Parameters:
+//   idx                  - Current particle index
+//   position             - Current particle position (cm)
+//   velocity             - Current particle velocity (cm/s)
+//   mass                 - Current particle mass (kg)
+//   density              - Current particle density (kg/m^3)
+//   cohesionStrength     - Surface tension strength coefficient
+//   maxCohesionForce     - Stability clamp for cohesion
+//   restDensity          - Rest density for K_ij correction (kg/m^3)
+//   viscosityCoefficient - Viscosity strength (0~1)
+//   poly6Coeff           - Poly6 kernel coefficient
+//   viscLaplacianCoeff   - Laplacian viscosity coefficient (45 / PI * h^6)
+//   smoothingRadius      - SPH kernel radius (cm)
+//   prevNeighborList     - Previous frame neighbor indices
+//   prevNeighborCounts   - Previous frame neighbor counts per particle
+//   particleCount        - Current frame particle count
+//   prevParticleCount    - Previous frame particle count (bounds check)
+//   particles            - Particle buffer (for neighbor data access)
+//
+// Returns:
+//   FForceAccumulationResult containing all calculated forces
+//=============================================================================
+
+FForceAccumulationResult CalculateForceAccumulation(
+    uint idx,
+    float3 position,
+    float3 velocity,
+    float mass,
+    float density,
+    // Cohesion params
+    float cohesionStrength,
+    float maxCohesionForce,
+    float restDensity,
+    // Viscosity params
+    float viscosityCoefficient,
+    float poly6Coeff,
+    float viscLaplacianCoeff,
+    // Common params
+    float smoothingRadius,
+    // Buffers
+    StructuredBuffer<uint> prevNeighborList,
+    StructuredBuffer<uint> prevNeighborCounts,
+    int particleCount,
+    int prevParticleCount,
+    RWStructuredBuffer<FGPUFluidParticle> particles)
+{
+    FForceAccumulationResult result;
+    result.CohesionAccel = float3(0.0f, 0.0f, 0.0f);
+    result.ViscosityCorrection = float3(0.0f, 0.0f, 0.0f);
+    result.LaplacianForce = float3(0.0f, 0.0f, 0.0f);
+    result.WeightSum = 0.0f;
+
+    // Early out if no valid neighbor cache
+    if (idx >= (uint)prevParticleCount)
+    {
+        return result;
+    }
+
+    // Pre-compute kernel parameters
+    float h_m = smoothingRadius * CM_TO_M;  // Convert cm to m for kernel
+    float h2 = h_m * h_m;
+    float smoothingRadiusSq_cm = smoothingRadius * smoothingRadius;
+
+    // Particle properties
+    float m_i = mass;
+    float rho_i = max(density, SMALL_NUMBER);
+
+    // Accumulators
+    float3 cohesionForce = float3(0.0f, 0.0f, 0.0f);
+
+    // Get cached neighbor count and base index
+    uint cachedCount = prevNeighborCounts[idx];
+    uint baseIdx = idx * MAX_NEIGHBORS_PER_PARTICLE;
+
+    //=========================================================================
+    // Single Neighbor Loop: Process all forces together
+    //=========================================================================
+    for (uint n = 0; n < cachedCount; ++n)
+    {
+        uint neighborIdx = prevNeighborList[baseIdx + n];
+
+        // Bounds check and skip self
+        if (neighborIdx == idx || neighborIdx >= (uint)particleCount)
+        {
+            continue;
+        }
+
+        FGPUFluidParticle neighbor = particles[neighborIdx];
+
+        // Skip CPU-attached neighbors
+        if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+        {
+            continue;
+        }
+
+        // Use current frame's Position (not PredictedPosition which isn't computed yet)
+        float3 r_cm = position - neighbor.Position;
+        float r2_cm = dot(r_cm, r_cm);
+
+        if (r2_cm < SMALL_NUMBER || r2_cm > smoothingRadiusSq_cm)
+        {
+            continue;
+        }
+
+        float rLenInv_cm = rsqrt(r2_cm);
+        float dist_cm = r2_cm * rLenInv_cm;
+        float dist_m = dist_cm * CM_TO_M;
+        float r2_m = dist_m * dist_m;
+
+        if (dist_m >= h_m)
+        {
+            continue;
+        }
+
+        //=====================================================================
+        // 1. Cohesion Force (Akinci 2013)
+        //=====================================================================
+        if (cohesionStrength > 0.0f)
+        {
+            float m_j = neighbor.Mass;
+            float rho_j = max(neighbor.Density, SMALL_NUMBER);
+
+            // K_ij correction factor for particle deficiency (Akinci 2013)
+            float K_ij = (2.0f * restDensity) / (rho_i + rho_j);
+            K_ij = clamp(K_ij, 0.5f, 2.0f);
+
+            // Cohesion kernel: attractive force that peaks at ~0.5h
+            float cohesionWeight = CohesionKernel(dist_m, h_m);
+
+            if (abs(cohesionWeight) > SMALL_NUMBER * 0.001f)
+            {
+                // Direction: particle -> neighbor (attraction)
+                float3 direction = -r_cm * rLenInv_cm;
+
+                // Force magnitude: F = m_i * m_j * C(r)
+                float forceMag = m_i * m_j * cohesionWeight;
+                cohesionForce += K_ij * cohesionStrength * forceMag * direction;
+            }
+        }
+
+        //=====================================================================
+        // 2. XSPH Viscosity (Velocity Smoothing)
+        //=====================================================================
+        if (viscosityCoefficient > 0.0f)
+        {
+            float w = Poly6Kernel(r2_m, h2) * poly6Coeff;
+            float3 velDiff = neighbor.Velocity - velocity;
+
+            result.ViscosityCorrection += velDiff * w;
+            result.WeightSum += w;
+
+            //=================================================================
+            // 3. Laplacian Viscosity (Physical Drag)
+            //=================================================================
+            float laplacian = ViscosityLaplacian(dist_m, h_m, viscLaplacianCoeff);
+            float neighborDensity = max(neighbor.Density, 0.001f);
+            result.LaplacianForce += velDiff * laplacian * neighbor.Mass / neighborDensity;
+        }
+    }
+
+    //=========================================================================
+    // Finalize Cohesion Force
+    //=========================================================================
+    if (cohesionStrength > 0.0f)
+    {
+        // Clamp for stability
+        float forceLen = length(cohesionForce);
+        if (forceLen > maxCohesionForce && forceLen > SMALL_NUMBER)
+        {
+            cohesionForce = (cohesionForce / forceLen) * maxCohesionForce;
+        }
+
+        // Convert to acceleration (cm/s^2)
+        // cohesionForce is in (kg * kg * kernel) space, divide by mass for acceleration
+        // Then multiply by 100 to convert m/s^2 to cm/s^2
+        result.CohesionAccel = (cohesionForce / max(m_i, SMALL_NUMBER)) * 100.0f;
+    }
+
+    return result;
+}

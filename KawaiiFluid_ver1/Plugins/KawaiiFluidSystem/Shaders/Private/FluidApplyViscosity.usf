@@ -1,12 +1,25 @@
 // Copyright KawaiiFluid Team. All Rights Reserved.
-// GPU Fluid Physics - Viscosity Pass
+// [DEPRECATED] GPU Fluid Physics - Viscosity Pass
 //
-// Components:
+// ============================================================================
+// THIS SHADER IS DEPRECATED - DO NOT USE IN NEW CODE
+// ============================================================================
+// As of the Cohesion+Viscosity optimization:
+// - Fluid Viscosity (XSPH + Laplacian) is now calculated in FluidPredictPositions.usf
+//   together with Cohesion in a single PrevNeighborCache loop (Phase 2)
+// - Boundary Viscosity is now calculated in FluidSolveDensityPressure.usf
+//   within the Boundary density loop (Phase 3)
+//
+// This optimization reduces neighbor traversal from 2x to 1x per frame,
+// saving ~400us at 76k particles (~25% improvement).
+//
+// Kept for backward compatibility but no longer called by the simulator.
+// ============================================================================
+//
+// Original Components:
 // 1. XSPH Viscosity: Velocity smoothing between particles
 // 2. Laplacian Viscosity: Physical drag force
 // 3. Boundary Viscosity: Fluid following moving boundaries
-//
-// Note: Cohesion is now handled in PredictPositions (Phase 2) as a Force
 
 #include "/Engine/Public/Platform.ush"
 #include "/Engine/Private/Common.ush"

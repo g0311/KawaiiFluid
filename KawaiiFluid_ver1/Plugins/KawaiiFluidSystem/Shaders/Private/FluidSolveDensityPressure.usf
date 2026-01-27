@@ -83,6 +83,15 @@ int bUseBoundaryZOrder;
 int bEnableRelativeVelocityDamping;
 float RelativeVelocityDampingStrength;
 
+// Boundary Velocity Transfer (moved from FluidApplyViscosity for optimization)
+// Fluid following moving boundaries - applied during boundary density loop
+int bEnableBoundaryVelocityTransfer;
+float BoundaryVelocityTransferStrength;
+float BoundaryDetachSpeedThreshold;
+float BoundaryMaxDetachSpeed;
+float BoundaryAdhesionStrength;  // Clamped adhesion (0~1)
+int SolverIterationCount;        // Total iterations for strength scaling
+
 //=============================================================================
 // Z-Order Cell ID Calculation (uses shader parameters)
 // Morton code functions are provided by FluidMortonUtils.ush
@@ -549,6 +558,7 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	// Boundary Particles contribution (Akinci 2012)
 	// 1. Density: ρ_i += Σ_k ψ_k W(|x_i - x_k|, h)
 	// 2. Pressure gradient: Δx_i += λ_i * ψ_k * ∇W(x_i - x_k) / ρ_0
+	// 3. Velocity Transfer: Fluid following moving boundaries (moved from FluidApplyViscosity)
 	// This makes fluid particles "see" the boundary as solid, preventing penetration
 	// AND pushes fluid away from boundaries (prevents wall climbing)
 	//
@@ -556,6 +566,11 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	// 1. Z-Order Mode: O(K) neighbor search using Morton-sorted BoundaryCellStart/End
 	// 2. Legacy Mode: O(M) brute-force (fallback)
 	//=========================================================================
+	
+	// Boundary Velocity Transfer accumulators (XSPH-style smoothing with boundary)
+	float3 boundaryVelCorrection = float3(0.0f, 0.0f, 0.0f);
+	float boundaryVelWeight = 0.0f;
+	
 	if (bUseBoundaryDensity && BoundaryParticleCount > 0)
 	{
 		// Alternate traversal direction per iteration to eliminate Jacobi bias
@@ -630,6 +645,25 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 								}
 
 								deltaP += pressureDampFactor * lambda_i_prev * boundary.Psi * gradW;
+								
+								//=============================================================
+								// Boundary Velocity Transfer (moved from FluidApplyViscosity)
+								// Fluid following moving boundaries - XSPH-style smoothing
+								//=============================================================
+								if (bEnableBoundaryVelocityTransfer && BoundaryAdhesionStrength > 0.0f)
+								{
+									float3 relativeVelocity = particle.Velocity - boundary.Velocity;
+									float relativeSpeed = length(relativeVelocity);
+									
+									// Detach factor: high relative speed = less transfer
+									float detachFactor = smoothstep(BoundaryDetachSpeedThreshold, BoundaryMaxDetachSpeed, relativeSpeed);
+									float transferFactor = (1.0f - detachFactor) * BoundaryVelocityTransferStrength;
+									
+									float3 velDiff = boundary.Velocity - particle.Velocity;
+									float contribution = w * boundary.Psi * BoundaryAdhesionStrength * transferFactor;
+									boundaryVelCorrection += velDiff * contribution;
+									boundaryVelWeight += contribution;
+								}
 							}
 						}
 					}
@@ -648,7 +682,7 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 				float r2_cm = dot(r_cm, r_cm);
 				float r2 = r2_cm * CM_TO_M_SQ;
 
-				if (r2 < h2 && r2 > SMALL_NUMBER)
+			if (r2 < h2 && r2 > SMALL_NUMBER)
 				{
 					// Poly6 kernel for density
 					float w = Poly6Kernel(r2, h2);
@@ -683,9 +717,38 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 					}
 
 					deltaP += pressureDampFactor * lambda_i_prev * boundary.Psi * gradW;
+					
+					//=============================================================
+					// Boundary Velocity Transfer (moved from FluidApplyViscosity)
+					// Fluid following moving boundaries - XSPH-style smoothing
+					//=============================================================
+					if (bEnableBoundaryVelocityTransfer && BoundaryAdhesionStrength > 0.0f)
+					{
+						float3 relativeVelocity = particle.Velocity - boundary.Velocity;
+						float relativeSpeed = length(relativeVelocity);
+						
+						// Detach factor: high relative speed = less transfer
+						float detachFactor = smoothstep(BoundaryDetachSpeedThreshold, BoundaryMaxDetachSpeed, relativeSpeed);
+						float transferFactor = (1.0f - detachFactor) * BoundaryVelocityTransferStrength;
+						
+						float3 velDiff = boundary.Velocity - particle.Velocity;
+						float contribution = w * boundary.Psi * BoundaryAdhesionStrength * transferFactor;
+						boundaryVelCorrection += velDiff * contribution;
+						boundaryVelWeight += contribution;
+					}
 				}
 			}
 		}
+	}
+	
+	//=========================================================================
+	// Apply Boundary Velocity Transfer
+	// Scale by 1/SolverIterationCount to avoid over-application in multi-iteration solver
+	//=========================================================================
+	if (boundaryVelWeight > SMALL_NUMBER && SolverIterationCount > 0)
+	{
+		float iterationScale = 1.0f / (float)SolverIterationCount;
+		particle.Velocity += (boundaryVelCorrection / boundaryVelWeight) * iterationScale;
 	}
 
 	// Store density and neighbor count
