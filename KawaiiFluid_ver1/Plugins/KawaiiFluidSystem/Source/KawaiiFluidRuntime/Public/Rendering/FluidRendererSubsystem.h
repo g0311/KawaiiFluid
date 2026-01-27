@@ -6,6 +6,7 @@
 #include "Subsystems/WorldSubsystem.h"
 #include "FluidRenderingParameters.h"
 #include "RenderGraphResources.h"
+#include "Core/KawaiiFluidRenderingTypes.h"
 #include "FluidRendererSubsystem.generated.h"
 
 class FFluidSceneViewExtension;
@@ -169,9 +170,10 @@ public:
 	 * @param ParticlePositions Array of particle world positions.
 	 * @param NumParticles Number of particles.
 	 * @param ParticleRadius Radius of each particle (used for shadow sphere size).
-	 * Uses pooling based on MaxParticles to minimize reallocation
+	 * @param Quality Shadow mesh quality level (Low/Medium/High).
+	 * @param MaxParticles Maximum particle count for pooling (0 = no pooling).
 	 */
-	void UpdateShadowInstances(const FVector* ParticlePositions, int32 NumParticles, float ParticleRadius, int32 MaxParticles = 0);
+	void UpdateShadowInstances(const FVector* ParticlePositions, int32 NumParticles, float ParticleRadius, EFluidShadowMeshQuality Quality, int32 MaxParticles = 0);
 	
 	/**
 	 * @brief Update shadow instances with anisotropy data for ellipsoid shadows.
@@ -182,6 +184,7 @@ public:
 	 * @param AnisotropyAxis3 Array of third ellipsoid axis.
 	 * @param NumParticles Number of particles.
 	 * @param ParticleRadius Radius of each particle (used for shadow sphere size).
+	 * @param Quality Shadow mesh quality level (Low/Medium/High).
 	 */
 	void UpdateShadowInstancesWithAnisotropy(
 		const FVector* ParticlePositions,
@@ -189,7 +192,8 @@ public:
 		const FVector4* AnisotropyAxis2,
 		const FVector4* AnisotropyAxis3,
 		int32 NumParticles,
-		float ParticleRadius);
+		float ParticleRadius,
+		EFluidShadowMeshQuality Quality);
 
 private:
 	/** Actor that owns the ISM shadow component. */
@@ -200,9 +204,15 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UInstancedStaticMeshComponent> ShadowInstanceComponent = nullptr;
 
-	/** Sphere mesh used for shadow instances. */
+	/** Shadow sphere meshes for each quality level (Low/Medium/High). */
 	UPROPERTY(Transient)
-	TObjectPtr<UStaticMesh> ShadowSphereMesh;
+	TObjectPtr<UStaticMesh> ShadowSphereMeshes[3];
+
+	/** Current quality level of the shadow mesh (for detecting changes). */
+	EFluidShadowMeshQuality CurrentShadowMeshQuality = EFluidShadowMeshQuality::Medium;
+
+	/** Get or create shadow sphere mesh for specified quality level. */
+	UStaticMesh* GetOrCreateShadowMesh(EFluidShadowMeshQuality Quality);
 
 	/** Cached instance transforms for batch update. */
 	TArray<FTransform> CachedInstanceTransforms;

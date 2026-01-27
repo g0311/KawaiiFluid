@@ -280,7 +280,7 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 			// Clear shadow instances if subsystem available
 			if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
 			{
-				RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f);
+				RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f, VolumeComponent->ShadowMeshQuality);
 			}
 			return;
 		}
@@ -440,7 +440,8 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 					RendererSubsystem->UpdateShadowInstances(
 						Positions.GetData(),
 						NumParticles,
-						ParticleRadius
+						ParticleRadius,
+						VolumeComponent->ShadowMeshQuality
 					);
 				}
 			}
@@ -1682,7 +1683,7 @@ void AKawaiiFluidVolume::ClearAllParticles()
 	{
 		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
 		{
-			RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f);
+			RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f, VolumeComponent->ShadowMeshQuality);
 		}
 	}
 }

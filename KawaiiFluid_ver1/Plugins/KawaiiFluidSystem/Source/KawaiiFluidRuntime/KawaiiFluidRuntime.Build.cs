@@ -60,7 +60,9 @@ public class KawaiiFluidRuntime : ModuleRules
 				"Projects", // IPluginManager 위해 추가
 				"RenderCore", // AddShaderSourceDirectoryMapping 위해 추가
 				"Renderer",
-				"Landscape" // Heightmap collision을 위한 Landscape 모듈
+				"Landscape", // Heightmap collision을 위한 Landscape 모듈
+				"MeshDescription", // Low-poly shadow sphere generation
+				"StaticMeshDescription" // FStaticMeshAttributes
 			}
 		);
 

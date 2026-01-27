@@ -6,6 +6,23 @@
 #include "KawaiiFluidRenderingTypes.generated.h"
 
 /**
+ * Shadow mesh quality levels for HISM shadow casting.
+ * Controls the polygon count of instanced spheres used for fluid shadows.
+ */
+UENUM(BlueprintType)
+enum class EFluidShadowMeshQuality : uint8
+{
+	/** 8 triangles (Octahedron) - Best performance, angular shadows */
+	Low UMETA(DisplayName = "Low (8 tri)"),
+
+	/** 20 triangles (Icosphere) - Balanced performance and quality */
+	Medium UMETA(DisplayName = "Medium (20 tri)"),
+
+	/** 80 triangles (Icosphere subdivided) - Smooth shadows */
+	High UMETA(DisplayName = "High (80 tri)")
+};
+
+/**
  * Debug draw mode for particle visualization
  * Controls the rendering method for debug visualization.
  */

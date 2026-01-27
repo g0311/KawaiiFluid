@@ -481,7 +481,7 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 				{
 					CachedShadowPositions.Empty();
 					CachedShadowVelocities.Empty();
-					RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f);
+					RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f, ShadowMeshQuality);
 					return;
 				}
 		
@@ -615,9 +615,10 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 					// Update HISM shadow instances with uniform spheres
 					// Pass MaxParticleCount for efficient instance pooling (avoids reallocations)
 					RendererSubsystem->UpdateShadowInstances(
-						Positions.GetData(), 
-						NumParticles, 
-						ParticleRadius, 
+						Positions.GetData(),
+						NumParticles,
+						ParticleRadius,
+						ShadowMeshQuality,
 						SpawnSettings.MaxParticleCount
 					);
 
@@ -702,7 +703,7 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 				else
 				{
 					// Clear shadow instances when no particles
-					RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f);
+					RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f, ShadowMeshQuality);
 				}
 			}
 			else
@@ -1485,7 +1486,7 @@ void UKawaiiFluidComponent::ClearAllParticles()
 	{
 		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
 		{
-			RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f);
+			RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f, ShadowMeshQuality);
 		}
 	}
 }

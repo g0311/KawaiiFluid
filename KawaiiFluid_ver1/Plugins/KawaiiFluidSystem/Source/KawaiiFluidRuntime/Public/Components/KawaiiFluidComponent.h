@@ -354,6 +354,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering")
 	bool bEnableShadow = true;
 
+	/** Shadow mesh quality - controls polygon count of shadow spheres */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Rendering", meta = (EditCondition = "bEnableShadow"))
+	EFluidShadowMeshQuality ShadowMeshQuality = EFluidShadowMeshQuality::Medium;
+
 	//========================================
 	// Splash VFX
 	//========================================

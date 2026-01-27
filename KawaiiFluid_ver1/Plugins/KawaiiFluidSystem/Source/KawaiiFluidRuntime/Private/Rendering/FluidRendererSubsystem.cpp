@@ -13,6 +13,8 @@
 #include "UObject/ConstructorHelpers.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Async/ParallelFor.h"
+#include "MeshDescription.h"
+#include "StaticMeshAttributes.h"
 
 bool UFluidRendererSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 {
@@ -157,6 +159,222 @@ void UFluidRendererSubsystem::UpdateCachedLightDirection()
 }
 
 //========================================
+// Low-Poly Sphere Generation (Icosphere + Octahedron)
+//========================================
+
+/**
+ * @brief Create a low-poly sphere mesh for shadow casting.
+ * Supports multiple quality levels with different geometry types.
+ * @param Radius The radius of the sphere (default 50.0 to match engine sphere).
+ * @param Quality The quality level determining geometry complexity.
+ * @return The created static mesh, or nullptr on failure.
+ */
+static UStaticMesh* CreateLowPolySphere(float Radius, EFluidShadowMeshQuality Quality)
+{
+	// Create a transient static mesh
+	UStaticMesh* Mesh = NewObject<UStaticMesh>(GetTransientPackage(), NAME_None, RF_Transient);
+	if (!Mesh)
+	{
+		return nullptr;
+	}
+
+	// Initialize mesh description
+	FMeshDescription MeshDesc;
+	FStaticMeshAttributes Attributes(MeshDesc);
+	Attributes.Register();
+
+	// Create polygon group
+	FPolygonGroupID PolygonGroup = MeshDesc.CreatePolygonGroup();
+
+	// Get attribute arrays
+	TVertexAttributesRef<FVector3f> VertexPositions = Attributes.GetVertexPositions();
+	TVertexInstanceAttributesRef<FVector3f> VertexInstanceNormals = Attributes.GetVertexInstanceNormals();
+	TVertexInstanceAttributesRef<FVector2f> VertexInstanceUVs = Attributes.GetVertexInstanceUVs();
+
+	// Vertex storage
+	TArray<FVector3f> Vertices;
+	TArray<int32> Indices;
+
+	// Helper lambda to add vertex and return index
+	auto AddVertex = [&](const FVector3f& Pos) -> int32
+	{
+		Vertices.Add(Pos.GetSafeNormal() * Radius);
+		return Vertices.Num() - 1;
+	};
+
+	// Helper lambda to get midpoint vertex (for subdivision)
+	TMap<uint64, int32> MidpointCache;
+	auto GetMidpoint = [&](int32 I1, int32 I2) -> int32
+	{
+		uint64 Key = (uint64)FMath::Min(I1, I2) << 32 | (uint64)FMath::Max(I1, I2);
+		if (int32* Found = MidpointCache.Find(Key))
+		{
+			return *Found;
+		}
+		FVector3f Mid = (Vertices[I1] + Vertices[I2]) * 0.5f;
+		int32 NewIdx = AddVertex(Mid);
+		MidpointCache.Add(Key, NewIdx);
+		return NewIdx;
+	};
+
+	if (Quality == EFluidShadowMeshQuality::Low)
+	{
+		// Octahedron: 6 vertices, 8 triangles
+		AddVertex(FVector3f(0, 0, 1));   // 0: Top
+		AddVertex(FVector3f(0, 0, -1));  // 1: Bottom
+		AddVertex(FVector3f(1, 0, 0));   // 2: Front
+		AddVertex(FVector3f(-1, 0, 0));  // 3: Back
+		AddVertex(FVector3f(0, 1, 0));   // 4: Right
+		AddVertex(FVector3f(0, -1, 0));  // 5: Left
+
+		// Top cap
+		Indices.Append({0, 2, 4});
+		Indices.Append({0, 4, 3});
+		Indices.Append({0, 3, 5});
+		Indices.Append({0, 5, 2});
+		// Bottom cap
+		Indices.Append({1, 4, 2});
+		Indices.Append({1, 3, 4});
+		Indices.Append({1, 5, 3});
+		Indices.Append({1, 2, 5});
+	}
+	else
+	{
+		// Icosahedron base: 12 vertices, 20 triangles
+		const float Phi = (1.0f + FMath::Sqrt(5.0f)) / 2.0f; // Golden ratio
+
+		// 12 vertices of icosahedron
+		AddVertex(FVector3f(-1, Phi, 0));
+		AddVertex(FVector3f(1, Phi, 0));
+		AddVertex(FVector3f(-1, -Phi, 0));
+		AddVertex(FVector3f(1, -Phi, 0));
+
+		AddVertex(FVector3f(0, -1, Phi));
+		AddVertex(FVector3f(0, 1, Phi));
+		AddVertex(FVector3f(0, -1, -Phi));
+		AddVertex(FVector3f(0, 1, -Phi));
+
+		AddVertex(FVector3f(Phi, 0, -1));
+		AddVertex(FVector3f(Phi, 0, 1));
+		AddVertex(FVector3f(-Phi, 0, -1));
+		AddVertex(FVector3f(-Phi, 0, 1));
+
+		// 20 faces of icosahedron
+		Indices.Append({0, 11, 5});
+		Indices.Append({0, 5, 1});
+		Indices.Append({0, 1, 7});
+		Indices.Append({0, 7, 10});
+		Indices.Append({0, 10, 11});
+
+		Indices.Append({1, 5, 9});
+		Indices.Append({5, 11, 4});
+		Indices.Append({11, 10, 2});
+		Indices.Append({10, 7, 6});
+		Indices.Append({7, 1, 8});
+
+		Indices.Append({3, 9, 4});
+		Indices.Append({3, 4, 2});
+		Indices.Append({3, 2, 6});
+		Indices.Append({3, 6, 8});
+		Indices.Append({3, 8, 9});
+
+		Indices.Append({4, 9, 5});
+		Indices.Append({2, 4, 11});
+		Indices.Append({6, 2, 10});
+		Indices.Append({8, 6, 7});
+		Indices.Append({9, 8, 1});
+
+		// Subdivide for High quality (20 -> 80 triangles)
+		if (Quality == EFluidShadowMeshQuality::High)
+		{
+			TArray<int32> NewIndices;
+			NewIndices.Reserve(Indices.Num() * 4);
+
+			for (int32 i = 0; i < Indices.Num(); i += 3)
+			{
+				int32 V0 = Indices[i];
+				int32 V1 = Indices[i + 1];
+				int32 V2 = Indices[i + 2];
+
+				// Get midpoints
+				int32 M01 = GetMidpoint(V0, V1);
+				int32 M12 = GetMidpoint(V1, V2);
+				int32 M20 = GetMidpoint(V2, V0);
+
+				// Create 4 new triangles
+				NewIndices.Append({V0, M01, M20});
+				NewIndices.Append({V1, M12, M01});
+				NewIndices.Append({V2, M20, M12});
+				NewIndices.Append({M01, M12, M20});
+			}
+
+			Indices = MoveTemp(NewIndices);
+		}
+	}
+
+	// Reserve mesh description space
+	const int32 NumTriangles = Indices.Num() / 3;
+	MeshDesc.ReserveNewVertices(Vertices.Num());
+	MeshDesc.ReserveNewVertexInstances(Indices.Num());
+	MeshDesc.ReserveNewPolygons(NumTriangles);
+
+	// Create vertices in mesh description
+	TArray<FVertexID> VertexIDs;
+	VertexIDs.Reserve(Vertices.Num());
+	for (const FVector3f& Pos : Vertices)
+	{
+		FVertexID VID = MeshDesc.CreateVertex();
+		VertexPositions[VID] = Pos;
+		VertexIDs.Add(VID);
+	}
+
+	// Create triangles
+	for (int32 i = 0; i < Indices.Num(); i += 3)
+	{
+		FVertexID V0 = VertexIDs[Indices[i]];
+		FVertexID V1 = VertexIDs[Indices[i + 1]];
+		FVertexID V2 = VertexIDs[Indices[i + 2]];
+
+		FVector3f P0 = VertexPositions[V0];
+		FVector3f P1 = VertexPositions[V1];
+		FVector3f P2 = VertexPositions[V2];
+
+		FVertexInstanceID VI0 = MeshDesc.CreateVertexInstance(V0);
+		FVertexInstanceID VI1 = MeshDesc.CreateVertexInstance(V1);
+		FVertexInstanceID VI2 = MeshDesc.CreateVertexInstance(V2);
+
+		// Sphere normal = normalized position
+		VertexInstanceNormals[VI0] = P0.GetSafeNormal();
+		VertexInstanceNormals[VI1] = P1.GetSafeNormal();
+		VertexInstanceNormals[VI2] = P2.GetSafeNormal();
+
+		// Simple UVs (not important for shadow mesh)
+		VertexInstanceUVs[VI0] = FVector2f(0.5f, 0.5f);
+		VertexInstanceUVs[VI1] = FVector2f(0.5f, 0.5f);
+		VertexInstanceUVs[VI2] = FVector2f(0.5f, 0.5f);
+
+		TArray<FVertexInstanceID> TriVerts;
+		TriVerts.Add(VI0);
+		TriVerts.Add(VI1);
+		TriVerts.Add(VI2);
+		MeshDesc.CreatePolygon(PolygonGroup, TriVerts);
+	}
+
+	// Build the static mesh
+	TArray<const FMeshDescription*> MeshDescriptions;
+	MeshDescriptions.Add(&MeshDesc);
+
+	UStaticMesh::FBuildMeshDescriptionsParams BuildParams;
+	BuildParams.bFastBuild = true;
+	BuildParams.bAllowCpuAccess = false;
+	BuildParams.bCommitMeshDescription = false;
+
+	Mesh->BuildFromMeshDescriptions(MeshDescriptions, BuildParams);
+
+	return Mesh;
+}
+
+//========================================
 // VSM Buffer Management
 //========================================
 
@@ -203,13 +421,50 @@ void UFluidRendererSubsystem::UpdateShadowProxyState()
 		}
 		ShadowProxyActor = nullptr;
 
-		// Release resources
-		ShadowSphereMesh = nullptr;
+		// Release resources - clear all quality levels
+		for (int32 i = 0; i < 3; ++i)
+		{
+			ShadowSphereMeshes[i] = nullptr;
+		}
 		CachedInstanceTransforms.Empty();
 	}
 }
 
-void UFluidRendererSubsystem::UpdateShadowInstances(const FVector* ParticlePositions, int32 NumParticles, float ParticleRadius, int32 MaxParticles)
+/**
+ * @brief Get or create shadow sphere mesh for specified quality level.
+ * Uses lazy creation and caches meshes per quality level.
+ * @param Quality The quality level for the shadow mesh.
+ * @return The shadow sphere mesh, or nullptr on failure.
+ */
+UStaticMesh* UFluidRendererSubsystem::GetOrCreateShadowMesh(EFluidShadowMeshQuality Quality)
+{
+	const int32 QualityIndex = static_cast<int32>(Quality);
+	if (QualityIndex < 0 || QualityIndex >= 3)
+	{
+		return nullptr;
+	}
+
+	// Return cached mesh if valid
+	if (IsValid(ShadowSphereMeshes[QualityIndex]))
+	{
+		return ShadowSphereMeshes[QualityIndex];
+	}
+
+	// Create new mesh for this quality level
+	ShadowSphereMeshes[QualityIndex] = CreateLowPolySphere(50.0f, Quality);
+
+	if (ShadowSphereMeshes[QualityIndex])
+	{
+		int32 TriCount = (Quality == EFluidShadowMeshQuality::Low) ? 8 :
+		                 (Quality == EFluidShadowMeshQuality::Medium) ? 20 : 80;
+		UE_LOG(LogTemp, Log, TEXT("FluidRendererSubsystem: Created shadow sphere (Quality: %d, %d triangles)"),
+			QualityIndex, TriCount);
+	}
+
+	return ShadowSphereMeshes[QualityIndex];
+}
+
+void UFluidRendererSubsystem::UpdateShadowInstances(const FVector* ParticlePositions, int32 NumParticles, float ParticleRadius, EFluidShadowMeshQuality Quality, int32 MaxParticles)
 {
 	check(IsInGameThread());
 
@@ -270,22 +525,30 @@ void UFluidRendererSubsystem::UpdateShadowInstances(const FVector* ParticlePosit
 		}
 	}
 
+	// Get or create shadow mesh for requested quality level
+	UStaticMesh* ShadowMesh = GetOrCreateShadowMesh(Quality);
+	if (!ShadowMesh)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("FluidRendererSubsystem: Failed to get shadow sphere mesh for quality %d"),
+			static_cast<int32>(Quality));
+		return;
+	}
+
+	// Check if quality changed - need to update ISM component's mesh
+	if (CurrentShadowMeshQuality != Quality)
+	{
+		if (IsValid(ShadowInstanceComponent))
+		{
+			ShadowInstanceComponent->ClearInstances();
+			ShadowInstanceComponent->SetStaticMesh(ShadowMesh);
+		}
+		CurrentShadowMeshQuality = Quality;
+	}
+
 	// Lazy creation of ISM component
 	if (!IsValid(ShadowInstanceComponent))
 	{
 		ShadowInstanceComponent = nullptr;
-
-		// Load sphere mesh if not already loaded (also check validity)
-		if (!IsValid(ShadowSphereMesh))
-		{
-			ShadowSphereMesh = nullptr;
-			ShadowSphereMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-			if (!ShadowSphereMesh)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("FluidRendererSubsystem: Failed to load sphere mesh for shadow"));
-				return;
-			}
-		}
 
 		// Create ISM component for instanced shadow spheres
 		ShadowInstanceComponent = NewObject<UInstancedStaticMeshComponent>(ShadowProxyActor, TEXT("ShadowInstanceComponent"));
@@ -294,7 +557,7 @@ void UFluidRendererSubsystem::UpdateShadowInstances(const FVector* ParticlePosit
 			// Set as root component so it's properly attached to the actor
 			ShadowProxyActor->SetRootComponent(ShadowInstanceComponent);
 
-			ShadowInstanceComponent->SetStaticMesh(ShadowSphereMesh);
+			ShadowInstanceComponent->SetStaticMesh(ShadowMesh);
 
 			// Shadow settings - cast shadow but invisible in main pass
 			ShadowInstanceComponent->CastShadow = true;
@@ -426,6 +689,8 @@ void UFluidRendererSubsystem::UpdateShadowInstances(const FVector* ParticlePosit
  * @param AnisotropyAxis2 Array of second ellipsoid axis.
  * @param AnisotropyAxis3 Array of third ellipsoid axis.
  * @param NumParticles Number of particles.
+ * @param ParticleRadius Radius of each particle.
+ * @param Quality Shadow mesh quality level (Low/Medium/High).
  */
 void UFluidRendererSubsystem::UpdateShadowInstancesWithAnisotropy(
 	const FVector* ParticlePositions,
@@ -433,7 +698,8 @@ void UFluidRendererSubsystem::UpdateShadowInstancesWithAnisotropy(
 	const FVector4* AnisotropyAxis2,
 	const FVector4* AnisotropyAxis3,
 	int32 NumParticles,
-	float ParticleRadius)
+	float ParticleRadius,
+	EFluidShadowMeshQuality Quality)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FluidShadow_UpdateInstancesWithAnisotropy);
 
@@ -480,26 +746,36 @@ void UFluidRendererSubsystem::UpdateShadowInstancesWithAnisotropy(
 		}
 	}
 
+	// Get or create shadow mesh for requested quality level
+	UStaticMesh* ShadowMesh = GetOrCreateShadowMesh(Quality);
+	if (!ShadowMesh)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("FluidRendererSubsystem: Failed to get shadow sphere mesh (anisotropy) for quality %d"),
+			static_cast<int32>(Quality));
+		return;
+	}
+
+	// Check if quality changed - need to update ISM component's mesh
+	if (CurrentShadowMeshQuality != Quality)
+	{
+		if (IsValid(ShadowInstanceComponent))
+		{
+			ShadowInstanceComponent->ClearInstances();
+			ShadowInstanceComponent->SetStaticMesh(ShadowMesh);
+		}
+		CurrentShadowMeshQuality = Quality;
+	}
+
 	// Lazy creation of ISM component
 	if (!IsValid(ShadowInstanceComponent))
 	{
 		ShadowInstanceComponent = nullptr;
 
-		if (!IsValid(ShadowSphereMesh))
-		{
-			ShadowSphereMesh = nullptr;
-			ShadowSphereMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-			if (!ShadowSphereMesh)
-			{
-				return;
-			}
-		}
-
 		ShadowInstanceComponent = NewObject<UInstancedStaticMeshComponent>(ShadowProxyActor, TEXT("ShadowInstanceComponent"));
 		if (ShadowInstanceComponent)
 		{
 			ShadowProxyActor->SetRootComponent(ShadowInstanceComponent);
-			ShadowInstanceComponent->SetStaticMesh(ShadowSphereMesh);
+			ShadowInstanceComponent->SetStaticMesh(ShadowMesh);
 
 			ShadowInstanceComponent->CastShadow = true;
 			ShadowInstanceComponent->bCastDynamicShadow = true;
