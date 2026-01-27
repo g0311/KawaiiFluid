@@ -77,11 +77,7 @@ namespace GridResolutionPermutation
 
 //=============================================================================
 // Predict Positions Compute Shader
-// Pass 1: Apply forces (including Cohesion) and predict positions
-//
-// XPBD Principle: "Forces First, Constraints Later"
-// Cohesion is a force that should be applied BEFORE position prediction,
-// not after constraint solving. This prevents the "sand" effect.
+// Pass 1: Apply forces and predict positions
 //=============================================================================
 
 class FPredictPositionsCS : public FGlobalShader
@@ -90,42 +86,12 @@ public:
 	DECLARE_GLOBAL_SHADER(FPredictPositionsCS);
 	SHADER_USE_PARAMETER_STRUCT(FPredictPositionsCS, FGlobalShader);
 
-	// Grid resolution permutation for Z-Order neighbor search
-	using FPermutationDomain = TShaderPermutationDomain<FGridResolutionDim>;
-
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		// Particle buffer
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, Particles)
 		SHADER_PARAMETER(int32, ParticleCount)
 		SHADER_PARAMETER(float, DeltaTime)
 		SHADER_PARAMETER(FVector3f, Gravity)
 		SHADER_PARAMETER(FVector3f, ExternalForce)
-
-		// =========================================================================
-		// Cohesion Force Parameters (XPBD: Forces applied before prediction)
-		// =========================================================================
-		SHADER_PARAMETER(float, CohesionStrength)
-		SHADER_PARAMETER(float, RestDensity)
-		SHADER_PARAMETER(float, SmoothingRadius)
-		SHADER_PARAMETER(float, Poly6Coeff)
-		SHADER_PARAMETER(float, CellSize)
-		SHADER_PARAMETER(float, MaxCohesionAccel)
-
-		// =========================================================================
-		// Spatial Data Structures for Neighbor Search
-		// =========================================================================
-		// Z-Order sorted mode (primary)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellStart)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellEnd)
-		SHADER_PARAMETER(int32, bUseZOrderSorting)
-
-		// Hash table mode (legacy fallback)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellCounts)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleIndices)
-
-		// Morton code bounds (must match simulation bounds)
-		SHADER_PARAMETER(FVector3f, MortonBoundsMin)
-		SHADER_PARAMETER(FVector3f, MortonBoundsExtent)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 256;
@@ -141,15 +107,6 @@ public:
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-
-		// Get grid resolution from permutation
-		FPermutationDomain PermutationVector(Parameters.PermutationId);
-		const int32 GridPreset = PermutationVector.Get<FGridResolutionDim>();
-		const int32 AxisBits = GridResolutionPermutation::GetAxisBits(GridPreset);
-		const int32 MaxValue = (1 << AxisBits) - 1;
-
-		OutEnvironment.SetDefine(TEXT("MORTON_AXIS_BITS"), AxisBits);
-		OutEnvironment.SetDefine(TEXT("MORTON_MAX_VALUE"), MaxValue);
 	}
 };
 

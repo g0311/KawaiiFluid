@@ -15,112 +15,32 @@
 void FGPUFluidSimulator::AddPredictPositionsPass(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferUAVRef ParticlesUAV,
-	const FGPUFluidSimulationParams& Params,
-	const FSimulationSpatialData& SpatialData)
+	const FGPUFluidSimulationParams& Params)
 {
 	if (CurrentParticleCount <= 0) return;
 
-	// Check if Z-Order sorting is enabled for grid resolution permutation
-	const bool bUseZOrder = ZOrderSortManager.IsValid() && ZOrderSortManager->IsZOrderSortingEnabled();
-	const int32 GridPreset = bUseZOrder 
-		? GridResolutionPermutation::FromPreset(ZOrderSortManager->GetGridResolutionPreset())
-		: 0;
-
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
-	
-	// Use permutation for grid resolution
-	FPredictPositionsCS::FPermutationDomain PermutationVector;
-	PermutationVector.Set<FGridResolutionDim>(GridPreset);
-	TShaderMapRef<FPredictPositionsCS> ComputeShader(ShaderMap, PermutationVector);
+	TShaderMapRef<FPredictPositionsCS> ComputeShader(ShaderMap);
 
 	FPredictPositionsCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FPredictPositionsCS::FParameters>();
-	
-	// Basic parameters
 	PassParameters->Particles = ParticlesUAV;
 	PassParameters->ParticleCount = CurrentParticleCount;
 	PassParameters->DeltaTime = Params.DeltaTime;
 	PassParameters->Gravity = Params.Gravity;
 	PassParameters->ExternalForce = ExternalForce;
 
-	// =========================================================================
-	// Cohesion Force Parameters (XPBD: Forces applied before prediction)
-	// =========================================================================
-	PassParameters->CohesionStrength = Params.CohesionStrength;
-	PassParameters->RestDensity = Params.RestDensity;
-	PassParameters->SmoothingRadius = Params.SmoothingRadius;
-	PassParameters->Poly6Coeff = Params.Poly6Coeff;
-	PassParameters->CellSize = Params.CellSize;
-	
-	// Calculate MaxCohesionAccel similar to MaxSurfaceTensionForce calculation
-	const float h_m = Params.SmoothingRadius * 0.01f;  // cm to m
-	PassParameters->MaxCohesionAccel = Params.CohesionStrength * Params.RestDensity * h_m * h_m * h_m * 1000.0f;
-
-	// =========================================================================
-	// Spatial Data Structures for Neighbor Search
-	// =========================================================================
-	PassParameters->bUseZOrderSorting = bUseZOrder ? 1 : 0;
-
-	// Z-Order buffers (primary mode)
-	if (SpatialData.CellStartSRV && SpatialData.CellEndSRV)
-	{
-		PassParameters->CellStart = SpatialData.CellStartSRV;
-		PassParameters->CellEnd = SpatialData.CellEndSRV;
-	}
-	else
-	{
-		// Create dummy buffers for RDG validation
-		FRDGBufferRef DummyCellStart = GraphBuilder.CreateBuffer(
-			FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 1),
-			TEXT("PredictPos.DummyCellStart"));
-		FRDGBufferRef DummyCellEnd = GraphBuilder.CreateBuffer(
-			FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 1),
-			TEXT("PredictPos.DummyCellEnd"));
-		uint32 InvalidIndex = 0xFFFFFFFF;
-		GraphBuilder.QueueBufferUpload(DummyCellStart, &InvalidIndex, sizeof(uint32));
-		GraphBuilder.QueueBufferUpload(DummyCellEnd, &InvalidIndex, sizeof(uint32));
-		PassParameters->CellStart = GraphBuilder.CreateSRV(DummyCellStart);
-		PassParameters->CellEnd = GraphBuilder.CreateSRV(DummyCellEnd);
-	}
-
-	// Hash table buffers (legacy fallback)
-	if (SpatialData.CellCountsSRV && SpatialData.ParticleIndicesSRV)
-	{
-		PassParameters->CellCounts = SpatialData.CellCountsSRV;
-		PassParameters->ParticleIndices = SpatialData.ParticleIndicesSRV;
-	}
-	else
-	{
-		// Create dummy buffers for RDG validation
-		FRDGBufferRef DummyCellCounts = GraphBuilder.CreateBuffer(
-			FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 1),
-			TEXT("PredictPos.DummyCellCounts"));
-		FRDGBufferRef DummyParticleIndices = GraphBuilder.CreateBuffer(
-			FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 1),
-			TEXT("PredictPos.DummyParticleIndices"));
-		uint32 ZeroData = 0;
-		GraphBuilder.QueueBufferUpload(DummyCellCounts, &ZeroData, sizeof(uint32));
-		GraphBuilder.QueueBufferUpload(DummyParticleIndices, &ZeroData, sizeof(uint32));
-		PassParameters->CellCounts = GraphBuilder.CreateSRV(DummyCellCounts);
-		PassParameters->ParticleIndices = GraphBuilder.CreateSRV(DummyParticleIndices);
-	}
-
-	// Morton bounds for Z-Order cell ID calculation
-	PassParameters->MortonBoundsMin = SimulationBoundsMin;
-	PassParameters->MortonBoundsExtent = SimulationBoundsMax - SimulationBoundsMin;
-
-	// Debug logging
+	// Debug: log gravity and delta time
 	static int32 DebugCounter = 0;
 	if (++DebugCounter % 60 == 0)
 	{
-		//UE_LOG(LogGPUFluidSimulator, Log, TEXT("PredictPositions: Gravity=(%.2f, %.2f, %.2f), Cohesion=%.2f, DeltaTime=%.4f, Particles=%d, ZOrder=%d"),
-		//	Params.Gravity.X, Params.Gravity.Y, Params.Gravity.Z, Params.CohesionStrength, Params.DeltaTime, CurrentParticleCount, bUseZOrder);
+		//UE_LOG(LogGPUFluidSimulator, Log, TEXT("PredictPositions: Gravity=(%.2f, %.2f, %.2f), DeltaTime=%.4f, Particles=%d"),Params.Gravity.X, Params.Gravity.Y, Params.Gravity.Z, Params.DeltaTime, CurrentParticleCount);
 	}
 
 	const uint32 NumGroups = FMath::DivideAndRoundUp(CurrentParticleCount, FPredictPositionsCS::ThreadGroupSize);
 
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
-		RDG_EVENT_NAME("GPUFluid::PredictPositions+Cohesion"),
+		RDG_EVENT_NAME("GPUFluid::PredictPositions"),
 		ComputeShader,
 		PassParameters,
 		FIntVector(NumGroups, 1, 1)

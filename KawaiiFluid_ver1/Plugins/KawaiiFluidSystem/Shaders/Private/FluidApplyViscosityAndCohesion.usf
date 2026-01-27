@@ -1,16 +1,14 @@
 // Copyright KawaiiFluid Team. All Rights Reserved.
-// GPU Fluid Physics - Viscosity Pass (Post-Processing)
+// GPU Fluid Physics - Combined Viscosity and Cohesion Pass
 //
-// XPBD Refactoring: Cohesion moved to PredictPositions pass (Forces First!)
-// This pass now handles ONLY viscosity smoothing AFTER constraint solving.
+// Merges ApplyViscosity and ApplyCohesion into a single pass for performance.
+// This saves one full neighbor iteration (~35-40% faster than separate passes).
 //
 // Components:
 // 1. XSPH Viscosity: Velocity smoothing between particles
 // 2. Laplacian Viscosity: Physical drag force
-// 3. Boundary Viscosity: Fluid following moving boundaries
-//
-// NOTE: Cohesion is now computed in FluidPredictPositions.usf as part of
-// force application (XPBD Principle: "Forces First, Constraints Later")
+// 3. Cohesion: Surface tension (particle attraction)
+// 4. Boundary Viscosity: Fluid following moving boundaries
 
 #include "/Engine/Public/Platform.ush"
 #include "/Engine/Private/Common.ush"
@@ -41,8 +39,7 @@ float ViscosityCoefficient;
 float Poly6Coeff;
 float ViscLaplacianCoeff;  // 45 / (PI * h^6)
 
-// [DEPRECATED] Cohesion parameters - kept for backward compatibility but ignored
-// Cohesion is now computed in FluidPredictPositions.usf
+// Cohesion parameters (Akinci 2013 surface tension, without curvature)
 float CohesionStrength;
 float RestDensity;
 float MaxSurfaceTensionForce;
@@ -116,20 +113,18 @@ void ApplyViscosityAndCohesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		return;
 	}
 
-	// =========================================================================
-	// XPBD Refactoring: Cohesion is now in PredictPositions pass
-	// This pass only handles viscosity (post-constraint velocity smoothing)
-	// =========================================================================
+	// Skip if both viscosity and cohesion are disabled
 	bool doViscosity = (ViscosityCoefficient > 0.0f);
-	
-	// Skip if viscosity is disabled
-	if (!doViscosity)
+	bool doCohesion = (CohesionStrength > 0.0f);
+	if (!doViscosity && !doCohesion)
 	{
 		return;
 	}
 
 	float3 pos = particle.PredictedPosition;
 	float3 vel = particle.Velocity;
+	float rho_i = particle.Density;
+	float m_i = particle.Mass;
 
 	// Convert smoothing radius to meters for kernel calculations
 	float h_m = SmoothingRadius * CM_TO_M;
@@ -141,8 +136,11 @@ void ApplyViscosityAndCohesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	float weightSum = 0.0f;
 	float3 laplacianForce = float3(0.0f, 0.0f, 0.0f);
 
+	// Cohesion accumulator
+	float3 cohesionForce = float3(0.0f, 0.0f, 0.0f);
+
 	//=========================================================================
-	// Neighbor loop: Viscosity only
+	// Single neighbor loop: Viscosity + Cohesion combined
 	//=========================================================================
 	if (bUseNeighborCache)
 	{
@@ -179,8 +177,10 @@ void ApplyViscosityAndCohesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			float dist_m = dist_cm * CM_TO_M;
 			float r2_m = dist_m * dist_m;
 
+			//=================================================================
 			// Viscosity calculation
-			if (r2_m < h2)
+			//=================================================================
+			if (doViscosity && r2_m < h2)
 			{
 				float w = Poly6Kernel(r2_m, h2) * Poly6Coeff;
 				float3 velDiff = neighbor.Velocity - vel;
@@ -191,6 +191,33 @@ void ApplyViscosityAndCohesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 				float laplacian = ViscosityLaplacian(dist_m, h_m, ViscLaplacianCoeff);
 				float neighborDensity = max(neighbor.Density, 0.001f);
 				laplacianForce += velDiff * laplacian * neighbor.Mass / neighborDensity;
+			}
+
+			//=================================================================
+			// Cohesion calculation (without curvature)
+			//=================================================================
+			if (doCohesion)
+			{
+				float m_j = neighbor.Mass;
+				float rho_j = neighbor.Density;
+				float3 gradDir = r_cm * rLenInv_cm;
+
+				// K_ij correction factor for particle deficiency
+				float K_ij = 1.0f;
+				if (rho_i > SMALL_NUMBER && rho_j > SMALL_NUMBER)
+				{
+					K_ij = (2.0f * RestDensity) / (rho_i + rho_j);
+					K_ij = clamp(K_ij, 0.5f, 2.0f);
+				}
+
+				// Cohesion force (Akinci 2013)
+				float cohesionWeight = CohesionKernel(dist_m, h_m);
+				if (abs(cohesionWeight) > SMALL_NUMBER * 0.001f)
+				{
+					float3 direction = -gradDir;
+					float forceMag = m_i * m_j * cohesionWeight;
+					cohesionForce += K_ij * forceMag * direction;
+				}
 			}
 		}
 	}
@@ -231,7 +258,7 @@ void ApplyViscosityAndCohesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 						float r2_m = dist_m * dist_m;
 
 						// Viscosity
-						if (r2_m < h2)
+						if (doViscosity && r2_m < h2)
 						{
 							float w = Poly6Kernel(r2_m, h2) * Poly6Coeff;
 							float3 velDiff = neighbor.Velocity - vel;
@@ -241,6 +268,29 @@ void ApplyViscosityAndCohesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 							float laplacian = ViscosityLaplacian(dist_m, h_m, ViscLaplacianCoeff);
 							float neighborDensity = max(neighbor.Density, 0.001f);
 							laplacianForce += velDiff * laplacian * neighbor.Mass / neighborDensity;
+						}
+
+						// Cohesion
+						if (doCohesion)
+						{
+							float m_j = neighbor.Mass;
+							float rho_j = neighbor.Density;
+							float3 gradDir = r_cm * rLenInv_cm;
+
+							float K_ij = 1.0f;
+							if (rho_i > SMALL_NUMBER && rho_j > SMALL_NUMBER)
+							{
+								K_ij = (2.0f * RestDensity) / (rho_i + rho_j);
+								K_ij = clamp(K_ij, 0.5f, 2.0f);
+							}
+
+							float cohesionWeight = CohesionKernel(dist_m, h_m);
+							if (abs(cohesionWeight) > SMALL_NUMBER * 0.001f)
+							{
+								float3 direction = -gradDir;
+								float forceMag = m_i * m_j * cohesionWeight;
+								cohesionForce += K_ij * forceMag * direction;
+							}
 						}
 					}
 				}
@@ -332,27 +382,53 @@ void ApplyViscosityAndCohesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	//=========================================================================
 	// Apply Viscosity
 	//=========================================================================
-	// XSPH velocity smoothing
-	if (weightSum > SMALL_NUMBER)
+	if (doViscosity)
 	{
-		velocityCorrection /= weightSum;
-		particle.Velocity += ViscosityCoefficient * velocityCorrection;
+		// XSPH velocity smoothing
+		if (weightSum > SMALL_NUMBER)
+		{
+			velocityCorrection /= weightSum;
+			particle.Velocity += ViscosityCoefficient * velocityCorrection;
+		}
+
+		// Laplacian viscosity (drag force)
+		float mu = ViscosityCoefficient * ViscosityCoefficient * LAPLACIAN_VISCOSITY_SCALE;
+		if (mu > SMALL_NUMBER)
+		{
+			particle.Velocity += mu * laplacianForce * DeltaTime;
+		}
+
+		// Velocity drag (air resistance)
+		float dragCoeff = ViscosityCoefficient * ViscosityCoefficient * VELOCITY_DRAG_SCALE;
+		if (dragCoeff > SMALL_NUMBER)
+		{
+			float damping = 1.0f - dragCoeff * DeltaTime;
+			damping = max(damping, 0.0f);
+			particle.Velocity *= damping;
+		}
 	}
 
-	// Laplacian viscosity (drag force)
-	float mu = ViscosityCoefficient * ViscosityCoefficient * LAPLACIAN_VISCOSITY_SCALE;
-	if (mu > SMALL_NUMBER)
+	//=========================================================================
+	// Apply Cohesion
+	//=========================================================================
+	if (doCohesion)
 	{
-		particle.Velocity += mu * laplacianForce * DeltaTime;
-	}
+		float3 totalForce = CohesionStrength * cohesionForce;
+		float3 acceleration = totalForce / max(m_i, SMALL_NUMBER);
 
-	// Velocity drag (air resistance)
-	float dragCoeff = ViscosityCoefficient * ViscosityCoefficient * VELOCITY_DRAG_SCALE;
-	if (dragCoeff > SMALL_NUMBER)
-	{
-		float damping = 1.0f - dragCoeff * DeltaTime;
-		damping = max(damping, 0.0f);
-		particle.Velocity *= damping;
+		// Clamp for stability
+		if (MaxSurfaceTensionForce > 0.0f)
+		{
+			float maxAccel = MaxSurfaceTensionForce / max(m_i, SMALL_NUMBER);
+			float accelMag = length(acceleration);
+			if (accelMag > maxAccel && accelMag > SMALL_NUMBER)
+			{
+				acceleration = acceleration * (maxAccel / accelMag);
+			}
+		}
+
+		#define M_TO_CM 100.0f
+		particle.Velocity += acceleration * DeltaTime * M_TO_CM;
 	}
 
 	Particles[idx] = particle;

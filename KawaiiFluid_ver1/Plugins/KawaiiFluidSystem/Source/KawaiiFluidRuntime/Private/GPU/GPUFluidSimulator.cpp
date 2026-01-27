@@ -840,30 +840,13 @@ FGPUFluidSimulator::FSimulationSpatialData FGPUFluidSimulator::BuildSpatialStruc
 		return SpatialData;
 	}
 
-	// =========================================================================
-	// XPBD Principle 1: "Forces First, Constraints Later"
-	// 
-	// NEW ORDER (correct XPBD):
-	//   1. Extract positions (from Position, not PredictedPosition)
-	//   2. Build spatial structure (Z-Order or Hash Table)
-	//   3. PredictPositions + Cohesion (neighbor search uses sorted data)
-	//
-	// OLD ORDER (incorrect):
-	//   1. PredictPositions (no cohesion)
-	//   2. Extract positions (from PredictedPosition)
-	//   3. Build spatial structure
-	//
-	// Why this change:
-	// - Cohesion is a FORCE, not a post-processing constraint
-	// - Cohesion needs neighbor search -> must happen AFTER spatial build
-	// - Sorting based on current Position is valid (particles don't teleport)
-	// =========================================================================
+	// Pass 1: Predict Positions
+	AddPredictPositionsPass(GraphBuilder, OutParticlesUAV, Params);
 
-	// Pass 1: Extract positions (from current Position for sorting)
-	// bUsePredictedPosition = false: use Position instead of PredictedPosition
-	AddExtractPositionsPass(GraphBuilder, OutParticlesSRV, OutPositionsUAV, CurrentParticleCount, false);
+	// Pass 2: Extract positions (Initial)
+	AddExtractPositionsPass(GraphBuilder, OutParticlesSRV, OutPositionsUAV, CurrentParticleCount, true);
 
-	// Pass 2: Spatial Data Structure
+	// Pass 3: Spatial Data Structure
 	// Check both manager validity AND enabled flag for Z-Order sorting
 	const bool bUseZOrderSorting = ZOrderSortManager.IsValid() && ZOrderSortManager->IsZOrderSortingEnabled();
 	if (bUseZOrderSorting)
@@ -959,18 +942,6 @@ FGPUFluidSimulator::FSimulationSpatialData FGPUFluidSimulator::BuildSpatialStruc
 		SpatialData.CellStartSRV = GraphBuilder.CreateSRV(DummyCellStartBuffer);
 		SpatialData.CellEndSRV = GraphBuilder.CreateSRV(DummyCellEndBuffer);
 	}
-
-	// =========================================================================
-	// Pass 3: Predict Positions + Cohesion (XPBD: Forces First!)
-	// 
-	// Now that spatial data is built, we can compute cohesion forces using
-	// neighbor search and apply them during position prediction.
-	// =========================================================================
-	AddPredictPositionsPass(GraphBuilder, OutParticlesUAV, Params, SpatialData);
-
-	// Pass 3.1: Re-extract positions (from PredictedPosition for constraint solving)
-	// The constraint solver (Phase 3) uses PredictedPosition
-	AddExtractPositionsPass(GraphBuilder, OutParticlesSRV, OutPositionsUAV, CurrentParticleCount, true);
 
 	// Pass 3.5: GPU Boundary Skinning (SkeletalMesh - same-frame)
 

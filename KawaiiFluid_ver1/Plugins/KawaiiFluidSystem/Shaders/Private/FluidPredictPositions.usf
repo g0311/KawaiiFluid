@@ -1,16 +1,10 @@
 // Copyright KawaiiFluid Team. All Rights Reserved.
 // GPU Fluid Physics - Predict Positions Pass
-// Applies forces (Gravity + Cohesion) and predicts particle positions for XPBD
-//
-// XPBD Principle 1: "Forces First, Constraints Later"
-// Cohesion is a FORCE that should be applied BEFORE position prediction,
-// not after constraint solving. This prevents the "sand/separation" effect.
+// Applies forces and predicts particle positions for XPBD
 
 #include "/Engine/Public/Platform.ush"
 #include "/Engine/Private/Common.ush"
 #include "FluidGPUPhysics.ush"
-#include "FluidSpatialHash.ush"
-#include "FluidMortonUtils.ush"
 
 //=============================================================================
 // Shader Parameters
@@ -21,188 +15,6 @@ int ParticleCount;
 float DeltaTime;
 float3 Gravity;
 float3 ExternalForce;
-
-// Cohesion parameters (XPBD: Forces applied before prediction)
-float CohesionStrength;
-float RestDensity;
-float SmoothingRadius;
-float Poly6Coeff;
-float CellSize;
-float MaxCohesionAccel;
-
-// Z-Order sorted mode (primary)
-StructuredBuffer<uint> CellStart;
-StructuredBuffer<uint> CellEnd;
-int bUseZOrderSorting;
-
-// Hash table mode (legacy fallback)
-StructuredBuffer<uint> CellCounts;
-StructuredBuffer<uint> ParticleIndices;
-
-// Morton code bounds
-float3 MortonBoundsMin;
-float3 MortonBoundsExtent;
-
-//=============================================================================
-// Z-Order Cell ID Calculation (matches FluidSolveDensityPressure.usf)
-//=============================================================================
-
-uint GetMortonCellIDFromCellCoord(int3 cellCoord)
-{
-	int3 gridMin = int3(floor(MortonBoundsMin / CellSize));
-	int3 offset = cellCoord - gridMin;
-	uint3 uoffset = uint3(max(offset, int3(0, 0, 0)));
-	uoffset = min(uoffset, uint3(MORTON_MAX_VALUE, MORTON_MAX_VALUE, MORTON_MAX_VALUE));
-	return Morton3D(uoffset.x, uoffset.y, uoffset.z);
-}
-
-//=============================================================================
-// Cohesion Force Calculation (Akinci 2013 surface tension)
-// This is moved from FluidApplyViscosityAndCohesion.usf to here
-// XPBD Principle: Cohesion is a FORCE, not a post-processing effect
-//=============================================================================
-
-float3 ComputeCohesionForce(uint idx, float3 pos, float mass, float density)
-{
-	if (CohesionStrength <= 0.0f)
-	{
-		return float3(0.0f, 0.0f, 0.0f);
-	}
-
-	float3 cohesionForce = float3(0.0f, 0.0f, 0.0f);
-
-	// Convert smoothing radius to meters for kernel calculations
-	float h_m = SmoothingRadius * CM_TO_M;
-	float smoothingRadiusSq_cm = SmoothingRadius * SmoothingRadius;
-
-	int3 centerCell = WorldToCell(pos, CellSize);
-	int cellRadius = (int)ceil(SmoothingRadius / CellSize);
-
-	if (bUseZOrderSorting)
-	{
-		// Z-Order mode: sequential memory access
-		for (int dz = -cellRadius; dz <= cellRadius; ++dz)
-		{
-			for (int dy = -cellRadius; dy <= cellRadius; ++dy)
-			{
-				for (int dx = -cellRadius; dx <= cellRadius; ++dx)
-				{
-					int3 neighborCell = centerCell + int3(dx, dy, dz);
-					uint cellID = GetMortonCellIDFromCellCoord(neighborCell);
-					uint cellStart = CellStart[cellID];
-					uint cellEnd = CellEnd[cellID];
-
-					if (cellStart == INVALID_INDEX || cellEnd == INVALID_INDEX)
-						continue;
-
-					uint maxNeighborIdx = min(cellEnd, (uint)(ParticleCount - 1));
-					for (uint neighborIdx = cellStart; neighborIdx <= maxNeighborIdx; ++neighborIdx)
-					{
-						if (neighborIdx == idx)
-							continue;
-
-						FGPUFluidParticle neighbor = Particles[neighborIdx];
-
-						// Skip attached neighbors
-						if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
-							continue;
-
-						float3 r_cm = pos - neighbor.Position;
-						float r2_cm = dot(r_cm, r_cm);
-
-						if (r2_cm < SMALL_NUMBER || r2_cm > smoothingRadiusSq_cm)
-							continue;
-
-						float rLenInv_cm = rsqrt(r2_cm);
-						float dist_cm = r2_cm * rLenInv_cm;
-						float dist_m = dist_cm * CM_TO_M;
-
-						float m_j = neighbor.Mass;
-						float rho_j = neighbor.Density;
-						float3 gradDir = r_cm * rLenInv_cm;
-
-						// K_ij correction factor for particle deficiency
-						float K_ij = 1.0f;
-						if (density > SMALL_NUMBER && rho_j > SMALL_NUMBER)
-						{
-							K_ij = (2.0f * RestDensity) / (density + rho_j);
-							K_ij = clamp(K_ij, 0.5f, 2.0f);
-						}
-
-						// Cohesion force (Akinci 2013)
-						float cohesionWeight = CohesionKernel(dist_m, h_m);
-						if (abs(cohesionWeight) > SMALL_NUMBER * 0.001f)
-						{
-							float3 direction = -gradDir;  // Attraction direction
-							float forceMag = mass * m_j * cohesionWeight;
-							cohesionForce += K_ij * forceMag * direction;
-						}
-					}
-				}
-			}
-		}
-	}
-	else
-	{
-		// Legacy hash table mode
-		for (int dz = -cellRadius; dz <= cellRadius; ++dz)
-		{
-			for (int dy = -cellRadius; dy <= cellRadius; ++dy)
-			{
-				for (int dx = -cellRadius; dx <= cellRadius; ++dx)
-				{
-					int3 neighborCell = centerCell + int3(dx, dy, dz);
-					uint hash = HashCell(neighborCell);
-					uint count = min(CellCounts[hash], (uint)MAX_PARTICLES_PER_CELL);
-					uint startIdx = hash * MAX_PARTICLES_PER_CELL;
-
-					for (uint i = 0; i < count; ++i)
-					{
-						uint neighborIdx = ParticleIndices[startIdx + i];
-						if (neighborIdx == idx || neighborIdx >= (uint)ParticleCount)
-							continue;
-
-						FGPUFluidParticle neighbor = Particles[neighborIdx];
-
-						if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
-							continue;
-
-						float3 r_cm = pos - neighbor.Position;
-						float r2_cm = dot(r_cm, r_cm);
-
-						if (r2_cm < SMALL_NUMBER || r2_cm > smoothingRadiusSq_cm)
-							continue;
-
-						float rLenInv_cm = rsqrt(r2_cm);
-						float dist_cm = r2_cm * rLenInv_cm;
-						float dist_m = dist_cm * CM_TO_M;
-
-						float m_j = neighbor.Mass;
-						float rho_j = neighbor.Density;
-						float3 gradDir = r_cm * rLenInv_cm;
-
-						float K_ij = 1.0f;
-						if (density > SMALL_NUMBER && rho_j > SMALL_NUMBER)
-						{
-							K_ij = (2.0f * RestDensity) / (density + rho_j);
-							K_ij = clamp(K_ij, 0.5f, 2.0f);
-						}
-
-						float cohesionWeight = CohesionKernel(dist_m, h_m);
-						if (abs(cohesionWeight) > SMALL_NUMBER * 0.001f)
-						{
-							float3 direction = -gradDir;
-							float forceMag = mass * m_j * cohesionWeight;
-							cohesionForce += K_ij * forceMag * direction;
-						}
-					}
-				}
-			}
-		}
-	}
-
-	return cohesionForce;
-}
 
 //=============================================================================
 // Main Compute Shader
@@ -229,49 +41,13 @@ void PredictPositionsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		return;
 	}
 
-	float3 pos = particle.Position;
-	float mass = particle.Mass;
-	float density = particle.Density;  // From previous frame (acceptable approximation)
-
-	// =========================================================================
-	// XPBD Principle 1: "Forces First, Constraints Later"
-	// Apply ALL forces (Gravity + Cohesion + External) BEFORE position prediction
-	// =========================================================================
-
-	// 1. Gravity + External forces
-	float3 gravityForce = Gravity + ExternalForce;
-
-	// 2. Cohesion force (neighbor-based attraction)
-	// This is the key change: Cohesion is applied HERE, not in post-processing
-	float3 cohesionForce = ComputeCohesionForce(idx, pos, mass, density);
-
-	// Apply cohesion with strength and convert to acceleration
-	float3 cohesionAccel = float3(0.0f, 0.0f, 0.0f);
-	if (CohesionStrength > 0.0f && mass > SMALL_NUMBER)
-	{
-		cohesionAccel = CohesionStrength * cohesionForce / mass;
-
-		// Clamp cohesion acceleration for stability
-		if (MaxCohesionAccel > 0.0f)
-		{
-			float accelMag = length(cohesionAccel);
-			if (accelMag > MaxCohesionAccel)
-			{
-				cohesionAccel = cohesionAccel * (MaxCohesionAccel / accelMag);
-			}
-		}
-
-		// Convert from m/s² to cm/s² (Unreal uses cm)
-		#define M_TO_CM 100.0f
-		cohesionAccel *= M_TO_CM;
-	}
-
-	// 3. Total acceleration
-	float3 totalAcceleration = gravityForce + cohesionAccel;
+	// Apply forces: gravity + external force
+	float3 totalForce = Gravity + ExternalForce;
+	float3 acceleration = totalForce; // Assuming mass = 1 for simplicity, or: totalForce / particle.Mass
 
 	// Semi-implicit Euler integration
 	// v(t+dt) = v(t) + a * dt
-	particle.Velocity += totalAcceleration * DeltaTime;
+	particle.Velocity += acceleration * DeltaTime;
 
 	// Predict position: x_pred = x + v * dt
 	particle.PredictedPosition = particle.Position + particle.Velocity * DeltaTime;
