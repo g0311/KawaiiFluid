@@ -328,23 +328,24 @@ public:
 	TRefCountPtr<FRDGPooledBuffer>& AccessPersistentAnisotropyAxis3Buffer() { return PersistentAnisotropyAxis3Buffer; }
 
 	//=============================================================================
-	// Distance Field Collision (Delegated to FGPUCollisionManager)
+	// Heightmap Collision (Delegated to FGPUCollisionManager)
+	// For Landscape terrain collision
 	//=============================================================================
 
-	/** Enable or disable Distance Field collision */
-	void SetDistanceFieldCollisionEnabled(bool bEnabled) { if (CollisionManager.IsValid()) CollisionManager->SetDistanceFieldCollisionEnabled(bEnabled); }
+	/** Enable or disable Heightmap collision */
+	void SetHeightmapCollisionEnabled(bool bEnabled) { if (CollisionManager.IsValid()) CollisionManager->SetHeightmapCollisionEnabled(bEnabled); }
 
-	/** Set Distance Field collision parameters */
-	void SetDistanceFieldCollisionParams(const FGPUDistanceFieldCollisionParams& Params) { if (CollisionManager.IsValid()) CollisionManager->SetDistanceFieldCollisionParams(Params); }
+	/** Set Heightmap collision parameters */
+	void SetHeightmapCollisionParams(const FGPUHeightmapCollisionParams& Params) { if (CollisionManager.IsValid()) CollisionManager->SetHeightmapCollisionParams(Params); }
 
-	/** Get Distance Field collision parameters */
-	const FGPUDistanceFieldCollisionParams& GetDistanceFieldCollisionParams() const { static FGPUDistanceFieldCollisionParams Default; return CollisionManager.IsValid() ? CollisionManager->GetDistanceFieldCollisionParams() : Default; }
+	/** Get Heightmap collision parameters */
+	const FGPUHeightmapCollisionParams& GetHeightmapCollisionParams() const { static FGPUHeightmapCollisionParams Default; return CollisionManager.IsValid() ? CollisionManager->GetHeightmapCollisionParams() : Default; }
 
-	/** Set the Global Distance Field texture */
-	void SetGlobalDistanceFieldTexture(FRHITexture* Texture) { if (CollisionManager.IsValid()) CollisionManager->SetGDFTexture(Texture); }
+	/** Upload heightmap texture data */
+	void UploadHeightmapData(const TArray<float>& HeightData, int32 Width, int32 Height) { if (CollisionManager.IsValid()) CollisionManager->UploadHeightmapTexture(HeightData, Width, Height); }
 
-	/** Check if Distance Field collision is enabled */
-	bool IsDistanceFieldCollisionEnabled() const { return CollisionManager.IsValid() && CollisionManager->IsDistanceFieldCollisionEnabled(); }
+	/** Check if Heightmap collision is enabled */
+	bool IsHeightmapCollisionEnabled() const { return CollisionManager.IsValid() && CollisionManager->IsHeightmapCollisionEnabled(); }
 
 	// Collision Primitives (Delegated to FGPUCollisionManager)
 	//=============================================================================
@@ -854,14 +855,14 @@ private:
 		FRDGBufferUAVRef ParticlesUAV,
 		const FGPUFluidSimulationParams& Params);
 
-	/** Add distance field collision pass */
-	void AddDistanceFieldCollisionPass(
+	/** Add primitive collision pass (spheres, capsules, boxes, convexes) */
+	void AddPrimitiveCollisionPass(
 		FRDGBuilder& GraphBuilder,
 		FRDGBufferUAVRef ParticlesUAV,
 		const FGPUFluidSimulationParams& Params);
 
-	/** Add primitive collision pass (spheres, capsules, boxes, convexes) */
-	void AddPrimitiveCollisionPass(
+	/** Add heightmap collision pass (Landscape terrain) */
+	void AddHeightmapCollisionPass(
 		FRDGBuilder& GraphBuilder,
 		FRDGBufferUAVRef ParticlesUAV,
 		const FGPUFluidSimulationParams& Params);
@@ -1098,7 +1099,7 @@ private:
 
 	//=============================================================================
 	// Collision System (Delegated to FGPUCollisionManager)
-	// Bounds, DistanceField, Primitive collision + Feedback
+	// Bounds, Primitive, Heightmap collision + Feedback
 	//=============================================================================
 
 	// CollisionManager handles all collision passes and feedback

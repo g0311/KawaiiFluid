@@ -44,9 +44,9 @@ IMPLEMENT_GLOBAL_SHADER(FBoundsCollisionCS,
 	"/Plugin/KawaiiFluidSystem/Private/FluidBoundsCollision.usf",
 	"BoundsCollisionCS", SF_Compute);
 
-IMPLEMENT_GLOBAL_SHADER(FDistanceFieldCollisionCS,
-	"/Plugin/KawaiiFluidSystem/Private/FluidDistanceFieldCollision.usf",
-	"DistanceFieldCollisionCS", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FHeightmapCollisionCS,
+	"/Plugin/KawaiiFluidSystem/Private/FluidHeightmapCollision.usf",
+	"HeightmapCollisionCS", SF_Compute);
 
 IMPLEMENT_GLOBAL_SHADER(FPrimitiveCollisionCS,
 	"/Plugin/KawaiiFluidSystem/Private/FluidPrimitiveCollision.usf",

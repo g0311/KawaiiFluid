@@ -90,6 +90,9 @@ public:
 	/** Mark GPU world-collision cache dirty (rebuild on next GPU sim) */
 	void MarkGPUWorldCollisionCacheDirty() { bGPUWorldCollisionCacheDirty = true; }
 
+	/** Mark landscape heightmap dirty (re-extract and upload on next GPU sim) */
+	void MarkLandscapeHeightmapDirty() { bLandscapeHeightmapDirty = true; }
+
 	//========================================
 	// Target Volume Component (Z-Order Space Bounds)
 	//========================================
@@ -409,4 +412,24 @@ protected:
 
 	/** Static boundary particles need regeneration flag */
 	bool bStaticBoundaryParticlesDirty = true;
+
+	//========================================
+	// Landscape Heightmap Collision Cache
+	//========================================
+
+	/** Cached heightmap data */
+	TArray<float> CachedLandscapeHeightmap;
+
+	/** Cached heightmap dimensions */
+	int32 CachedHeightmapWidth = 0;
+	int32 CachedHeightmapHeight = 0;
+
+	/** Cached heightmap world bounds */
+	FBox CachedHeightmapBounds = FBox(EForceInit::ForceInit);
+
+	/** Landscape heightmap needs rebuild flag */
+	bool bLandscapeHeightmapDirty = true;
+
+	/** Update landscape heightmap collision (called from SimulateGPU) */
+	void UpdateLandscapeHeightmapCollision(const FKawaiiFluidSimulationParams& Params, const UKawaiiFluidPresetDataAsset* Preset);
 };

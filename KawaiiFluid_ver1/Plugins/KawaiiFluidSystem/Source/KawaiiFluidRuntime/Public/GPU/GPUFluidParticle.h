@@ -266,46 +266,72 @@ struct FGPUFluidSimulationParams
 };
 
 /**
- * Distance Field Collision Parameters
- * Used for GPU collision detection against UE5 Global Distance Field
+ * Heightmap Collision Parameters
+ * Used for GPU collision detection against Landscape terrain
+ * 64 bytes, 16-byte aligned for GPU
  */
-struct FGPUDistanceFieldCollisionParams
+struct FGPUHeightmapCollisionParams
 {
-	// Volume parameters
-	FVector3f VolumeCenter;       // Center of the distance field volume
-	float MaxDistance;            // Maximum distance stored in the field
+	// World space coverage (Row 1: 16 bytes)
+	FVector3f WorldMin;           // Heightmap coverage min XYZ
+	float HeightScale;            // Height scale factor (usually 1.0)
 
-	FVector3f VolumeExtent;       // Half-extents of the volume
-	float VoxelSize;              // Size of each voxel in world units
-
-	// Collision response
-	float Restitution;            // Bounciness (0-1)
-	float Friction;               // Friction coefficient (0-1)
-	float CollisionThreshold;     // Distance threshold for collision detection
+	// World space coverage (Row 2: 16 bytes)
+	FVector3f WorldMax;           // Heightmap coverage max XYZ
 	float ParticleRadius;         // Particle radius for collision
 
-	// Enable flag
-	int32 bEnabled;               // Whether to use distance field collision
-	int32 Padding1;
-	int32 Padding2;
-	int32 Padding3;
+	// UV transform (Row 3: 16 bytes)
+	FVector2f InvWorldExtent;     // 1/(Max.xy - Min.xy) for UV transform
+	float Friction;               // Friction coefficient (0-1)
+	float Restitution;            // Bounciness (0-1)
 
-	FGPUDistanceFieldCollisionParams()
-		: VolumeCenter(FVector3f::ZeroVector)
-		, MaxDistance(1000.0f)
-		, VolumeExtent(FVector3f(5000.0f))
-		, VoxelSize(10.0f)
-		, Restitution(0.3f)
-		, Friction(0.1f)
-		, CollisionThreshold(1.0f)
+	// Texture info (Row 4: 16 bytes)
+	int32 TextureWidth;           // Heightmap texture width
+	int32 TextureHeight;          // Heightmap texture height
+	float InvTextureWidth;        // 1/TextureWidth for texel offset
+	float InvTextureHeight;       // 1/TextureHeight for texel offset
+
+	// Control parameters (Row 5: 16 bytes)
+	int32 bEnabled;               // Whether heightmap collision is enabled
+	float NormalStrength;         // Normal calculation strength (gradient scale)
+	float CollisionOffset;        // Extra offset for collision detection
+	int32 Padding;                // Alignment padding
+
+	FGPUHeightmapCollisionParams()
+		: WorldMin(FVector3f(-10000.0f, -10000.0f, -10000.0f))
+		, HeightScale(1.0f)
+		, WorldMax(FVector3f(10000.0f, 10000.0f, 10000.0f))
 		, ParticleRadius(5.0f)
+		, InvWorldExtent(FVector2f(0.00005f, 0.00005f))  // 1/20000
+		, Friction(0.3f)
+		, Restitution(0.1f)
+		, TextureWidth(1024)
+		, TextureHeight(1024)
+		, InvTextureWidth(1.0f / 1024.0f)
+		, InvTextureHeight(1.0f / 1024.0f)
 		, bEnabled(0)
-		, Padding1(0)
-		, Padding2(0)
-		, Padding3(0)
+		, NormalStrength(1.0f)
+		, CollisionOffset(0.0f)
+		, Padding(0)
 	{
 	}
+
+	/** Update inverse values when world bounds change */
+	void UpdateInverseValues()
+	{
+		FVector3f Extent = WorldMax - WorldMin;
+		if (Extent.X > SMALL_NUMBER && Extent.Y > SMALL_NUMBER)
+		{
+			InvWorldExtent = FVector2f(1.0f / Extent.X, 1.0f / Extent.Y);
+		}
+		if (TextureWidth > 0 && TextureHeight > 0)
+		{
+			InvTextureWidth = 1.0f / (float)TextureWidth;
+			InvTextureHeight = 1.0f / (float)TextureHeight;
+		}
+	}
 };
+static_assert(sizeof(FGPUHeightmapCollisionParams) == 80, "FGPUHeightmapCollisionParams must be 80 bytes");
 
 //=============================================================================
 // GPU Collision Primitives

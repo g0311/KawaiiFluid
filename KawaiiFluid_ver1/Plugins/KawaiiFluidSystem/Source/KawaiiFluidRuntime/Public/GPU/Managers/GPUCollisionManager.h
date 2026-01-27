@@ -44,23 +44,31 @@ public:
 	bool IsReady() const { return bIsInitialized; }
 
 	//=========================================================================
-	// Distance Field Collision Configuration
+	// Heightmap Collision Configuration (for Landscape terrain)
 	//=========================================================================
 
-	/** Enable or disable Distance Field collision */
-	void SetDistanceFieldCollisionEnabled(bool bEnabled) { DFCollisionParams.bEnabled = bEnabled ? 1 : 0; }
+	/** Enable or disable Heightmap collision */
+	void SetHeightmapCollisionEnabled(bool bEnabled) { HeightmapParams.bEnabled = bEnabled ? 1 : 0; }
 
-	/** Set Distance Field collision parameters */
-	void SetDistanceFieldCollisionParams(const FGPUDistanceFieldCollisionParams& Params) { DFCollisionParams = Params; }
+	/** Set Heightmap collision parameters */
+	void SetHeightmapCollisionParams(const FGPUHeightmapCollisionParams& Params) { HeightmapParams = Params; }
 
-	/** Get Distance Field collision parameters */
-	const FGPUDistanceFieldCollisionParams& GetDistanceFieldCollisionParams() const { return DFCollisionParams; }
+	/** Get Heightmap collision parameters */
+	const FGPUHeightmapCollisionParams& GetHeightmapCollisionParams() const { return HeightmapParams; }
 
-	/** Set GDF Texture for collision */
-	void SetGDFTexture(FRHITexture* InTexture) { CachedGDFTexture = InTexture; }
+	/** Check if Heightmap collision is enabled */
+	bool IsHeightmapCollisionEnabled() const { return HeightmapParams.bEnabled != 0 && bHeightmapDataValid; }
 
-	/** Check if Distance Field collision is enabled */
-	bool IsDistanceFieldCollisionEnabled() const { return DFCollisionParams.bEnabled != 0; }
+	/**
+	 * Upload heightmap texture data to GPU
+	 * @param HeightData - Array of normalized height values (0-1)
+	 * @param Width - Texture width
+	 * @param Height - Texture height
+	 */
+	void UploadHeightmapTexture(const TArray<float>& HeightData, int32 Width, int32 Height);
+
+	/** Check if heightmap data is valid */
+	bool HasValidHeightmapData() const { return bHeightmapDataValid; }
 
 	//=========================================================================
 	// Collision Primitives
@@ -101,15 +109,15 @@ public:
 		int32 ParticleCount,
 		const FGPUFluidSimulationParams& Params);
 
-	/** Add distance field collision pass */
-	void AddDistanceFieldCollisionPass(
+	/** Add primitive collision pass (spheres, capsules, boxes, convexes) */
+	void AddPrimitiveCollisionPass(
 		FRDGBuilder& GraphBuilder,
 		FRDGBufferUAVRef ParticlesUAV,
 		int32 ParticleCount,
 		const FGPUFluidSimulationParams& Params);
 
-	/** Add primitive collision pass (spheres, capsules, boxes, convexes) */
-	void AddPrimitiveCollisionPass(
+	/** Add heightmap collision pass (Landscape terrain) */
+	void AddHeightmapCollisionPass(
 		FRDGBuilder& GraphBuilder,
 		FRDGBufferUAVRef ParticlesUAV,
 		int32 ParticleCount,
@@ -181,11 +189,12 @@ private:
 	mutable FCriticalSection CollisionLock;
 
 	//=========================================================================
-	// Distance Field Collision
+	// Heightmap Collision (Landscape terrain)
 	//=========================================================================
 
-	FGPUDistanceFieldCollisionParams DFCollisionParams;
-	FTextureRHIRef CachedGDFTexture;
+	FGPUHeightmapCollisionParams HeightmapParams;
+	FTextureRHIRef HeightmapTextureRHI;
+	bool bHeightmapDataValid = false;
 
 	//=========================================================================
 	// Collision Primitives

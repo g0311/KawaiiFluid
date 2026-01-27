@@ -1102,8 +1102,8 @@ void FGPUFluidSimulator::ExecuteConstraintSolverLoop(
 		// If density pushes a particle through a wall, collision pushes it back.
 		// Solving both constraints together allows convergence to a valid state.
 		AddBoundsCollisionPass(GraphBuilder, ParticlesUAV, Params);
-		AddDistanceFieldCollisionPass(GraphBuilder, ParticlesUAV, Params);
 		AddPrimitiveCollisionPass(GraphBuilder, ParticlesUAV, Params);
+		AddHeightmapCollisionPass(GraphBuilder, ParticlesUAV, Params);
 	}
 
 	// Create SRVs for use in subsequent passes
@@ -2670,17 +2670,6 @@ void FGPUFluidSimulator::AddBoundsCollisionPass(
 	}
 }
 
-void FGPUFluidSimulator::AddDistanceFieldCollisionPass(
-	FRDGBuilder& GraphBuilder,
-	FRDGBufferUAVRef ParticlesUAV,
-	const FGPUFluidSimulationParams& Params)
-{
-	if (CollisionManager.IsValid())
-	{
-		CollisionManager->AddDistanceFieldCollisionPass(GraphBuilder, ParticlesUAV, CurrentParticleCount, Params);
-	}
-}
-
 void FGPUFluidSimulator::AddPrimitiveCollisionPass(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferUAVRef ParticlesUAV,
@@ -2689,6 +2678,17 @@ void FGPUFluidSimulator::AddPrimitiveCollisionPass(
 	if (CollisionManager.IsValid())
 	{
 		CollisionManager->AddPrimitiveCollisionPass(GraphBuilder, ParticlesUAV, CurrentParticleCount, Params);
+	}
+}
+
+void FGPUFluidSimulator::AddHeightmapCollisionPass(
+	FRDGBuilder& GraphBuilder,
+	FRDGBufferUAVRef ParticlesUAV,
+	const FGPUFluidSimulationParams& Params)
+{
+	if (CollisionManager.IsValid())
+	{
+		CollisionManager->AddHeightmapCollisionPass(GraphBuilder, ParticlesUAV, CurrentParticleCount, Params);
 	}
 }
 

@@ -66,6 +66,10 @@ void FGPUCollisionManager::Release()
 	CachedConvexPlanes.Empty();
 	CachedBoneTransforms.Empty();
 
+	// Release heightmap texture
+	HeightmapTextureRHI.SafeRelease();
+	bHeightmapDataValid = false;
+
 	bCollisionPrimitivesValid = false;
 	bBoneTransformsValid = false;
 	bIsInitialized = false;
@@ -146,60 +150,6 @@ void FGPUCollisionManager::AddBoundsCollisionPass(
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
 		RDG_EVENT_NAME("GPUFluid::BoundsCollision"),
-		ComputeShader,
-		PassParameters,
-		FIntVector(NumGroups, 1, 1)
-	);
-}
-
-//=============================================================================
-// Distance Field Collision Pass
-//=============================================================================
-
-void FGPUCollisionManager::AddDistanceFieldCollisionPass(
-	FRDGBuilder& GraphBuilder,
-	FRDGBufferUAVRef ParticlesUAV,
-	int32 ParticleCount,
-	const FGPUFluidSimulationParams& Params)
-{
-	// Skip if Distance Field collision is not enabled
-	if (!DFCollisionParams.bEnabled || !CachedGDFTexture.IsValid())
-	{
-		return;
-	}
-
-	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
-	TShaderMapRef<FDistanceFieldCollisionCS> ComputeShader(ShaderMap);
-
-	// Register external texture with RDG
-	FRDGTextureRef GDFTexture = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(CachedGDFTexture, TEXT("GDFTexture")));
-	FRDGTextureSRVRef GDFSRV = GraphBuilder.CreateSRV(FRDGTextureSRVDesc(GDFTexture));
-
-	FDistanceFieldCollisionCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FDistanceFieldCollisionCS::FParameters>();
-	PassParameters->Particles = ParticlesUAV;
-	PassParameters->ParticleCount = ParticleCount;
-	PassParameters->ParticleRadius = DFCollisionParams.ParticleRadius;
-
-	// Distance Field Volume Parameters
-	PassParameters->GDFVolumeCenter = DFCollisionParams.VolumeCenter;
-	PassParameters->GDFVolumeExtent = DFCollisionParams.VolumeExtent;
-	PassParameters->GDFVoxelSize = FVector3f(DFCollisionParams.VoxelSize);
-	PassParameters->GDFMaxDistance = DFCollisionParams.MaxDistance;
-
-	// Collision Response Parameters
-	PassParameters->DFCollisionRestitution = DFCollisionParams.Restitution;
-	PassParameters->DFCollisionFriction = DFCollisionParams.Friction;
-	PassParameters->DFCollisionThreshold = DFCollisionParams.CollisionThreshold;
-
-	// Global Distance Field Texture
-	PassParameters->GlobalDistanceFieldTexture = GDFSRV;
-	PassParameters->GlobalDistanceFieldSampler = TStaticSamplerState<SF_Trilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-
-	const uint32 NumGroups = FMath::DivideAndRoundUp(ParticleCount, FDistanceFieldCollisionCS::ThreadGroupSize);
-
-	FComputeShaderUtils::AddPass(
-		GraphBuilder,
-		RDG_EVENT_NAME("GPUFluid::DistanceFieldCollision"),
 		ComputeShader,
 		PassParameters,
 		FIntVector(NumGroups, 1, 1)
@@ -621,4 +571,148 @@ int32 FGPUCollisionManager::GetContactCountForOwner(int32 OwnerID) const
 	}
 
 	return TotalCount;
+}
+
+//=============================================================================
+// Heightmap Collision (Landscape terrain)
+//=============================================================================
+
+void FGPUCollisionManager::UploadHeightmapTexture(const TArray<float>& HeightData, int32 Width, int32 Height)
+{
+	if (!bIsInitialized)
+	{
+		return;
+	}
+
+	if (HeightData.Num() != Width * Height)
+	{
+		UE_LOG(LogGPUCollisionManager, Warning, TEXT("Heightmap data size mismatch: %d != %d x %d"), HeightData.Num(), Width, Height);
+		bHeightmapDataValid = false;
+		return;
+	}
+
+	// Update parameters on game thread
+	{
+		FScopeLock Lock(&CollisionLock);
+		HeightmapParams.TextureWidth = Width;
+		HeightmapParams.TextureHeight = Height;
+		HeightmapParams.UpdateInverseValues();
+	}
+
+	// Copy data for render thread
+	TArray<float> HeightDataCopy = HeightData;
+	FTextureRHIRef* TexturePtr = &HeightmapTextureRHI;
+	bool* ValidPtr = &bHeightmapDataValid;
+	FGPUHeightmapCollisionParams* ParamsPtr = &HeightmapParams;
+
+	// Create texture on render thread
+	ENQUEUE_RENDER_COMMAND(UploadHeightmapTexture)(
+		[TexturePtr, ValidPtr, ParamsPtr, HeightDataCopy = MoveTemp(HeightDataCopy), Width, Height](FRHICommandListImmediate& RHICmdList)
+		{
+			// Release existing texture if any (prevent memory leak on re-upload)
+			if (TexturePtr->IsValid())
+			{
+				TexturePtr->SafeRelease();
+			}
+
+			// Create R32F texture
+			const FRHITextureCreateDesc Desc =
+				FRHITextureCreateDesc::Create2D(TEXT("HeightmapTexture"), Width, Height, PF_R32_FLOAT)
+				.SetFlags(ETextureCreateFlags::ShaderResource)
+				.SetNumMips(1);
+
+			*TexturePtr = RHICreateTexture(Desc);
+
+			if (!TexturePtr->IsValid())
+			{
+				UE_LOG(LogGPUCollisionManager, Error, TEXT("Failed to create heightmap texture"));
+				*ValidPtr = false;
+				return;
+			}
+
+			// Upload data to texture
+			uint32 DestStride = 0;
+			float* DestData = (float*)RHILockTexture2D(*TexturePtr, 0, RLM_WriteOnly, DestStride, false);
+
+			if (DestData)
+			{
+				const uint32 SrcRowPitch = Width * sizeof(float);
+				for (int32 y = 0; y < Height; ++y)
+				{
+					FMemory::Memcpy(
+						(uint8*)DestData + y * DestStride,
+						HeightDataCopy.GetData() + y * Width,
+						SrcRowPitch);
+				}
+				RHIUnlockTexture2D(*TexturePtr, 0, false);
+				*ValidPtr = true;
+
+				UE_LOG(LogGPUCollisionManager, Log, TEXT("Uploaded heightmap texture: %dx%d"), Width, Height);
+			}
+			else
+			{
+				UE_LOG(LogGPUCollisionManager, Error, TEXT("Failed to lock heightmap texture"));
+				TexturePtr->SafeRelease();
+				*ValidPtr = false;
+			}
+		});
+
+	UE_LOG(LogGPUCollisionManager, Log, TEXT("Enqueued heightmap texture upload: %dx%d, WorldBounds: (%.1f,%.1f,%.1f) - (%.1f,%.1f,%.1f)"),
+		Width, Height,
+		HeightmapParams.WorldMin.X, HeightmapParams.WorldMin.Y, HeightmapParams.WorldMin.Z,
+		HeightmapParams.WorldMax.X, HeightmapParams.WorldMax.Y, HeightmapParams.WorldMax.Z);
+}
+
+void FGPUCollisionManager::AddHeightmapCollisionPass(
+	FRDGBuilder& GraphBuilder,
+	FRDGBufferUAVRef ParticlesUAV,
+	int32 ParticleCount,
+	const FGPUFluidSimulationParams& Params)
+{
+	// Skip if heightmap collision is not enabled or no valid data
+	if (!HeightmapParams.bEnabled || !bHeightmapDataValid || !HeightmapTextureRHI.IsValid())
+	{
+		return;
+	}
+
+	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
+	TShaderMapRef<FHeightmapCollisionCS> ComputeShader(ShaderMap);
+
+	// Register external texture with RDG
+	FRDGTextureRef HeightmapTexture = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(HeightmapTextureRHI, TEXT("HeightmapTexture")));
+	FRDGTextureSRVRef HeightmapSRV = GraphBuilder.CreateSRV(FRDGTextureSRVDesc(HeightmapTexture));
+
+	FHeightmapCollisionCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FHeightmapCollisionCS::FParameters>();
+	PassParameters->Particles = ParticlesUAV;
+	PassParameters->ParticleCount = ParticleCount;
+	PassParameters->ParticleRadius = HeightmapParams.ParticleRadius > 0 ? HeightmapParams.ParticleRadius : Params.ParticleRadius;
+
+	// Heightmap texture
+	PassParameters->HeightmapTexture = HeightmapSRV;
+	PassParameters->HeightmapSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+
+	// World space transform parameters
+	PassParameters->WorldMin = HeightmapParams.WorldMin;
+	PassParameters->WorldMax = HeightmapParams.WorldMax;
+	PassParameters->InvWorldExtent = HeightmapParams.InvWorldExtent;
+	PassParameters->TextureWidth = HeightmapParams.TextureWidth;
+	PassParameters->TextureHeight = HeightmapParams.TextureHeight;
+	PassParameters->InvTextureWidth = HeightmapParams.InvTextureWidth;
+	PassParameters->InvTextureHeight = HeightmapParams.InvTextureHeight;
+
+	// Collision response parameters
+	PassParameters->Friction = HeightmapParams.Friction;
+	PassParameters->Restitution = HeightmapParams.Restitution;
+	PassParameters->NormalStrength = HeightmapParams.NormalStrength;
+	PassParameters->CollisionOffset = HeightmapParams.CollisionOffset;
+
+	const uint32 NumGroups = FMath::DivideAndRoundUp(ParticleCount, FHeightmapCollisionCS::ThreadGroupSize);
+
+	FComputeShaderUtils::AddPass(
+		GraphBuilder,
+		RDG_EVENT_NAME("GPUFluid::HeightmapCollision(%dx%d)", HeightmapParams.TextureWidth, HeightmapParams.TextureHeight),
+		ComputeShader,
+		PassParameters,
+		FIntVector(NumGroups, 1, 1)
+	);
 }

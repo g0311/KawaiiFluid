@@ -567,15 +567,16 @@ public:
 };
 
 //=============================================================================
-// Distance Field Collision Compute Shader
-// Pass 6.5: Apply collision with UE5 Global Distance Field (static mesh collision)
+// Heightmap Collision Compute Shader
+// Apply collision with Landscape terrain via heightmap texture sampling
+// Uses Sobel gradient for terrain normal calculation
 //=============================================================================
 
-class FDistanceFieldCollisionCS : public FGlobalShader
+class FHeightmapCollisionCS : public FGlobalShader
 {
 public:
-	DECLARE_GLOBAL_SHADER(FDistanceFieldCollisionCS);
-	SHADER_USE_PARAMETER_STRUCT(FDistanceFieldCollisionCS, FGlobalShader);
+	DECLARE_GLOBAL_SHADER(FHeightmapCollisionCS);
+	SHADER_USE_PARAMETER_STRUCT(FHeightmapCollisionCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		// Particle buffer
@@ -583,20 +584,24 @@ public:
 		SHADER_PARAMETER(int32, ParticleCount)
 		SHADER_PARAMETER(float, ParticleRadius)
 
-		// Distance Field Volume Parameters
-		SHADER_PARAMETER(FVector3f, GDFVolumeCenter)
-		SHADER_PARAMETER(FVector3f, GDFVolumeExtent)
-		SHADER_PARAMETER(FVector3f, GDFVoxelSize)
-		SHADER_PARAMETER(float, GDFMaxDistance)
+		// Heightmap texture
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D<float>, HeightmapTexture)
+		SHADER_PARAMETER_SAMPLER(SamplerState, HeightmapSampler)
 
-		// Collision Response Parameters
-		SHADER_PARAMETER(float, DFCollisionRestitution)
-		SHADER_PARAMETER(float, DFCollisionFriction)
-		SHADER_PARAMETER(float, DFCollisionThreshold)
+		// World space transform parameters
+		SHADER_PARAMETER(FVector3f, WorldMin)
+		SHADER_PARAMETER(FVector3f, WorldMax)
+		SHADER_PARAMETER(FVector2f, InvWorldExtent)
+		SHADER_PARAMETER(int32, TextureWidth)
+		SHADER_PARAMETER(int32, TextureHeight)
+		SHADER_PARAMETER(float, InvTextureWidth)
+		SHADER_PARAMETER(float, InvTextureHeight)
 
-		// Global Distance Field Texture (from scene)
-		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture3D<float>, GlobalDistanceFieldTexture)
-		SHADER_PARAMETER_SAMPLER(SamplerState, GlobalDistanceFieldSampler)
+		// Collision response parameters
+		SHADER_PARAMETER(float, Friction)
+		SHADER_PARAMETER(float, Restitution)
+		SHADER_PARAMETER(float, NormalStrength)
+		SHADER_PARAMETER(float, CollisionOffset)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 256;
@@ -612,7 +617,6 @@ public:
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-		OutEnvironment.SetDefine(TEXT("USE_GLOBAL_DISTANCE_FIELD"), 1);
 	}
 };
 

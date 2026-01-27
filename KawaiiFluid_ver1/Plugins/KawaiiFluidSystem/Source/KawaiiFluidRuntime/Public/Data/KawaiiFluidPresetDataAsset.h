@@ -185,26 +185,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|Collision", meta = (ClampMin = "0.0", ClampMax = "10.0"))
 	float CollisionThreshold = 1.0f;
 
-	/**
-	 * Enable Distance Field collision
-	 * Uses UE5 Global Distance Field for GPU-based static mesh collision
-	 * Requires "Generate Mesh Distance Fields" enabled in Project Settings
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|Collision")
-	bool bUseDistanceField = false;
-
-	/** Distance threshold for DF collision detection (cm) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|Collision", meta = (ClampMin = "0.1", ClampMax = "50.0", EditCondition = "bUseDistanceField"))
-	float DFThreshold = 1.0f;
-
-	/** Distance Field collision restitution (bounciness) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|Collision", meta = (ClampMin = "0.0", ClampMax = "1.0", EditCondition = "bUseDistanceField"))
-	float DFRestitution = 0.3f;
-
-	/** Distance Field collision friction */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|Collision", meta = (ClampMin = "0.0", ClampMax = "1.0", EditCondition = "bUseDistanceField"))
-	float DFFriction = 0.1f;
-
 	//========================================
 	// Physics | Simulation | Adhesion
 	//========================================

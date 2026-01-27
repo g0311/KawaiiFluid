@@ -24,6 +24,8 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "PhysicsEngine/BodySetup.h"
+#include "Landscape/LandscapeHeightmapExtractor.h"
+#include "LandscapeProxy.h"
 
 // Profiling
 DECLARE_STATS_GROUP(TEXT("KawaiiFluidContext"), STATGROUP_KawaiiFluidContext, STATCAT_Advanced);
@@ -548,30 +550,6 @@ FGPUFluidSimulationParams UKawaiiFluidSimulationContext::BuildGPUSimParams(
 	// Precompute kernel coefficients (including InvW_DeltaQ for tensile instability)
 	GPUParams.PrecomputeKernelCoefficients();
 
-	// Configure Distance Field collision on GPU simulator (if enabled)
-	if (GPUSimulator.IsValid() && Preset->bUseDistanceField)
-	{
-		FGPUDistanceFieldCollisionParams DFParams;
-		DFParams.bEnabled = 1;
-		DFParams.ParticleRadius = Preset->ParticleRadius;
-DFParams.Restitution = Preset->DFRestitution;
-		DFParams.Friction = Preset->DFFriction;
-		DFParams.CollisionThreshold = Preset->DFThreshold;
-
-		// Volume parameters will be set by scene renderer
-		// when Global Distance Field is available
-		DFParams.VolumeCenter = FVector3f::ZeroVector;
-		DFParams.VolumeExtent = FVector3f(10000.0f);  // Large default extent
-		DFParams.VoxelSize = 10.0f;  // Default voxel size
-		DFParams.MaxDistance = 1000.0f;
-
-		GPUSimulator->SetDistanceFieldCollisionParams(DFParams);
-	}
-	else if (GPUSimulator.IsValid())
-	{
-		GPUSimulator->SetDistanceFieldCollisionEnabled(false);
-	}
-
 	return GPUParams;
 }
 
@@ -900,6 +878,15 @@ void UKawaiiFluidSimulationContext::SimulateGPU(
 
 		// Save bone transforms back to persistent storage for next frame
 		PersistentBoneTransforms = MoveTemp(CollisionPrimitives.BoneTransforms);
+	}
+
+	// =====================================================
+	// Landscape Heightmap Collision
+	// Extract heightmap from Landscape actors and upload to GPU
+	// =====================================================
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(SimGPU_LandscapeHeightmap);
+		UpdateLandscapeHeightmapCollision(Params, Preset);
 	}
 
 	// =====================================================
@@ -1369,6 +1356,12 @@ void UKawaiiFluidSimulationContext::AppendGPUWorldCollisionPrimitives(
 		CachedGPUWorldCollisionWorld = Params.World;
 		bGPUWorldCollisionCacheDirty = false;
 		bStaticBoundaryParticlesDirty = true;  // Regenerate static boundary particles
+
+		// Mark landscape heightmap dirty if world changed
+		if (bWorldChanged)
+		{
+			bLandscapeHeightmapDirty = true;
+		}
 
 		FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(KawaiiFluidGPUWorldCollision), false);
 		QueryParams.bTraceComplex = false;
@@ -2583,4 +2576,95 @@ void UKawaiiFluidSimulationContext::CollectGPUSimulationStats(
 
 	// End frame and finalize statistics
 	Stats.EndFrame();
+}
+
+//========================================
+// Landscape Heightmap Collision
+//========================================
+
+void UKawaiiFluidSimulationContext::UpdateLandscapeHeightmapCollision(
+	const FKawaiiFluidSimulationParams& Params,
+	const UKawaiiFluidPresetDataAsset* Preset)
+{
+	if (!GPUSimulator.IsValid())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		GPUSimulator->SetHeightmapCollisionEnabled(false);
+		return;
+	}
+
+	// Only rebuild if dirty (level load, world changed, etc.)
+	// Note: bLandscapeHeightmapDirty is set by AppendGPUWorldCollisionPrimitives when world changes
+	if (!bLandscapeHeightmapDirty)
+	{
+		// Already uploaded, just ensure it's enabled
+		return;
+	}
+
+	// Find all landscapes in the world
+	TArray<ALandscapeProxy*> Landscapes;
+	FLandscapeHeightmapExtractor::FindLandscapesInWorld(World, Landscapes);
+
+	if (Landscapes.IsEmpty())
+	{
+		// No landscapes - disable heightmap collision
+		GPUSimulator->SetHeightmapCollisionEnabled(false);
+		CachedLandscapeHeightmap.Empty();
+		CachedHeightmapWidth = 0;
+		CachedHeightmapHeight = 0;
+		bLandscapeHeightmapDirty = false;
+		return;
+	}
+
+	// Extract combined heightmap from all landscapes
+	// TODO: Currently samples entire world Landscapes. Should clamp to Volume bounds for better precision.
+	// - Current: Entire Landscape (10km) -> 1024 texels = 9.77m/texel
+	// - Improved: Volume area only (100m) -> 1024 texels = 0.097m/texel
+	const int32 Resolution = 1024;  // Default resolution, could be exposed as parameter
+
+	bool bSuccess = FLandscapeHeightmapExtractor::ExtractCombinedHeightmap(
+		Landscapes,
+		CachedLandscapeHeightmap,
+		CachedHeightmapWidth,
+		CachedHeightmapHeight,
+		CachedHeightmapBounds,
+		Resolution);
+
+	if (!bSuccess || CachedLandscapeHeightmap.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Failed to extract landscape heightmap"));
+		GPUSimulator->SetHeightmapCollisionEnabled(false);
+		bLandscapeHeightmapDirty = false;
+		return;
+	}
+
+	// Build collision parameters
+	const float ParticleRadius = Preset ? Preset->ParticleRadius : 5.0f;
+	const float HeightmapFriction = Preset ? Preset->Friction : 0.3f;
+	const float HeightmapRestitution = 0.1f;  // Low restitution for terrain collision (no bounce)
+
+	FGPUHeightmapCollisionParams HeightmapParams = FLandscapeHeightmapExtractor::BuildCollisionParams(
+		CachedHeightmapBounds,
+		CachedHeightmapWidth,
+		CachedHeightmapHeight,
+		ParticleRadius,
+		HeightmapFriction,
+		HeightmapRestitution);
+
+	// Upload to GPU
+	GPUSimulator->SetHeightmapCollisionParams(HeightmapParams);
+	GPUSimulator->UploadHeightmapData(CachedLandscapeHeightmap, CachedHeightmapWidth, CachedHeightmapHeight);
+	GPUSimulator->SetHeightmapCollisionEnabled(true);
+
+	UE_LOG(LogTemp, Log, TEXT("Landscape heightmap collision enabled: %dx%d, Bounds: (%.0f,%.0f,%.0f)-(%.0f,%.0f,%.0f)"),
+		CachedHeightmapWidth, CachedHeightmapHeight,
+		CachedHeightmapBounds.Min.X, CachedHeightmapBounds.Min.Y, CachedHeightmapBounds.Min.Z,
+		CachedHeightmapBounds.Max.X, CachedHeightmapBounds.Max.Y, CachedHeightmapBounds.Max.Z);
+
+	bLandscapeHeightmapDirty = false;
 }
