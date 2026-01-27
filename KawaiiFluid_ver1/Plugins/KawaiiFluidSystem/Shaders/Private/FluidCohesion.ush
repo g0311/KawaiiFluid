@@ -1,0 +1,134 @@
+// Copyright KawaiiFluid Team. All Rights Reserved.
+// FluidCohesion.ush - Cohesion Force Calculation (Surface Tension)
+//
+// Implements Akinci 2013 surface tension model without curvature term.
+// Uses previous frame's neighbor cache for double buffering.
+//
+// This is an include file (.ush) - contains reusable functions only.
+// Include this in FluidPredictPositions.usf for Force Accumulation.
+
+#pragma once
+
+#include "FluidGPUPhysics.ush"
+
+//=============================================================================
+// Cohesion Force Calculation
+// 
+// Calculates cohesion (surface tension) force using previous frame's neighbor cache.
+// Returns acceleration in cm/s^2, ready to be added to velocity.
+//
+// Parameters:
+//   idx               - Current particle index
+//   position          - Current particle position (cm)
+//   mass              - Current particle mass (kg)
+//   density           - Current particle density (kg/m^3)
+//   cohesionStrength  - Surface tension strength coefficient
+//   smoothingRadius   - SPH kernel radius (cm)
+//   restDensity       - Rest density for K_ij correction (kg/m^3)
+//   maxCohesionForce  - Stability clamp value
+//   prevNeighborList  - Previous frame neighbor indices
+//   prevNeighborCounts- Previous frame neighbor counts per particle
+//   prevParticleCount - Particle count from previous frame (bounds check)
+//   particles         - Particle buffer (for neighbor data access)
+//=============================================================================
+
+float3 CalculateCohesionForce(
+    uint idx,
+    float3 position,
+    float mass,
+    float density,
+    float cohesionStrength,
+    float smoothingRadius,
+    float restDensity,
+    float maxCohesionForce,
+    StructuredBuffer<uint> prevNeighborList,
+    StructuredBuffer<uint> prevNeighborCounts,
+    int particleCount,
+    int prevParticleCount,
+    RWStructuredBuffer<FGPUFluidParticle> particles)
+{
+    // Early out if no valid neighbor cache
+    if (idx >= (uint)prevParticleCount)
+    {
+        return float3(0.0f, 0.0f, 0.0f);
+    }
+
+    float3 cohesionForce = float3(0.0f, 0.0f, 0.0f);
+    
+    float h_m = smoothingRadius * CM_TO_M;  // Convert cm to m for kernel
+    float m_i = mass;
+    float rho_i = max(density, SMALL_NUMBER);
+    float smoothingRadiusSq_cm = smoothingRadius * smoothingRadius;
+    
+    uint cachedCount = prevNeighborCounts[idx];
+    uint baseIdx = idx * MAX_NEIGHBORS_PER_PARTICLE;
+    
+    for (uint n = 0; n < cachedCount; ++n)
+    {
+        uint neighborIdx = prevNeighborList[baseIdx + n];
+        
+        // Bounds check and skip self
+        if (neighborIdx == idx || neighborIdx >= (uint)particleCount)
+        {
+            continue;
+        }
+        
+        FGPUFluidParticle neighbor = particles[neighborIdx];
+        
+        // Skip CPU-attached neighbors
+        if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+        {
+            continue;
+        }
+        
+        // Use current frame's Position (not PredictedPosition which isn't computed yet)
+        float3 r_cm = position - neighbor.Position;
+        float r2_cm = dot(r_cm, r_cm);
+        
+        if (r2_cm < SMALL_NUMBER || r2_cm > smoothingRadiusSq_cm)
+        {
+            continue;
+        }
+        
+        float rLenInv_cm = rsqrt(r2_cm);
+        float dist_cm = r2_cm * rLenInv_cm;
+        float dist_m = dist_cm * CM_TO_M;
+        
+        if (dist_m < h_m)
+        {
+            float m_j = neighbor.Mass;
+            float rho_j = max(neighbor.Density, SMALL_NUMBER);
+            
+            // K_ij correction factor for particle deficiency (Akinci 2013)
+            float K_ij = (2.0f * restDensity) / (rho_i + rho_j);
+            K_ij = clamp(K_ij, 0.5f, 2.0f);
+            
+            // Cohesion kernel: attractive force that peaks at ~0.5h
+            float cohesionWeight = CohesionKernel(dist_m, h_m);
+            
+            if (abs(cohesionWeight) > SMALL_NUMBER * 0.001f)
+            {
+                // Direction: particle -> neighbor (attraction)
+                float3 direction = -r_cm * rLenInv_cm;
+                
+                // Force magnitude: F = m_i * m_j * C(r)
+                float forceMag = m_i * m_j * cohesionWeight;
+                cohesionForce += K_ij * cohesionStrength * forceMag * direction;
+            }
+        }
+    }
+    
+    // Clamp for stability
+    float forceLen = length(cohesionForce);
+    if (forceLen > maxCohesionForce && forceLen > SMALL_NUMBER)
+    {
+        cohesionForce = (cohesionForce / forceLen) * maxCohesionForce;
+    }
+    
+    // Convert to acceleration (cm/s^2)
+    // cohesionForce is in (kg * kg * kernel) space, divide by mass for acceleration
+    // Then multiply by 100 to convert m/s^2 to cm/s^2
+    float3 cohesionAcceleration = (cohesionForce / max(m_i, SMALL_NUMBER)) * 100.0f;
+    
+    return cohesionAcceleration;
+}

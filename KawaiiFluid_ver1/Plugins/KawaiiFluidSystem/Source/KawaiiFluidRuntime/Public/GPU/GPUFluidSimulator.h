@@ -825,7 +825,7 @@ private:
 		const FGPUFluidSimulationParams& Params,
 		const FSimulationSpatialData& SpatialData);
 
-	/** Add apply viscosity pass */
+	/** Add viscosity pass (XSPH + Laplacian + Boundary viscosity) */
 	void AddApplyViscosityPass(
 		FRDGBuilder& GraphBuilder,
 		FRDGBufferUAVRef ParticlesUAV,
@@ -844,17 +844,6 @@ private:
 		FRDGBufferSRVRef NeighborListSRV,
 		FRDGBufferSRVRef NeighborCountsSRV,
 		const FGPUFluidSimulationParams& Params);
-
-	/** Add combined viscosity and cohesion pass (optimized single-loop version) */
-	void AddApplyViscosityAndCohesionPass(
-		FRDGBuilder& GraphBuilder,
-		FRDGBufferUAVRef ParticlesUAV,
-		FRDGBufferSRVRef CellCountsSRV,
-		FRDGBufferSRVRef ParticleIndicesSRV,
-		FRDGBufferSRVRef NeighborListSRV,
-		FRDGBufferSRVRef NeighborCountsSRV,
-		const FGPUFluidSimulationParams& Params,
-		const FSimulationSpatialData& SpatialData);
 
 	/** Add bounds collision pass */
 	void AddBoundsCollisionPass(

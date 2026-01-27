@@ -1,16 +1,18 @@
 // Copyright KawaiiFluid Team. All Rights Reserved.
-// GPU Fluid Physics - Apply Viscosity Pass (OPTIMIZED)
-// Applies XSPH viscosity for smoother fluid motion
+// GPU Fluid Physics - Viscosity Pass
 //
-// Optimizations:
-// 1. Loop Unroll: Explicit 27-cell unrolling for cellRadius=1 case
-// 2. Neighbor Caching: Reuses neighbor list from DensityPressure pass
+// Components:
+// 1. XSPH Viscosity: Velocity smoothing between particles
+// 2. Laplacian Viscosity: Physical drag force
+// 3. Boundary Viscosity: Fluid following moving boundaries
+//
+// Note: Cohesion is now handled in PredictPositions (Phase 2) as a Force
 
 #include "/Engine/Public/Platform.ush"
 #include "/Engine/Private/Common.ush"
 #include "FluidGPUPhysics.ush"
 #include "FluidSpatialHash.ush"
-#include "FluidMortonUtils.ush"  // Z-Order functions: GetMortonCellIDFromCellCoord, INVALID_INDEX
+#include "FluidMortonUtils.ush"
 
 //=============================================================================
 // Shader Parameters
@@ -26,25 +28,21 @@ StructuredBuffer<uint> NeighborCounts;
 
 int ParticleCount;
 float SmoothingRadius;
-float ViscosityCoefficient;
-float Poly6Coeff;
-float ViscLaplacianCoeff;  // 45 / (PI * h^6) for Laplacian viscosity
-float DeltaTime;           // Substep delta time
 float CellSize;
+float DeltaTime;
 int bUseNeighborCache;
 
-// Laplacian viscosity tuning constants
-// Higher = more "sticky/gooey" feeling
-// Note: ViscLaplacianCoeff (45/PI*h^6) is very large, so scale must be small
-#define LAPLACIAN_VISCOSITY_SCALE 0.0001f
+// Viscosity parameters
+float ViscosityCoefficient;
+float Poly6Coeff;
+float ViscLaplacianCoeff;  // 45 / (PI * h^6)
 
-// Velocity drag scale for viscous fluids falling in air
-// Higher = slower falling (more viscous feel)
-// c=1.0 with scale=5.0 → drag = 5.0 per second → significant slowdown
+// Viscosity tuning constants
+#define LAPLACIAN_VISCOSITY_SCALE 0.0001f
 #define VELOCITY_DRAG_SCALE 5.0f
 
 //=============================================================================
-// Boundary Particles for viscosity contribution
+// Boundary Particles
 //=============================================================================
 struct FGPUBoundaryParticle
 {
@@ -61,73 +59,30 @@ int BoundaryParticleCount;
 int bUseBoundaryViscosity;
 float AdhesionForceStrength;     // Akinci 2013 adhesion force (0~50)
 float AdhesionVelocityStrength;  // Velocity transfer strength (0~5)
-float AdhesionRadius;            // Boundary adhesion influence radius (cm)
+float AdhesionRadius;
 
-// Z-Order sorted boundary particles (same pattern as FluidSolveDensityPressure.usf)
+// Z-Order sorted boundary particles
 StructuredBuffer<FGPUBoundaryParticle> SortedBoundaryParticles;
 StructuredBuffer<uint> BoundaryCellStart;
 StructuredBuffer<uint> BoundaryCellEnd;
 int bUseBoundaryZOrder;
-float3 MortonBoundsMin;  // Required for GetMortonCellIDFromCellCoord
+float3 MortonBoundsMin;
 
-// Improved Boundary Velocity Transfer
+// Boundary velocity transfer
 float BoundaryVelocityTransferStrength;
 float BoundaryDetachSpeedThreshold;
 float BoundaryMaxDetachSpeed;
 
-// Note: AdhesionKernel is defined in FluidGPUPhysics.ush
-
 //=============================================================================
-// Z-Order Cell ID Calculation (uses shader parameters)
-// Must match FluidSolveDensityPressure.usf's GetMortonCellIDFromCellCoord
+// Z-Order Cell ID Calculation
 //=============================================================================
 uint GetMortonCellIDFromCellCoord(int3 cellCoord)
 {
-	// Compute grid minimum cell (same as in FluidMortonCode.usf)
 	int3 gridMin = int3(floor(MortonBoundsMin / CellSize));
-
-	// Offset cell coordinates to make them positive (relative to grid min)
 	int3 offset = cellCoord - gridMin;
-
-	// Clamp to valid range for current preset
 	uint3 uoffset = uint3(max(offset, int3(0, 0, 0)));
 	uoffset = min(uoffset, uint3(MORTON_MAX_VALUE, MORTON_MAX_VALUE, MORTON_MAX_VALUE));
-
-	// Compute Morton code using preset-specific function from FluidMortonUtils.ush
 	return Morton3D(uoffset.x, uoffset.y, uoffset.z);
-}
-
-//=============================================================================
-// Unrolled 27-Cell Viscosity Processing Macro (Fallback when cache not available)
-//=============================================================================
-#define PROCESS_VISCOSITY_CELL(DX, DY, DZ) \
-{ \
-	int3 neighborCell = centerCell + int3(DX, DY, DZ); \
-	uint hash = HashCell(neighborCell); \
-	uint count = min(CellCounts[hash], (uint)MAX_PARTICLES_PER_CELL); \
-	uint startIdx = hash * MAX_PARTICLES_PER_CELL; \
-	for (uint i = 0; i < count; ++i) \
-	{ \
-		uint neighborIdx = ParticleIndices[startIdx + i]; \
-		if (neighborIdx == idx || neighborIdx >= (uint)ParticleCount) continue; \
-		FGPUFluidParticle neighbor = Particles[neighborIdx]; \
-		if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED)) continue; \
-		float3 r_cm = pos - neighbor.PredictedPosition; \
-		float r2_cm = dot(r_cm, r_cm); \
-		float r2 = r2_cm * CM_TO_M_SQ; \
-		if (r2 < h2) \
-		{ \
-			float rLen = sqrt(r2); \
-			float w = Poly6Kernel(r2, h2) * Poly6Coeff; \
-			float3 velDiff = neighbor.Velocity - vel; \
-			velocityCorrection += velDiff * w; \
-			weightSum += w; \
-			/* Laplacian viscosity: f_visc = mu * sum((v_j - v_i) * laplacian * m_j / rho_j) */ \
-			float laplacian = ViscosityLaplacian(rLen, h, ViscLaplacianCoeff); \
-			float neighborDensity = max(neighbor.Density, 0.001f); \
-			laplacianForce += velDiff * laplacian * neighbor.Mass / neighborDensity; \
-		} \
-	} \
 }
 
 //=============================================================================
@@ -161,21 +116,18 @@ void ApplyViscosityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	float3 pos = particle.PredictedPosition;
 	float3 vel = particle.Velocity;
 
-	// IMPORTANT: Convert smoothing radius from cm to m for kernel calculations
-	// Kernel coefficients (Poly6Coeff) are precomputed with h in meters
-	float h = SmoothingRadius * CM_TO_M;  // Convert to meters
-	float h2 = h * h;
+	// Convert smoothing radius to meters for kernel calculations
+	float h_m = SmoothingRadius * CM_TO_M;
+	float h2 = h_m * h_m;
+	float smoothingRadiusSq_cm = SmoothingRadius * SmoothingRadius;
 
-	// XSPH velocity correction accumulator
+	// Viscosity accumulators
 	float3 velocityCorrection = float3(0.0f, 0.0f, 0.0f);
 	float weightSum = 0.0f;
-
-	// Laplacian viscosity force accumulator
-	// f_visc = mu * sum((v_j - v_i) * nabla^2 W * m_j / rho_j)
 	float3 laplacianForce = float3(0.0f, 0.0f, 0.0f);
 
 	//=========================================================================
-	// Use cached neighbor list if available (much faster!)
+	// Neighbor loop: Viscosity calculation
 	//=========================================================================
 	if (bUseNeighborCache)
 	{
@@ -186,7 +138,6 @@ void ApplyViscosityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		{
 			uint neighborIdx = NeighborList[baseIdx + n];
 
-			// Skip self (shouldn't be in cache, but safety check)
 			if (neighborIdx == idx)
 			{
 				continue;
@@ -202,19 +153,27 @@ void ApplyViscosityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 			float3 r_cm = pos - neighbor.PredictedPosition;
 			float r2_cm = dot(r_cm, r_cm);
-			float r2 = r2_cm * CM_TO_M_SQ;
 
-			// Distance check still needed as positions may have changed
-			if (r2 < h2)
+			if (r2_cm < SMALL_NUMBER || r2_cm > smoothingRadiusSq_cm)
 			{
-				float rLen = sqrt(r2);
-				float w = Poly6Kernel(r2, h2) * Poly6Coeff;
+				continue;
+			}
+
+			float rLenInv_cm = rsqrt(r2_cm);
+			float dist_cm = r2_cm * rLenInv_cm;
+			float dist_m = dist_cm * CM_TO_M;
+			float r2_m = dist_m * dist_m;
+
+			// Viscosity calculation
+			if (r2_m < h2)
+			{
+				float w = Poly6Kernel(r2_m, h2) * Poly6Coeff;
 				float3 velDiff = neighbor.Velocity - vel;
 				velocityCorrection += velDiff * w;
 				weightSum += w;
 
-				// Laplacian viscosity: f_visc = mu * sum((v_j - v_i) * laplacian * m_j / rho_j)
-				float laplacian = ViscosityLaplacian(rLen, h, ViscLaplacianCoeff);
+				// Laplacian viscosity
+				float laplacian = ViscosityLaplacian(dist_m, h_m, ViscLaplacianCoeff);
 				float neighborDensity = max(neighbor.Density, 0.001f);
 				laplacianForce += velDiff * laplacian * neighbor.Mass / neighborDensity;
 			}
@@ -223,95 +182,50 @@ void ApplyViscosityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	else
 	{
 		//=====================================================================
-		// Fallback: Hash-based neighbor search (when cache not available)
+		// Fallback: Hash-based neighbor search
 		//=====================================================================
 		int3 centerCell = WorldToCell(pos, CellSize);
 		int cellRadius = (int)ceil(SmoothingRadius / CellSize);
 
-		if (cellRadius == 1)
+		for (int dz = -cellRadius; dz <= cellRadius; ++dz)
 		{
-			// Unrolled 27-cell neighbor search (3x3x3 grid)
-			// Layer z = -1
-			PROCESS_VISCOSITY_CELL(-1, -1, -1)
-			PROCESS_VISCOSITY_CELL( 0, -1, -1)
-			PROCESS_VISCOSITY_CELL( 1, -1, -1)
-			PROCESS_VISCOSITY_CELL(-1,  0, -1)
-			PROCESS_VISCOSITY_CELL( 0,  0, -1)
-			PROCESS_VISCOSITY_CELL( 1,  0, -1)
-			PROCESS_VISCOSITY_CELL(-1,  1, -1)
-			PROCESS_VISCOSITY_CELL( 0,  1, -1)
-			PROCESS_VISCOSITY_CELL( 1,  1, -1)
-			// Layer z = 0
-			PROCESS_VISCOSITY_CELL(-1, -1,  0)
-			PROCESS_VISCOSITY_CELL( 0, -1,  0)
-			PROCESS_VISCOSITY_CELL( 1, -1,  0)
-			PROCESS_VISCOSITY_CELL(-1,  0,  0)
-			PROCESS_VISCOSITY_CELL( 0,  0,  0)  // Self cell
-			PROCESS_VISCOSITY_CELL( 1,  0,  0)
-			PROCESS_VISCOSITY_CELL(-1,  1,  0)
-			PROCESS_VISCOSITY_CELL( 0,  1,  0)
-			PROCESS_VISCOSITY_CELL( 1,  1,  0)
-			// Layer z = 1
-			PROCESS_VISCOSITY_CELL(-1, -1,  1)
-			PROCESS_VISCOSITY_CELL( 0, -1,  1)
-			PROCESS_VISCOSITY_CELL( 1, -1,  1)
-			PROCESS_VISCOSITY_CELL(-1,  0,  1)
-			PROCESS_VISCOSITY_CELL( 0,  0,  1)
-			PROCESS_VISCOSITY_CELL( 1,  0,  1)
-			PROCESS_VISCOSITY_CELL(-1,  1,  1)
-			PROCESS_VISCOSITY_CELL( 0,  1,  1)
-			PROCESS_VISCOSITY_CELL( 1,  1,  1)
-		}
-		else
-		{
-			// Fallback for cellRadius > 1
-			for (int dz = -cellRadius; dz <= cellRadius; ++dz)
+			for (int dy = -cellRadius; dy <= cellRadius; ++dy)
 			{
-				for (int dy = -cellRadius; dy <= cellRadius; ++dy)
+				for (int dx = -cellRadius; dx <= cellRadius; ++dx)
 				{
-					for (int dx = -cellRadius; dx <= cellRadius; ++dx)
+					int3 neighborCell = centerCell + int3(dx, dy, dz);
+					uint hash = HashCell(neighborCell);
+					uint count = min(CellCounts[hash], (uint)MAX_PARTICLES_PER_CELL);
+					uint startIdx = hash * MAX_PARTICLES_PER_CELL;
+
+					for (uint i = 0; i < count; ++i)
 					{
-						int3 neighborCell = centerCell + int3(dx, dy, dz);
-						uint hash = HashCell(neighborCell);
-						uint count = min(CellCounts[hash], (uint)MAX_PARTICLES_PER_CELL);
-						uint startIdx = hash * MAX_PARTICLES_PER_CELL;
+						uint neighborIdx = ParticleIndices[startIdx + i];
+						if (neighborIdx == idx || neighborIdx >= (uint)ParticleCount) continue;
 
-						for (uint i = 0; i < count; ++i)
+						FGPUFluidParticle neighbor = Particles[neighborIdx];
+						if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED)) continue;
+
+						float3 r_cm = pos - neighbor.PredictedPosition;
+						float r2_cm = dot(r_cm, r_cm);
+						if (r2_cm < SMALL_NUMBER || r2_cm > smoothingRadiusSq_cm) continue;
+
+						float rLenInv_cm = rsqrt(r2_cm);
+						float dist_cm = r2_cm * rLenInv_cm;
+						float dist_m = dist_cm * CM_TO_M;
+						float r2_m = dist_m * dist_m;
+
+						// Viscosity
+						if (r2_m < h2)
 						{
-							uint neighborIdx = ParticleIndices[startIdx + i];
+							float w = Poly6Kernel(r2_m, h2) * Poly6Coeff;
+							float3 velDiff = neighbor.Velocity - vel;
+							velocityCorrection += velDiff * w;
+							weightSum += w;
 
-							// Skip self and invalid indices
-							if (neighborIdx == idx || neighborIdx >= (uint)ParticleCount)
-							{
-								continue;
-							}
-
-							FGPUFluidParticle neighbor = Particles[neighborIdx];
-
-							// Skip CPU-attached neighbors only
-							if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
-							{
-								continue;
-							}
-
-							float3 r_cm = pos - neighbor.PredictedPosition;
-							float r2_cm = dot(r_cm, r_cm);
-							float r2 = r2_cm * CM_TO_M_SQ;
-
-							// Within smoothing radius?
-							if (r2 < h2)
-							{
-								float rLen = sqrt(r2);
-								float w = Poly6Kernel(r2, h2) * Poly6Coeff;
-								float3 velDiff = neighbor.Velocity - vel;
-								velocityCorrection += velDiff * w;
-								weightSum += w;
-
-								// Laplacian viscosity: f_visc = mu * sum((v_j - v_i) * laplacian * m_j / rho_j)
-								float laplacian = ViscosityLaplacian(rLen, h, ViscLaplacianCoeff);
-								float neighborDensity = max(neighbor.Density, 0.001f);
-								laplacianForce += velDiff * laplacian * neighbor.Mass / neighborDensity;
-							}
+							float laplacian = ViscosityLaplacian(dist_m, h_m, ViscLaplacianCoeff);
+							float neighborDensity = max(neighbor.Density, 0.001f);
+							laplacianForce += velDiff * laplacian * neighbor.Mass / neighborDensity;
 						}
 					}
 				}
@@ -320,40 +234,16 @@ void ApplyViscosityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	}
 
 	//=========================================================================
-	// Hybrid Boundary Adhesion System
-	//
-	// Combines two approaches for realistic adhesion:
-	// 1. Adhesion Force (Akinci 2013): Pulls fluid toward boundary surface
-	//    - Uses AdhesionKernel that peaks at ~0.5*AdhesionRadius
-	//    - Creates actual attractive force toward boundary
-	//    - Works for both static and moving boundaries
-	//
-	// 2. Velocity Transfer: Makes fluid follow moving boundary velocity
-	//    - XSPH-style velocity averaging toward boundary velocity
-	//    - Reduces with high relative speed (natural detachment)
-	//    - Effective for fast-moving characters
-	//
-	// Two spatial search modes:
-	// 1. Z-Order Mode: O(K) neighbor search using Morton-sorted cells
-	// 2. Legacy Mode: O(M) brute-force (fallback)
+	// Boundary Viscosity (fluid following moving boundaries)
 	//=========================================================================
-	float3 adhesionForce = float3(0.0f, 0.0f, 0.0f);
-
-	bool bHasAdhesionForce = AdhesionForceStrength > 0.0f;
-	bool bHasVelocityTransfer = AdhesionVelocityStrength > 0.0f;
-
-	if (bUseBoundaryViscosity && BoundaryParticleCount > 0 && AdhesionRadius > 0.0f && (bHasAdhesionForce || bHasVelocityTransfer))
+	if (bUseBoundaryViscosity && BoundaryParticleCount > 0 && AdhesionForceStrength > 0.0f && AdhesionRadius > 0.0f)
 	{
-		// Use AdhesionRadius for boundary influence range
+		float clampedAdhesion = saturate(AdhesionForceStrength);
 		float adhesionRadius_m = AdhesionRadius * CM_TO_M;
 		float adhesionRadius2 = adhesionRadius_m * adhesionRadius_m;
 
 		if (bUseBoundaryZOrder)
 		{
-			//=================================================================
-			// Z-Order Mode: O(K) neighbor search using Morton code
-			// SortedBoundaryParticles are sorted by Morton code
-			//=================================================================
 			int3 centerCell = WorldToCell(pos, CellSize);
 			int cellRadius = (int)ceil(AdhesionRadius / CellSize);
 
@@ -368,63 +258,29 @@ void ApplyViscosityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 						uint bCellStart = BoundaryCellStart[cellID];
 						uint bCellEnd = BoundaryCellEnd[cellID];
 
-						// Skip empty cells
 						if (bCellStart == INVALID_INDEX || bCellEnd == INVALID_INDEX)
 							continue;
 
-						// Iterate through boundary particles in this cell
 						for (uint bi = bCellStart; bi <= bCellEnd; ++bi)
 						{
 							FGPUBoundaryParticle boundary = SortedBoundaryParticles[bi];
 							float3 r_cm = pos - boundary.Position;
 							float r2_cm = dot(r_cm, r_cm);
-							float r_cm_len = sqrt(r2_cm);
 							float r2 = r2_cm * CM_TO_M_SQ;
-							float r_m = r_cm_len * CM_TO_M;
 
 							if (r2 < adhesionRadius2 && r2 > SMALL_NUMBER)
 							{
-								//=============================================
-								// 1. Adhesion Force (Akinci 2013)
-								// Pulls fluid toward boundary surface
-								//=============================================
-								if (bHasAdhesionForce)
-								{
-									// Direction from fluid to boundary (pull direction)
-									float3 pullDir = -r_cm / r_cm_len;
+								float w = Poly6Kernel(r2, adhesionRadius2) * Poly6Coeff;
 
-									// Adhesion kernel: peaks at 0.5*h, zero at 0 and h
-									float A = AdhesionKernel(r_m, adhesionRadius_m);
+								float3 relativeVelocity = vel - boundary.Velocity;
+								float relativeSpeed = length(relativeVelocity);
 
-									// Adhesion force: F = strength * psi * A(r) * direction
-									// Scale by CM_TO_M to get proper acceleration in cm/s²
-									adhesionForce += AdhesionForceStrength * boundary.Psi * A * pullDir * 100.0f;
-								}
+								float detachFactor = smoothstep(BoundaryDetachSpeedThreshold, BoundaryMaxDetachSpeed, relativeSpeed);
+								float transferFactor = (1.0f - detachFactor) * BoundaryVelocityTransferStrength;
 
-								//=============================================
-								// 2. Velocity Transfer (XSPH-style)
-								// Makes fluid follow moving boundaries
-								//=============================================
-								if (bHasVelocityTransfer)
-								{
-									// Distance-based weight (Poly6 for smooth falloff)
-									float w = Poly6Kernel(r2, adhesionRadius2) * Poly6Coeff;
-
-									// Relative velocity based detachment
-									// High relative speed = natural separation
-									float3 relativeVelocity = vel - boundary.Velocity;
-									float relativeSpeed = length(relativeVelocity);
-
-									float detachFactor = smoothstep(BoundaryDetachSpeedThreshold, BoundaryMaxDetachSpeed, relativeSpeed);
-									float transferFactor = (1.0f - detachFactor) * BoundaryVelocityTransferStrength;
-
-									// Velocity difference (boundary - fluid)
-									float3 velDiff = boundary.Velocity - vel;
-
-									// Accumulate velocity correction
-									velocityCorrection += velDiff * w * boundary.Psi * AdhesionVelocityStrength * transferFactor;
-									weightSum += w * boundary.Psi * AdhesionVelocityStrength * transferFactor;
-								}
+								float3 velDiff = boundary.Velocity - vel;
+								velocityCorrection += velDiff * w * boundary.Psi * clampedAdhesion * transferFactor;
+								weightSum += w * boundary.Psi * clampedAdhesion * transferFactor;
 							}
 						}
 					}
@@ -433,116 +289,55 @@ void ApplyViscosityCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		}
 		else
 		{
-			//=================================================================
-			// Legacy Mode: O(M) brute-force (fallback)
-			//=================================================================
 			for (int bi = 0; bi < BoundaryParticleCount; ++bi)
 			{
 				FGPUBoundaryParticle boundary = BoundaryParticles[bi];
 				float3 r_cm = pos - boundary.Position;
 				float r2_cm = dot(r_cm, r_cm);
-				float r_cm_len = sqrt(r2_cm);
 				float r2 = r2_cm * CM_TO_M_SQ;
-				float r_m = r_cm_len * CM_TO_M;
 
 				if (r2 < adhesionRadius2 && r2 > SMALL_NUMBER)
 				{
-					//=============================================
-					// 1. Adhesion Force (Akinci 2013)
-					// Pulls fluid toward boundary surface
-					//=============================================
-					if (bHasAdhesionForce)
-					{
-						// Direction from fluid to boundary (pull direction)
-						float3 pullDir = -r_cm / r_cm_len;
+					float w = Poly6Kernel(r2, adhesionRadius2) * Poly6Coeff;
 
-						// Adhesion kernel: peaks at 0.5*h, zero at 0 and h
-						float A = AdhesionKernel(r_m, adhesionRadius_m);
+					float3 relativeVelocity = vel - boundary.Velocity;
+					float relativeSpeed = length(relativeVelocity);
 
-						// Adhesion force: F = strength * psi * A(r) * direction
-						// Scale by CM_TO_M to get proper acceleration in cm/s²
-						adhesionForce += AdhesionForceStrength * boundary.Psi * A * pullDir * 100.0f;
-					}
+					float detachFactor = smoothstep(BoundaryDetachSpeedThreshold, BoundaryMaxDetachSpeed, relativeSpeed);
+					float transferFactor = (1.0f - detachFactor) * BoundaryVelocityTransferStrength;
 
-					//=============================================
-					// 2. Velocity Transfer (XSPH-style)
-					// Makes fluid follow moving boundaries
-					//=============================================
-					if (bHasVelocityTransfer)
-					{
-						// Distance-based weight (Poly6 for smooth falloff)
-						float w = Poly6Kernel(r2, adhesionRadius2) * Poly6Coeff;
-
-						// Relative velocity based detachment
-						// High relative speed = natural separation
-						float3 relativeVelocity = vel - boundary.Velocity;
-						float relativeSpeed = length(relativeVelocity);
-
-						float detachFactor = smoothstep(BoundaryDetachSpeedThreshold, BoundaryMaxDetachSpeed, relativeSpeed);
-						float transferFactor = (1.0f - detachFactor) * BoundaryVelocityTransferStrength;
-
-						// Velocity difference (boundary - fluid)
-						float3 velDiff = boundary.Velocity - vel;
-
-						// Accumulate velocity correction
-						velocityCorrection += velDiff * w * boundary.Psi * AdhesionVelocityStrength * transferFactor;
-						weightSum += w * boundary.Psi * AdhesionVelocityStrength * transferFactor;
-					}
+					float3 velDiff = boundary.Velocity - vel;
+					velocityCorrection += velDiff * w * boundary.Psi * clampedAdhesion * transferFactor;
+					weightSum += w * boundary.Psi * clampedAdhesion * transferFactor;
 				}
 			}
 		}
 	}
 
-	// Apply combined XSPH + Laplacian viscosity
-	//
-	// XSPH: Velocity averaging (particles move together)
-	//   v' = v + c * Σ(v_j - v_i) * W(r, h) / Σ W(r, h)
-	//
-	// Laplacian: Actual viscous drag force (slows down movement)
-	//   v' = v + mu * Σ((v_j - v_i) * ∇²W * m_j / ρ_j) * dt
-	//
-	// Blending strategy:
-	// - Low viscosity (c < 0.3): Mostly XSPH (water-like, smooth flow)
-	// - High viscosity (c > 0.5): Add Laplacian (honey-like, sticky/gooey)
-	//
-	// Nonlinear mapping: mu = c² * SCALE (stronger effect at high c)
-
-	// 1. Apply XSPH (velocity smoothing)
+	//=========================================================================
+	// Apply Viscosity
+	//=========================================================================
+	// XSPH velocity smoothing
 	if (weightSum > SMALL_NUMBER)
 	{
 		velocityCorrection /= weightSum;
 		particle.Velocity += ViscosityCoefficient * velocityCorrection;
 	}
 
-	// 2. Apply Laplacian viscosity (actual drag force)
-	// Only significant at higher viscosity coefficients
-	// mu = c² gives nonlinear response: c=0.5 → mu=0.25, c=1.0 → mu=1.0
+	// Laplacian viscosity (drag force)
 	float mu = ViscosityCoefficient * ViscosityCoefficient * LAPLACIAN_VISCOSITY_SCALE;
 	if (mu > SMALL_NUMBER)
 	{
-		// Apply as velocity change: dv = (force / mass) * dt = mu * laplacianForce * dt
-		// Note: laplacianForce already has (m_j / rho_j) factor from neighbor accumulation
 		particle.Velocity += mu * laplacianForce * DeltaTime;
 	}
 
-	// 3. Apply velocity drag (air resistance for viscous fluids)
-	// This makes viscous fluids fall slower even without nearby boundaries
-	// v' = v * (1 - drag * dt)
-	// drag = c² * SCALE (nonlinear: high viscosity = much more drag)
+	// Velocity drag (air resistance)
 	float dragCoeff = ViscosityCoefficient * ViscosityCoefficient * VELOCITY_DRAG_SCALE;
 	if (dragCoeff > SMALL_NUMBER)
 	{
 		float damping = 1.0f - dragCoeff * DeltaTime;
-		damping = max(damping, 0.0f);  // Clamp to prevent negative/reversal
+		damping = max(damping, 0.0f);
 		particle.Velocity *= damping;
-	}
-
-	// 4. Apply Adhesion Force (Akinci 2013)
-	// This pulls fluid toward boundary surfaces
-	// v' = v + F_adhesion * dt
-	if (length(adhesionForce) > SMALL_NUMBER)
-	{
-		particle.Velocity += adhesionForce * DeltaTime;
 	}
 
 	Particles[idx] = particle;

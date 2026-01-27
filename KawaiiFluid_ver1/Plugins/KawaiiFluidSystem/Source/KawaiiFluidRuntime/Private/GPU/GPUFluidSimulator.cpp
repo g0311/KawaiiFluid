@@ -1184,7 +1184,7 @@ void FGPUFluidSimulator::ExecutePostSimulation(
 	AddFinalizePositionsPass(GraphBuilder, ParticlesUAV, Params);
 
 	// Combined Viscosity + Cohesion pass (merged for ~35-40% performance improvement)
-	AddApplyViscosityAndCohesionPass(GraphBuilder, ParticlesUAV, SpatialData.CellCountsSRV, SpatialData.ParticleIndicesSRV, SpatialData.NeighborListSRV, SpatialData.NeighborCountsSRV, Params, SpatialData);
+	AddApplyViscosityPass(GraphBuilder, ParticlesUAV, SpatialData.CellCountsSRV, SpatialData.ParticleIndicesSRV, SpatialData.NeighborListSRV, SpatialData.NeighborCountsSRV, Params, SpatialData);
 
 	// Particle Sleeping Pass (NVIDIA Flex stabilization)
 	if (false && Params.bEnableParticleSleeping && SpatialData.NeighborListSRV && SpatialData.NeighborCountsSRV)
@@ -1665,15 +1665,6 @@ void FGPUFluidSimulator::SwapNeighborCacheBuffers()
 	PrevNeighborCountsBuffer = NeighborCountsBuffer;
 	PrevNeighborBufferParticleCount = CurrentParticleCount;
 	bPrevNeighborCacheValid = true;
-	
-	// DEBUG: Log swap operation (first 10 frames only)
-	static int32 SwapLogCounter = 0;
-	if (++SwapLogCounter <= 10)
-	{
-		UE_LOG(LogGPUFluidSimulator, Log, 
-			TEXT("SwapNeighborCacheBuffers: PrevNeighborCache now valid with %d particles"),
-			PrevNeighborBufferParticleCount);
-	}
 }
 
 //=============================================================================
