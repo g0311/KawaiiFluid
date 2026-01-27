@@ -458,13 +458,13 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 		DrawDebugStaticBoundaryParticles();
 	}
 
-	// VSM Integration: Update shadow proxy with particle data
+	// ISM Shadow: Register particles for shadow casting
 	if (SimulationModule)
 	{
 		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
 		{
-			TRACE_CPUPROFILER_EVENT_SCOPE(VSM Integration)
-			if (RendererSubsystem->bEnableVSMIntegration && bEnableShadow)
+			TRACE_CPUPROFILER_EVENT_SCOPE(ISM Shadow)
+			if (RendererSubsystem->bEnableISMShadow && bEnableShadow)
 			{
 				// Use member buffer to avoid per-frame allocation
 				ShadowPredictionBuffer.Reset();
@@ -475,13 +475,12 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 				FGPUFluidSimulator* GPUSimulator = SimulationModule->GetGPUSimulator();
 				const bool bGPUActive = SimulationModule->IsGPUSimulationActive() && GPUSimulator != nullptr;
 		
-				// Clear ISM and skip if particle count is 0
+				// Skip if particle count is 0 (no registration = ISM cleared in Subsystem Tick)
 				const int32 ActualParticleCount = bGPUActive ? GPUSimulator->GetParticleCount() : SimulationModule->GetParticleCount();
 				if (ActualParticleCount <= 0)
 				{
 					CachedShadowPositions.Empty();
 					CachedShadowVelocities.Empty();
-					RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f, ShadowMeshQuality);
 					return;
 				}
 		
@@ -505,7 +504,7 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 						if (NumParticles > 0)
 						{
 							// Use Move for arrays that won't be used after this (avoids deep copy)
-							CachedShadowPositions = Positions;  // Keep copy - needed for UpdateShadowInstances below
+							CachedShadowPositions = Positions;  // Keep copy - needed for RegisterShadowParticles below
 							CachedShadowVelocities = MoveTemp(NewVelocities);
 							CachedAnisotropyAxis1 = MoveTemp(NewAnisotropyAxis1);
 							CachedAnisotropyAxis2 = MoveTemp(NewAnisotropyAxis2);
@@ -609,17 +608,12 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 					const float ParticleRadius = SimulationModule->GetParticleRadius();
 					FluidBounds = FluidBounds.ExpandBy(ParticleRadius * 2.0f);
 
-					// Update shadow proxy state (creates HISM component if needed)
-					RendererSubsystem->UpdateShadowProxyState();
-
-					// Update HISM shadow instances with uniform spheres
-					// Pass MaxParticleCount for efficient instance pooling (avoids reallocations)
-					RendererSubsystem->UpdateShadowInstances(
+					// Register shadow particles for aggregation (will be rendered in Subsystem Tick)
+					RendererSubsystem->RegisterShadowParticles(
 						Positions.GetData(),
 						NumParticles,
 						ParticleRadius,
-						ShadowMeshQuality,
-						SpawnSettings.MaxParticleCount
+						ShadowMeshQuality
 					);
 
 					// Spawn splash VFX based on condition mode (with state change detection)
@@ -700,15 +694,11 @@ void UKawaiiFluidComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 						}
 					}
 				}
-				else
-				{
-					// Clear shadow instances when no particles
-					RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f, ShadowMeshQuality);
-				}
+				// else: No particles registered = ISM cleared automatically in Subsystem Tick
 			}
 			else
 			{
-				// Shadow disabled (VSM off or component shadow off) - disable GPU readback
+				// Shadow disabled (ISM off or component shadow off) - disable GPU readback
 				FGPUFluidSimulator* GPUSimulator = SimulationModule->GetGPUSimulator();
 				if (GPUSimulator != nullptr)
 				{
@@ -1481,14 +1471,6 @@ void UKawaiiFluidComponent::ClearAllParticles()
 		RenderingModule->UpdateRenderers();
 	}
 
-	// Clear Shadow ISM
-	if (UWorld* World = GetWorld())
-	{
-		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
-		{
-			RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f, ShadowMeshQuality);
-		}
-	}
 }
 
 //========================================

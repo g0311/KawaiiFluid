@@ -2,10 +2,7 @@
 
 #include "Rendering/FluidRendererSubsystem.h"
 #include "Rendering/FluidSceneViewExtension.h"
-#include "Rendering/FluidShadowUtils.h"
 #include "Modules/KawaiiFluidRenderingModule.h"
-#include "Engine/DirectionalLight.h"
-#include "Components/DirectionalLightComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "GameFramework/Actor.h"
@@ -47,6 +44,9 @@ void UFluidRendererSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void UFluidRendererSubsystem::Deinitialize()
 {
+	// Cleanup shadow resources
+	CleanupShadowResources();
+
 	// Release View Extension
 	ViewExtension.Reset();
 
@@ -55,6 +55,35 @@ void UFluidRendererSubsystem::Deinitialize()
 	Super::Deinitialize();
 
 	UE_LOG(LogTemp, Log, TEXT("FluidRendererSubsystem Deinitialized"));
+}
+
+//========================================
+// FTickableGameObject Implementation
+//========================================
+
+TStatId UFluidRendererSubsystem::GetStatId() const
+{
+	RETURN_QUICK_DECLARE_CYCLE_STAT(UFluidRendererSubsystem, STATGROUP_Tickables);
+}
+
+/**
+ * @brief Subsystem tick - flushes aggregated shadow particles to ISM components.
+ * Called after all Volume/Component ticks have registered their particles.
+ */
+void UFluidRendererSubsystem::Tick(float DeltaTime)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(FluidRendererSubsystem_Tick);
+
+	if (!bEnableISMShadow)
+	{
+		return;
+	}
+
+	// Flush all aggregated particles to ISM components
+	FlushShadowInstances();
+
+	// Clear buffers for next frame
+	ClearAggregationBuffers();
 }
 
 //========================================
@@ -98,64 +127,6 @@ void UFluidRendererSubsystem::UnregisterRenderingModule(UKawaiiFluidRenderingMod
 			*Module->GetName(),
 			RegisteredRenderingModules.Num());
 	}
-}
-
-//========================================
-// Cached Light Direction (Game Thread)
-//========================================
-
-/**
- * @brief Update cached light direction from the main DirectionalLight in the world.
- * Must be called from game thread before rendering.
- */
-void UFluidRendererSubsystem::UpdateCachedLightDirection()
-{
-	check(IsInGameThread());
-
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		bHasCachedLightData = false;
-		return;
-	}
-
-	// Find main DirectionalLight using TActorIterator (game thread only)
-	ADirectionalLight* MainLight = FluidShadowUtils::FindMainDirectionalLight(World);
-
-	if (MainLight)
-	{
-		UDirectionalLightComponent* LightComp = Cast<UDirectionalLightComponent>(MainLight->GetLightComponent());
-		if (LightComp)
-		{
-			// Get light direction (forward vector points toward the light source, negate for shadow direction)
-			FVector LightDir = -LightComp->GetForwardVector();
-			CachedLightDirection = FVector3f(LightDir);
-
-			// Calculate light view-projection matrix for shadow mapping
-			// Use a default bounds for now (TODO: use actual fluid bounds)
-			FBox FluidBounds(FVector(-1000, -1000, -1000), FVector(1000, 1000, 1000));
-			FBox ExpandedBounds = FluidBounds.ExpandBy(FluidBounds.GetExtent().Size() * 0.5f);
-
-			FMatrix ViewMatrix, ProjectionMatrix;
-			FluidShadowUtils::CalculateDirectionalLightMatrices(LightDir, ExpandedBounds, ViewMatrix, ProjectionMatrix);
-			CachedLightViewProjectionMatrix = FMatrix44f(ViewMatrix * ProjectionMatrix);
-
-			bHasCachedLightData = true;
-			return;
-		}
-	}
-
-	// Fallback: use default sun direction
-	CachedLightDirection = FVector3f(0.5f, 0.5f, -0.707f).GetSafeNormal();
-
-	FBox FluidBounds(FVector(-1000, -1000, -1000), FVector(1000, 1000, 1000));
-	FBox ExpandedBounds = FluidBounds.ExpandBy(FluidBounds.GetExtent().Size() * 0.5f);
-
-	FMatrix ViewMatrix, ProjectionMatrix;
-	FluidShadowUtils::CalculateDirectionalLightMatrices(FVector(CachedLightDirection), ExpandedBounds, ViewMatrix, ProjectionMatrix);
-	CachedLightViewProjectionMatrix = FMatrix44f(ViewMatrix * ProjectionMatrix);
-
-	bHasCachedLightData = true;
 }
 
 //========================================
@@ -375,60 +346,8 @@ static UStaticMesh* CreateLowPolySphere(float Radius, EFluidShadowMeshQuality Qu
 }
 
 //========================================
-// VSM Buffer Management
+// ISM Shadow Management (Multi-Volume Aggregation)
 //========================================
-
-void UFluidRendererSubsystem::SwapVSMBuffers()
-{
-	// Swap VSM buffers: previous frame's write buffer becomes current frame's read buffer
-	VSMTexture_Read = VSMTexture_Write;
-	LightVPMatrix_Read = LightVPMatrix_Write;
-}
-
-//========================================
-// ISM Shadow Management
-//========================================
-
-/**
- * @brief Create or destroy the ISM shadow component based on settings.
- */
-void UFluidRendererSubsystem::UpdateShadowProxyState()
-{
-	check(IsInGameThread());
-
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
-	// Note: Actor and ISM creation is now fully handled in UpdateShadowInstances()
-	// This function only handles cleanup when shadow is disabled
-
-	if (!bEnableVSMIntegration && (IsValid(ShadowProxyActor) || IsValid(ShadowInstanceComponent)))
-	{
-		// Destroy ISM component
-		if (IsValid(ShadowInstanceComponent))
-		{
-			ShadowInstanceComponent->ClearInstances();
-			ShadowInstanceComponent->DestroyComponent();
-		}
-		ShadowInstanceComponent = nullptr;
-
-		if (IsValid(ShadowProxyActor))
-		{
-			ShadowProxyActor->Destroy();
-		}
-		ShadowProxyActor = nullptr;
-
-		// Release resources - clear all quality levels
-		for (int32 i = 0; i < 3; ++i)
-		{
-			ShadowSphereMeshes[i] = nullptr;
-		}
-		CachedInstanceTransforms.Empty();
-	}
-}
 
 /**
  * @brief Get or create shadow sphere mesh for specified quality level.
@@ -439,7 +358,7 @@ void UFluidRendererSubsystem::UpdateShadowProxyState()
 UStaticMesh* UFluidRendererSubsystem::GetOrCreateShadowMesh(EFluidShadowMeshQuality Quality)
 {
 	const int32 QualityIndex = static_cast<int32>(Quality);
-	if (QualityIndex < 0 || QualityIndex >= 3)
+	if (QualityIndex < 0 || QualityIndex >= NUM_SHADOW_QUALITY_LEVELS)
 	{
 		return nullptr;
 	}
@@ -464,48 +383,32 @@ UStaticMesh* UFluidRendererSubsystem::GetOrCreateShadowMesh(EFluidShadowMeshQual
 	return ShadowSphereMeshes[QualityIndex];
 }
 
-void UFluidRendererSubsystem::UpdateShadowInstances(const FVector* ParticlePositions, int32 NumParticles, float ParticleRadius, EFluidShadowMeshQuality Quality, int32 MaxParticles)
+/**
+ * @brief Get or create ISM component for specified quality level.
+ * @param Quality The quality level for the ISM component.
+ * @return The ISM component, or nullptr on failure.
+ */
+UInstancedStaticMeshComponent* UFluidRendererSubsystem::GetOrCreateShadowISM(EFluidShadowMeshQuality Quality)
 {
-	check(IsInGameThread());
-
-	// Clear HISM instances if no particles (do this even if VSM is disabled)
-	if (NumParticles <= 0 || !ParticlePositions)
+	const int32 QualityIndex = static_cast<int32>(Quality);
+	if (QualityIndex < 0 || QualityIndex >= NUM_SHADOW_QUALITY_LEVELS)
 	{
-		if (IsValid(ShadowInstanceComponent))
-		{
-			// Instead of clearing, just hide if we have a reasonable number of instances
-			const int32 CurrentCount = ShadowInstanceComponent->GetInstanceCount();
-			if (CurrentCount > 0 && CurrentCount < 5000)
-			{
-				CachedInstanceTransforms.SetNum(CurrentCount);
-				for (auto& Transform : CachedInstanceTransforms)
-				{
-					Transform.SetScale3D(FVector::ZeroVector);
-				}
-				ShadowInstanceComponent->BatchUpdateInstancesTransforms(0, CachedInstanceTransforms, false, true, false);
-			}
-			else
-			{
-				ShadowInstanceComponent->ClearInstances();
-			}
-			ShadowInstanceComponent->MarkRenderStateDirty();
-		}
-		return;
+		return nullptr;
 	}
 
-	// Early return if VSM integration is disabled
-	if (!bEnableVSMIntegration)
+	// Return cached component if valid
+	if (IsValid(ShadowInstanceComponents[QualityIndex]))
 	{
-		return;
+		return ShadowInstanceComponents[QualityIndex];
 	}
 
 	UWorld* World = GetWorld();
 	if (!World || World->bIsTearingDown || !World->bActorsInitialized)
 	{
-		return;
+		return nullptr;
 	}
 
-	// Lazy creation of Actor
+	// Lazy creation of Actor (shared across all quality levels)
 	if (!IsValid(ShadowProxyActor))
 	{
 		ShadowProxyActor = nullptr;
@@ -514,402 +417,230 @@ void UFluidRendererSubsystem::UpdateShadowInstances(const FVector* ParticlePosit
 		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
 		ShadowProxyActor = World->SpawnActor<AActor>(AActor::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams);
-		if (ShadowProxyActor)
-		{
-			// SetActorLabel removed in UE 5.7
-		}
-		else
+		if (!ShadowProxyActor)
 		{
 			UE_LOG(LogTemp, Warning, TEXT("FluidRendererSubsystem: Failed to spawn shadow proxy actor"));
-			return;
+			return nullptr;
 		}
 	}
 
-	// Get or create shadow mesh for requested quality level
+	// Get or create shadow mesh for this quality
 	UStaticMesh* ShadowMesh = GetOrCreateShadowMesh(Quality);
 	if (!ShadowMesh)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("FluidRendererSubsystem: Failed to get shadow sphere mesh for quality %d"),
-			static_cast<int32>(Quality));
-		return;
+		return nullptr;
 	}
 
-	// Check if quality changed - need to update ISM component's mesh
-	if (CurrentShadowMeshQuality != Quality)
+	// Create ISM component
+	FName ComponentName = *FString::Printf(TEXT("ShadowISM_Quality%d"), QualityIndex);
+	UInstancedStaticMeshComponent* ISM = NewObject<UInstancedStaticMeshComponent>(ShadowProxyActor, ComponentName);
+	if (!ISM)
 	{
-		if (IsValid(ShadowInstanceComponent))
-		{
-			ShadowInstanceComponent->ClearInstances();
-			ShadowInstanceComponent->SetStaticMesh(ShadowMesh);
-		}
-		CurrentShadowMeshQuality = Quality;
+		return nullptr;
 	}
 
-	// Lazy creation of ISM component
-	if (!IsValid(ShadowInstanceComponent))
+	// Set the first created ISM as root component
+	if (!ShadowProxyActor->GetRootComponent())
 	{
-		ShadowInstanceComponent = nullptr;
-
-		// Create ISM component for instanced shadow spheres
-		ShadowInstanceComponent = NewObject<UInstancedStaticMeshComponent>(ShadowProxyActor, TEXT("ShadowInstanceComponent"));
-		if (ShadowInstanceComponent)
-		{
-			// Set as root component so it's properly attached to the actor
-			ShadowProxyActor->SetRootComponent(ShadowInstanceComponent);
-
-			ShadowInstanceComponent->SetStaticMesh(ShadowMesh);
-
-			// Shadow settings - cast shadow but invisible in main pass
-			ShadowInstanceComponent->CastShadow = true;
-			ShadowInstanceComponent->bCastDynamicShadow = true;
-			ShadowInstanceComponent->bCastStaticShadow = false;
-			ShadowInstanceComponent->bAffectDynamicIndirectLighting = false;
-			ShadowInstanceComponent->bAffectDistanceFieldLighting = false;
-
-			// Hidden but casts shadow (both editor and game)
-			ShadowInstanceComponent->SetVisibility(false);
-			ShadowInstanceComponent->SetHiddenInGame(true);
-			ShadowInstanceComponent->bCastHiddenShadow = true;
-
-			// Performance settings
-			ShadowInstanceComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-			ShadowInstanceComponent->SetGenerateOverlapEvents(false);
-			ShadowInstanceComponent->bDisableCollision = true;
-			ShadowInstanceComponent->SetMobility(EComponentMobility::Movable);
-
-			// Register component to the world
-			ShadowInstanceComponent->RegisterComponent();
-		}
-	}
-
-	if (!IsValid(ShadowInstanceComponent))
-	{
-		return;
-	}
-
-	// Calculate number of instances needed for active particles
-	const int32 SkipFactor = FMath::Max(1, ParticleSkipFactor);
-	int32 NumActiveInstances = (NumParticles + SkipFactor - 1) / SkipFactor;
-	if (MaxShadowInstances > 0)
-	{
-		NumActiveInstances = FMath::Min(NumActiveInstances, MaxShadowInstances);
-	}
-
-	// Calculate target capacity (MaxParticles or current active count with padding)
-	int32 TargetCapacity = NumActiveInstances;
-	if (MaxParticles > 0)
-	{
-		TargetCapacity = FMath::Max(TargetCapacity, (MaxParticles + SkipFactor - 1) / SkipFactor);
-	}
-
-	// Current state
-	const int32 CurrentCapacity = ShadowInstanceComponent->GetInstanceCount();
-	
-	// Determine if we need to rebuild (reallocate)
-	// Rebuild if:
-	// 1. Current capacity is insufficient
-	// 2. Current capacity is excessively large (waste > 50% AND > 1000 instances)
-	const bool bInsufficient = CurrentCapacity < NumActiveInstances;
-	const bool bExcessive = (CurrentCapacity > TargetCapacity * 1.5f) && (CurrentCapacity - TargetCapacity > 1000);
-
-	// Prepare transforms buffer
-	// Use the larger of Current or Target capacity to ensure we fill everything
-	const int32 BufferSize = bInsufficient ? TargetCapacity : CurrentCapacity;
-	CachedInstanceTransforms.SetNumUninitialized(BufferSize);
-
-	const FVector SphereScale = FVector(ParticleRadius / 50.0f);
-	
-	// 1. Fill active instances
-	// Parallelize this loop for performance
-	ParallelFor(NumActiveInstances, [&](int32 InstanceIdx)
-	{
-		const int32 ParticleIdx = InstanceIdx * SkipFactor;
-		if (ParticleIdx < NumParticles)
-		{
-			const FVector& Position = ParticlePositions[ParticleIdx];
-			FTransform& OutTransform = CachedInstanceTransforms[InstanceIdx];
-
-			if (FMath::IsFinite(Position.X) && FMath::IsFinite(Position.Y) && FMath::IsFinite(Position.Z))
-			{
-				OutTransform.SetTranslation(Position);
-				OutTransform.SetRotation(FQuat::Identity);
-				OutTransform.SetScale3D(SphereScale);
-			}
-			else
-			{
-				OutTransform.SetIdentity();
-				OutTransform.SetScale3D(FVector::ZeroVector);
-			}
-		}
-	});
-
-	// 2. Fill remaining instances (padding/pooling) with zero scale
-	if (BufferSize > NumActiveInstances)
-	{
-		const int32 Remaining = BufferSize - NumActiveInstances;
-		// Simple loop is fast enough for zeroing
-		for (int32 i = NumActiveInstances; i < BufferSize; ++i)
-		{
-			CachedInstanceTransforms[i].SetIdentity();
-			CachedInstanceTransforms[i].SetScale3D(FVector::ZeroVector);
-		}
-	}
-
-	// Apply to ISM Component
-	if (bInsufficient || bExcessive)
-	{
-		// Full Rebuild
-		ShadowInstanceComponent->ClearInstances();
-		// Add instances (false = don't return indices, true = mark dirty)
-		ShadowInstanceComponent->AddInstances(CachedInstanceTransforms, false, true);
+		ShadowProxyActor->SetRootComponent(ISM);
 	}
 	else
 	{
-		// Batch Update (Fast path)
-		ShadowInstanceComponent->BatchUpdateInstancesTransforms(
-			0,
-			CachedInstanceTransforms,
-			false,  // bWorldSpace
-			true,   // bMarkRenderStateDirty
-			false   // bTeleport
-		);
+		ISM->SetupAttachment(ShadowProxyActor->GetRootComponent());
 	}
+
+	ISM->SetStaticMesh(ShadowMesh);
+
+	// Shadow settings - cast shadow but invisible in main pass
+	ISM->CastShadow = true;
+	ISM->bCastDynamicShadow = true;
+	ISM->bCastStaticShadow = false;
+	ISM->bAffectDynamicIndirectLighting = false;
+	ISM->bAffectDistanceFieldLighting = false;
+
+	// Hidden but casts shadow
+	ISM->SetVisibility(false);
+	ISM->SetHiddenInGame(true);
+	ISM->bCastHiddenShadow = true;
+
+	// Performance settings - shadow-only mesh optimization
+	ISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ISM->SetGenerateOverlapEvents(false);
+	ISM->bDisableCollision = true;
+	ISM->SetMobility(EComponentMobility::Movable);
+	ISM->bNeverDistanceCull = true;
+	ISM->NumCustomDataFloats = 0;
+	ISM->bUseAsOccluder = false;
+	ISM->bReceivesDecals = false;
+	ISM->bSelectable = false;
+
+	// Register component
+	ISM->RegisterComponent();
+
+	ShadowInstanceComponents[QualityIndex] = ISM;
+
+	UE_LOG(LogTemp, Log, TEXT("FluidRendererSubsystem: Created shadow ISM for quality %d"), QualityIndex);
+
+	return ISM;
 }
 
 /**
- * @brief Update shadow instances with anisotropy data for ellipsoid shadows.
- *
- * Note: This function is currently not used because anisotropy-based shadows cause flickering.
- * The flickering is caused by GPU Morton sorting which reorders particle indices every frame,
- * resulting in mismatched position/anisotropy data pairs. Until a stable particle ID system
- * is implemented, use UpdateShadowInstances() with uniform spheres instead.
- *
+ * @brief Register shadow particles for aggregation.
+ * Particles are aggregated per quality level and rendered in Subsystem Tick.
  * @param ParticlePositions Array of particle world positions.
- * @param AnisotropyAxis1 Array of first ellipsoid axis (xyz=direction, w=scale).
- * @param AnisotropyAxis2 Array of second ellipsoid axis.
- * @param AnisotropyAxis3 Array of third ellipsoid axis.
  * @param NumParticles Number of particles.
  * @param ParticleRadius Radius of each particle.
  * @param Quality Shadow mesh quality level (Low/Medium/High).
  */
-void UFluidRendererSubsystem::UpdateShadowInstancesWithAnisotropy(
-	const FVector* ParticlePositions,
-	const FVector4* AnisotropyAxis1,
-	const FVector4* AnisotropyAxis2,
-	const FVector4* AnisotropyAxis3,
-	int32 NumParticles,
-	float ParticleRadius,
-	EFluidShadowMeshQuality Quality)
+void UFluidRendererSubsystem::RegisterShadowParticles(const FVector* ParticlePositions, int32 NumParticles, float ParticleRadius, EFluidShadowMeshQuality Quality)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(FluidShadow_UpdateInstancesWithAnisotropy);
+	TRACE_CPUPROFILER_EVENT_SCOPE(FluidShadow_RegisterParticles);
+
+	if (!bEnableISMShadow || NumParticles <= 0 || !ParticlePositions)
+	{
+		return;
+	}
+
+	const int32 QualityIndex = static_cast<int32>(Quality);
+	if (QualityIndex < 0 || QualityIndex >= NUM_SHADOW_QUALITY_LEVELS)
+	{
+		return;
+	}
+
+	// Apply skip factor
+	const int32 SkipFactor = FMath::Max(1, ParticleSkipFactor);
+	const int32 NumToAdd = (NumParticles + SkipFactor - 1) / SkipFactor;
+
+	// Reserve space to avoid frequent reallocations
+	TArray<FVector>& Buffer = AggregatedPositions[QualityIndex];
+	Buffer.Reserve(Buffer.Num() + NumToAdd);
+
+	// Add positions with skip factor
+	for (int32 i = 0; i < NumParticles; i += SkipFactor)
+	{
+		const FVector& Pos = ParticlePositions[i];
+		if (FMath::IsFinite(Pos.X) && FMath::IsFinite(Pos.Y) && FMath::IsFinite(Pos.Z))
+		{
+			Buffer.Add(Pos);
+		}
+	}
+
+	// Track max radius for this quality level
+	AggregatedRadius[QualityIndex] = FMath::Max(AggregatedRadius[QualityIndex], ParticleRadius);
+	bHasParticlesThisFrame[QualityIndex] = true;
+}
+
+/**
+ * @brief Flush aggregated particles to ISM components.
+ * Creates transforms from aggregated positions and updates ISM per quality level.
+ */
+void UFluidRendererSubsystem::FlushShadowInstances()
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(FluidShadow_FlushInstances);
 
 	check(IsInGameThread());
 
-	// Early return if VSM integration is disabled
-	if (!bEnableVSMIntegration)
+	for (int32 QualityIndex = 0; QualityIndex < NUM_SHADOW_QUALITY_LEVELS; ++QualityIndex)
 	{
-		return;
-	}
+		const EFluidShadowMeshQuality Quality = static_cast<EFluidShadowMeshQuality>(QualityIndex);
+		TArray<FVector>& Positions = AggregatedPositions[QualityIndex];
+		const float Radius = AggregatedRadius[QualityIndex];
+		const bool bHasParticles = bHasParticlesThisFrame[QualityIndex];
 
-	// Clear ISM instances if no particles
-	if (NumParticles <= 0 || !ParticlePositions)
-	{
-		if (IsValid(ShadowInstanceComponent))
+		// Get or create ISM component for this quality
+		UInstancedStaticMeshComponent* ISM = ShadowInstanceComponents[QualityIndex];
+
+		// If no particles registered this frame
+		if (!bHasParticles || Positions.Num() == 0)
 		{
-			ShadowInstanceComponent->ClearInstances();
+			// Clear existing instances if any
+			if (IsValid(ISM) && ISM->GetInstanceCount() > 0)
+			{
+				ISM->ClearInstances();
+				ISM->MarkRenderStateDirty();
+			}
+			continue;
 		}
-		return;
-	}
 
-	UWorld* World = GetWorld();
-	if (!World || World->bIsTearingDown || !World->bActorsInitialized)
-	{
-		return;
-	}
-
-	// Lazy creation of Actor
-	if (!IsValid(ShadowProxyActor))
-	{
-		ShadowProxyActor = nullptr;
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.Name = TEXT("FluidShadowProxyActor");
-		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-		ShadowProxyActor = World->SpawnActor<AActor>(AActor::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams);
-		if (ShadowProxyActor)
+		// Create ISM if needed
+		if (!IsValid(ISM))
 		{
-			// SetActorLabel removed in UE 5.7
+			ISM = GetOrCreateShadowISM(Quality);
+			if (!ISM)
+			{
+				continue;
+			}
+		}
+
+		const int32 NumInstances = Positions.Num();
+
+		// Prepare transforms
+		CachedInstanceTransforms.SetNumUninitialized(NumInstances);
+		const FVector SphereScale = FVector(Radius / 50.0f);
+
+		// Parallelize transform generation
+		ParallelFor(NumInstances, [&](int32 i)
+		{
+			FTransform& T = CachedInstanceTransforms[i];
+			T.SetTranslation(Positions[i]);
+			T.SetRotation(FQuat::Identity);
+			T.SetScale3D(SphereScale);
+		});
+
+		// Update ISM
+		const int32 CurrentCount = ISM->GetInstanceCount();
+		if (CurrentCount == NumInstances)
+		{
+			// Fast path: batch update
+			ISM->BatchUpdateInstancesTransforms(0, CachedInstanceTransforms, false, true, false);
 		}
 		else
 		{
-			return;
+			// Rebuild
+			ISM->ClearInstances();
+			ISM->AddInstances(CachedInstanceTransforms, false, true);
 		}
 	}
+}
 
-	// Get or create shadow mesh for requested quality level
-	UStaticMesh* ShadowMesh = GetOrCreateShadowMesh(Quality);
-	if (!ShadowMesh)
+/**
+ * @brief Clear aggregation buffers for next frame.
+ */
+void UFluidRendererSubsystem::ClearAggregationBuffers()
+{
+	for (int32 i = 0; i < NUM_SHADOW_QUALITY_LEVELS; ++i)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("FluidRendererSubsystem: Failed to get shadow sphere mesh (anisotropy) for quality %d"),
-			static_cast<int32>(Quality));
-		return;
+		AggregatedPositions[i].Reset();
+		AggregatedRadius[i] = 0.0f;
+		bHasParticlesThisFrame[i] = false;
 	}
+}
 
-	// Check if quality changed - need to update ISM component's mesh
-	if (CurrentShadowMeshQuality != Quality)
+/**
+ * @brief Cleanup all shadow resources.
+ */
+void UFluidRendererSubsystem::CleanupShadowResources()
+{
+	// Destroy ISM components
+	for (int32 i = 0; i < NUM_SHADOW_QUALITY_LEVELS; ++i)
 	{
-		if (IsValid(ShadowInstanceComponent))
+		if (IsValid(ShadowInstanceComponents[i]))
 		{
-			ShadowInstanceComponent->ClearInstances();
-			ShadowInstanceComponent->SetStaticMesh(ShadowMesh);
+			ShadowInstanceComponents[i]->ClearInstances();
+			ShadowInstanceComponents[i]->DestroyComponent();
 		}
-		CurrentShadowMeshQuality = Quality;
+		ShadowInstanceComponents[i] = nullptr;
+		ShadowSphereMeshes[i] = nullptr;
 	}
 
-	// Lazy creation of ISM component
-	if (!IsValid(ShadowInstanceComponent))
+	// Destroy proxy actor
+	if (IsValid(ShadowProxyActor))
 	{
-		ShadowInstanceComponent = nullptr;
-
-		ShadowInstanceComponent = NewObject<UInstancedStaticMeshComponent>(ShadowProxyActor, TEXT("ShadowInstanceComponent"));
-		if (ShadowInstanceComponent)
-		{
-			ShadowProxyActor->SetRootComponent(ShadowInstanceComponent);
-			ShadowInstanceComponent->SetStaticMesh(ShadowMesh);
-
-			ShadowInstanceComponent->CastShadow = true;
-			ShadowInstanceComponent->bCastDynamicShadow = true;
-			ShadowInstanceComponent->bCastStaticShadow = false;
-			ShadowInstanceComponent->bAffectDynamicIndirectLighting = false;
-			ShadowInstanceComponent->bAffectDistanceFieldLighting = false;
-
-			ShadowInstanceComponent->SetVisibility(false);
-			ShadowInstanceComponent->SetHiddenInGame(true);
-			ShadowInstanceComponent->bCastHiddenShadow = true;
-
-			ShadowInstanceComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-			ShadowInstanceComponent->SetGenerateOverlapEvents(false);
-			ShadowInstanceComponent->bDisableCollision = true;
-			ShadowInstanceComponent->SetMobility(EComponentMobility::Movable);
-
-			ShadowInstanceComponent->RegisterComponent();
-		}
+		ShadowProxyActor->Destroy();
 	}
+	ShadowProxyActor = nullptr;
 
-	if (!IsValid(ShadowInstanceComponent))
-	{
-		return;
-	}
-
-	// Calculate number of instances
-	const int32 SkipFactor = FMath::Max(1, ParticleSkipFactor);
-	int32 NumInstances = (NumParticles + SkipFactor - 1) / SkipFactor;
-
-	if (MaxShadowInstances > 0)
-	{
-		NumInstances = FMath::Min(NumInstances, MaxShadowInstances);
-	}
-
-	// Prepare transforms with anisotropy
-	CachedInstanceTransforms.SetNumUninitialized(NumInstances);
-
-	const float BaseScale = ParticleRadius / 50.0f;
-	const bool bHasAnisotropy = (AnisotropyAxis1 != nullptr && AnisotropyAxis2 != nullptr && AnisotropyAxis3 != nullptr);
-
-	{
-		TRACE_CPUPROFILER_EVENT_SCOPE(FluidShadow_ComputeTransforms);
-
-		for (int32 i = 0, InstanceIdx = 0; i < NumParticles && InstanceIdx < NumInstances; i += SkipFactor, ++InstanceIdx)
-		{
-			FTransform& InstanceTransform = CachedInstanceTransforms[InstanceIdx];
-
-			// Validate position - skip particles with NaN/Inf positions
-			const FVector& Position = ParticlePositions[i];
-			if (!FMath::IsFinite(Position.X) || !FMath::IsFinite(Position.Y) || !FMath::IsFinite(Position.Z))
-			{
-				// Use a safe default transform for invalid particles
-				InstanceTransform.SetLocation(FVector::ZeroVector);
-				InstanceTransform.SetRotation(FQuat::Identity);
-				InstanceTransform.SetScale3D(FVector::ZeroVector);  // Zero scale = invisible
-				continue;
-			}
-
-			InstanceTransform.SetLocation(Position);
-
-			if (bHasAnisotropy)
-			{
-				// Build rotation from anisotropy axes (eigenvectors)
-				const FVector4& Axis1 = AnisotropyAxis1[i];
-				const FVector4& Axis2 = AnisotropyAxis2[i];
-				const FVector4& Axis3 = AnisotropyAxis3[i];
-
-				// Validate scale values - FMath::Clamp does NOT handle NaN properly!
-				// NaN comparisons always return false, so Clamp(NaN, min, max) returns NaN
-				const bool bValidScales =
-					FMath::IsFinite(Axis1.W) &&
-					FMath::IsFinite(Axis2.W) &&
-					FMath::IsFinite(Axis3.W);
-
-				if (bValidScales)
-				{
-					// Extract scale from W components (eigenvalues) with clamping
-					const float Scale1 = FMath::Clamp(Axis1.W, 0.1f, 3.0f);
-					const float Scale2 = FMath::Clamp(Axis2.W, 0.1f, 3.0f);
-					const float Scale3 = FMath::Clamp(Axis3.W, 0.1f, 3.0f);
-
-					// Build rotation matrix from eigenvectors
-					FMatrix RotationMatrix = FMatrix::Identity;
-					RotationMatrix.SetAxis(0, FVector(Axis1.X, Axis1.Y, Axis1.Z).GetSafeNormal());
-					RotationMatrix.SetAxis(1, FVector(Axis2.X, Axis2.Y, Axis2.Z).GetSafeNormal());
-					RotationMatrix.SetAxis(2, FVector(Axis3.X, Axis3.Y, Axis3.Z).GetSafeNormal());
-
-					InstanceTransform.SetRotation(RotationMatrix.ToQuat());
-					InstanceTransform.SetScale3D(FVector(Scale1, Scale2, Scale3) * BaseScale);
-				}
-				else
-				{
-					// Invalid anisotropy data - fall back to uniform sphere
-					InstanceTransform.SetRotation(FQuat::Identity);
-					InstanceTransform.SetScale3D(FVector(BaseScale));
-				}
-			}
-			else
-			{
-				InstanceTransform.SetRotation(FQuat::Identity);
-				InstanceTransform.SetScale3D(FVector(BaseScale));
-			}
-		}
-	}
-
-	// Optimized ISM update
-	TRACE_CPUPROFILER_EVENT_SCOPE(FluidShadow_ISMUpdate);
-	const int32 CurrentInstanceCount = ShadowInstanceComponent->GetInstanceCount();
-	const int32 TargetInstanceCount = NumInstances;
-
-	if (TargetInstanceCount == 0)
-	{
-		if (CurrentInstanceCount > 0)
-		{
-			ShadowInstanceComponent->ClearInstances();
-		}
-		return;
-	}
-
-	if (CurrentInstanceCount == TargetInstanceCount)
-	{
-		// Batch update all transforms at once
-		ShadowInstanceComponent->BatchUpdateInstancesTransforms(
-			0,
-			CachedInstanceTransforms,
-			false,  // bWorldSpace
-			true,   // bMarkRenderStateDirty
-			false   // bTeleport
-		);
-	}
-	else
-	{
-		// Instance count changed - rebuild entirely
-		ShadowInstanceComponent->ClearInstances();
-		ShadowInstanceComponent->AddInstances(CachedInstanceTransforms, false, true);
-	}
+	// Clear buffers
+	ClearAggregationBuffers();
+	CachedInstanceTransforms.Empty();
 }

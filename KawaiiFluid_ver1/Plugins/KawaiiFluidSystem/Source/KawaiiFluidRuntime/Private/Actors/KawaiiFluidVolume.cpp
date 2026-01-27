@@ -269,19 +269,13 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 		FGPUFluidSimulator* GPUSimulator = SimulationModule->GetGPUSimulator();
 		const bool bGPUActive = SimulationModule->IsGPUSimulationActive() && GPUSimulator != nullptr;
 
-		// Skip if no particles
+		// Skip if no particles (no registration = ISM cleared automatically in Subsystem Tick)
 		const int32 ActualParticleCount = bGPUActive ? GPUSimulator->GetParticleCount() : SimulationModule->GetParticleCount();
 		if (ActualParticleCount <= 0)
 		{
 			CachedShadowPositions.Empty();
 			CachedShadowVelocities.Empty();
 			CachedNeighborCounts.Empty();
-
-			// Clear shadow instances if subsystem available
-			if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
-			{
-				RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f, VolumeComponent->ShadowMeshQuality);
-			}
 			return;
 		}
 
@@ -292,11 +286,11 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 		if (bGPUActive)
 		{
 			// Determine if readback is needed:
-			// 1. VSM/Shadow enabled (needs position/anisotropy data for HISM)
+			// 1. ISM Shadow enabled (needs position/anisotropy data for ISM)
 			// 2. SplashVFX assigned (needs velocity/neighbor data)
 			UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>();
 			const bool bNeedShadow = RendererSubsystem && 
-			                         RendererSubsystem->bEnableVSMIntegration && 
+			                         RendererSubsystem->bEnableISMShadow && 
 			                         VolumeComponent->bEnableShadow;
 			const bool bNeedVFX = VolumeComponent->SplashVFX != nullptr;
 			const bool bNeedReadback = bNeedShadow || bNeedVFX;
@@ -319,7 +313,7 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 				if (NumParticles > 0)
 				{
 					// Use Move for arrays that won't be used after this (avoids deep copy)
-					CachedShadowPositions = Positions;  // Keep copy - needed for UpdateShadowInstances below
+					CachedShadowPositions = Positions;  // Keep copy - needed for RegisterShadowParticles below
 					CachedShadowVelocities = MoveTemp(NewVelocities);
 					CachedAnisotropyAxis1 = MoveTemp(NewAnisotropyAxis1);
 					CachedAnisotropyAxis2 = MoveTemp(NewAnisotropyAxis2);
@@ -425,19 +419,16 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 			FluidBounds = FluidBounds.ExpandBy(ParticleRadius * 2.0f);
 
 			// =====================================================
-			// Step 2: VSM/Shadow Integration (conditional)
+			// Step 2: ISM Shadow Integration (conditional)
 			// =====================================================
 			if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
 			{
-				if (RendererSubsystem->bEnableVSMIntegration && VolumeComponent->bEnableShadow)
+				if (RendererSubsystem->bEnableISMShadow && VolumeComponent->bEnableShadow)
 				{
-					TRACE_CPUPROFILER_EVENT_SCOPE(VSM Integration Volume)
+					TRACE_CPUPROFILER_EVENT_SCOPE(ISM Shadow Volume)
 
-					// Update shadow proxy state (creates HISM component if needed)
-					RendererSubsystem->UpdateShadowProxyState();
-
-					// Update HISM shadow instances with uniform spheres
-					RendererSubsystem->UpdateShadowInstances(
+					// Register shadow particles for aggregation (will be rendered in Subsystem Tick)
+					RendererSubsystem->RegisterShadowParticles(
 						Positions.GetData(),
 						NumParticles,
 						ParticleRadius,
@@ -1678,14 +1669,6 @@ void AKawaiiFluidVolume::ClearAllParticles()
 		RenderingModule->UpdateRenderers();
 	}
 
-	// Clear shadow ISM
-	if (UWorld* World = GetWorld())
-	{
-		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
-		{
-			RendererSubsystem->UpdateShadowInstances(nullptr, 0, 0.0f, VolumeComponent->ShadowMeshQuality);
-		}
-	}
 }
 
 //========================================

@@ -65,9 +65,6 @@ void FFluidSceneViewExtension::SetupViewFamily(FSceneViewFamily& InViewFamily)
 			return; // Skip ViewFamily from other World
 		}
 	}
-
-	// Update cached light direction on game thread (safe to use TActorIterator here)
-	SubsystemPtr->UpdateCachedLightDirection();
 }
 
 /**
@@ -93,8 +90,6 @@ void FFluidSceneViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewFam
 		}
 	}
 
-	// Swap VSM buffers through Subsystem (per-world isolation)
-	SubsystemPtr->SwapVSMBuffers();
 	// Note: Per-frame deduplication is handled by Preset-based TMap batching
 }
 

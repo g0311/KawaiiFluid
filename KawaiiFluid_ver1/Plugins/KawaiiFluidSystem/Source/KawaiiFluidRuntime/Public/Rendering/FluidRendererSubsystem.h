@@ -4,8 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "Tickable.h"
 #include "FluidRenderingParameters.h"
-#include "RenderGraphResources.h"
 #include "Core/KawaiiFluidRenderingTypes.h"
 #include "FluidRendererSubsystem.generated.h"
 
@@ -14,16 +14,19 @@ class UKawaiiFluidRenderingModule;
 class UInstancedStaticMeshComponent;
 class UStaticMesh;
 
+/** Number of shadow quality levels (Low, Medium, High) */
+static constexpr int32 NUM_SHADOW_QUALITY_LEVELS = 3;
+
 /**
  * Fluid rendering world subsystem
  *
  * Responsibilities:
  * - Manages UKawaiiFluidRenderingModule integration
  * - Provides SSFR rendering pipeline (ViewExtension)
- * - ISM rendering uses Unreal's default pipeline
+ * - Aggregates shadow particles from multiple volumes and updates ISM per quality level
  */
 UCLASS()
-class KAWAIIFLUIDRUNTIME_API UFluidRendererSubsystem : public UWorldSubsystem
+class KAWAIIFLUIDRUNTIME_API UFluidRendererSubsystem : public UWorldSubsystem, public FTickableGameObject
 {
 	GENERATED_BODY()
 
@@ -33,6 +36,15 @@ public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 	// End of USubsystem interface
+
+	// FTickableGameObject interface
+	virtual void Tick(float DeltaTime) override;
+	virtual TStatId GetStatId() const override;
+	virtual bool IsTickable() const override { return bEnableISMShadow && !IsTemplate(); }
+	virtual bool IsTickableInEditor() const override { return true; }
+	virtual ETickableTickType GetTickableTickType() const override { return ETickableTickType::Always; }
+	virtual UWorld* GetTickableGameObjectWorld() const override { return GetWorld(); }
+	// End of FTickableGameObject interface
 
 	//========================================
 	// RenderingModule Management
@@ -58,42 +70,6 @@ public:
 	/** View Extension accessor */
 	TSharedPtr<FFluidSceneViewExtension, ESPMode::ThreadSafe> GetViewExtension() const { return ViewExtension; }
 
-
-	//========================================
-	// Cached Shadow Light Data (Game Thread -> Render Thread)
-	//========================================
-
-	/** Update cached light direction from DirectionalLight (call from game thread) */
-	void UpdateCachedLightDirection();
-
-	/** Get cached light direction (safe to call from render thread) */
-	FVector3f GetCachedLightDirection() const { return CachedLightDirection; }
-
-	/** Get cached light view-projection matrix (safe to call from render thread) */
-	FMatrix44f GetCachedLightViewProjectionMatrix() const { return CachedLightViewProjectionMatrix; }
-
-	/** Check if cached light data is valid */
-	bool HasValidCachedLightData() const { return bHasCachedLightData; }
-
-	//========================================
-	// VSM (Variance Shadow Map) Textures - Per-World
-	//========================================
-
-	/** Swap VSM buffers (call at BeginRenderViewFamily) */
-	void SwapVSMBuffers();
-
-	/** Get VSM read texture */
-	TRefCountPtr<IPooledRenderTarget>& GetVSMTextureRead() { return VSMTexture_Read; }
-
-	/** Get VSM write texture reference for extraction */
-	TRefCountPtr<IPooledRenderTarget>* GetVSMTextureWritePtr() { return &VSMTexture_Write; }
-
-	/** Get light VP matrix for reading */
-	FMatrix44f GetLightVPMatrixRead() const { return LightVPMatrix_Read; }
-
-	/** Set light VP matrix for writing */
-	void SetLightVPMatrixWrite(const FMatrix44f& Matrix) { LightVPMatrix_Write = Matrix; }
-
 private:
 	/** Registered RenderingModules */
 	UPROPERTY(Transient)
@@ -102,118 +78,79 @@ private:
 	/** Scene View Extension (rendering pipeline injection) */
 	TSharedPtr<FFluidSceneViewExtension, ESPMode::ThreadSafe> ViewExtension;
 
-
 	//========================================
-	// Cached Light Data (updated on game thread, read on render thread)
-	//========================================
-
-	/** Cached directional light direction (normalized) */
-	FVector3f CachedLightDirection = FVector3f(0.5f, 0.5f, -0.707f);
-
-	/** Cached light view-projection matrix for shadow mapping */
-	FMatrix44f CachedLightViewProjectionMatrix = FMatrix44f::Identity;
-
-	/** Whether cached light data is valid */
-	bool bHasCachedLightData = false;
-
-	//========================================
-	// VSM Textures (Per-World, double-buffered)
-	//========================================
-
-	/** VSM texture for writing (current frame) */
-	TRefCountPtr<IPooledRenderTarget> VSMTexture_Write;
-
-	/** VSM texture for reading (previous frame) */
-	TRefCountPtr<IPooledRenderTarget> VSMTexture_Read;
-
-	/** Light view-projection matrix for writing */
-	FMatrix44f LightVPMatrix_Write = FMatrix44f::Identity;
-
-	/** Light view-projection matrix for reading */
-	FMatrix44f LightVPMatrix_Read = FMatrix44f::Identity;
-
-	//========================================
-	// HISM Shadow (Instanced Mesh Shadow)
+	// ISM Shadow (Instanced Mesh Shadow)
+	// Multi-volume aggregation: particles are collected per-quality and rendered in Tick
 	//========================================
 
 public:
 	/**
-	 * @brief Enable/disable HISM shadow via instanced spheres.
+	 * @brief Enable/disable ISM shadow via instanced spheres.
 	 * When enabled, creates sphere instances at particle positions for shadow casting.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|HISM")
-	bool bEnableVSMIntegration = true;
-
-	/**
-	 * @brief Maximum number of shadow instances to use.
-	 * Set to 0 for unlimited (default).
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|HISM", meta = (ClampMin = "0", ClampMax = "100000"))
-	int32 MaxShadowInstances = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|ISM")
+	bool bEnableISMShadow = true;
 
 	/**
 	 * @brief Skip factor for particle-to-instance conversion.
 	 * Value of 2 means every other particle becomes an instance.
 	 * Higher values improve performance but reduce shadow detail.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|HISM", meta = (ClampMin = "1", ClampMax = "10"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Shadow|ISM", meta = (ClampMin = "1", ClampMax = "10"))
 	int32 ParticleSkipFactor = 1;
 
 	/**
-	 * @brief Cleanup HISM shadow resources when disabled.
-	 */
-	void UpdateShadowProxyState();
-
-	/**
-	 * @brief Update shadow instances from particle positions.
-	 * Creates sphere instances at particle locations for shadow casting.
+	 * @brief Register shadow particles for aggregation.
+	 * Call this from Volume/Component Tick. Particles are aggregated per quality level
+	 * and rendered in Subsystem Tick.
 	 * @param ParticlePositions Array of particle world positions.
 	 * @param NumParticles Number of particles.
 	 * @param ParticleRadius Radius of each particle (used for shadow sphere size).
 	 * @param Quality Shadow mesh quality level (Low/Medium/High).
-	 * @param MaxParticles Maximum particle count for pooling (0 = no pooling).
 	 */
-	void UpdateShadowInstances(const FVector* ParticlePositions, int32 NumParticles, float ParticleRadius, EFluidShadowMeshQuality Quality, int32 MaxParticles = 0);
-	
-	/**
-	 * @brief Update shadow instances with anisotropy data for ellipsoid shadows.
-	 * Creates oriented ellipsoid instances at particle locations.
-	 * @param ParticlePositions Array of particle world positions.
-	 * @param AnisotropyAxis1 Array of first ellipsoid axis (xyz=direction, w=scale).
-	 * @param AnisotropyAxis2 Array of second ellipsoid axis.
-	 * @param AnisotropyAxis3 Array of third ellipsoid axis.
-	 * @param NumParticles Number of particles.
-	 * @param ParticleRadius Radius of each particle (used for shadow sphere size).
-	 * @param Quality Shadow mesh quality level (Low/Medium/High).
-	 */
-	void UpdateShadowInstancesWithAnisotropy(
-		const FVector* ParticlePositions,
-		const FVector4* AnisotropyAxis1,
-		const FVector4* AnisotropyAxis2,
-		const FVector4* AnisotropyAxis3,
-		int32 NumParticles,
-		float ParticleRadius,
-		EFluidShadowMeshQuality Quality);
+	void RegisterShadowParticles(const FVector* ParticlePositions, int32 NumParticles, float ParticleRadius, EFluidShadowMeshQuality Quality);
 
 private:
-	/** Actor that owns the ISM shadow component. */
+	/** Actor that owns the ISM shadow components. */
 	UPROPERTY(Transient)
 	TObjectPtr<AActor> ShadowProxyActor = nullptr;
 
-	/** ISM component for instanced sphere shadow casting. */
+	/** ISM components for each quality level (Low/Medium/High). */
 	UPROPERTY(Transient)
-	TObjectPtr<UInstancedStaticMeshComponent> ShadowInstanceComponent = nullptr;
+	TObjectPtr<UInstancedStaticMeshComponent> ShadowInstanceComponents[NUM_SHADOW_QUALITY_LEVELS];
 
 	/** Shadow sphere meshes for each quality level (Low/Medium/High). */
 	UPROPERTY(Transient)
-	TObjectPtr<UStaticMesh> ShadowSphereMeshes[3];
-
-	/** Current quality level of the shadow mesh (for detecting changes). */
-	EFluidShadowMeshQuality CurrentShadowMeshQuality = EFluidShadowMeshQuality::Medium;
+	TObjectPtr<UStaticMesh> ShadowSphereMeshes[NUM_SHADOW_QUALITY_LEVELS];
 
 	/** Get or create shadow sphere mesh for specified quality level. */
 	UStaticMesh* GetOrCreateShadowMesh(EFluidShadowMeshQuality Quality);
 
+	/** Get or create ISM component for specified quality level. */
+	UInstancedStaticMeshComponent* GetOrCreateShadowISM(EFluidShadowMeshQuality Quality);
+
+	//========================================
+	// Per-Quality Particle Aggregation Buffers
+	//========================================
+
+	/** Aggregated particle positions per quality level. */
+	TArray<FVector> AggregatedPositions[NUM_SHADOW_QUALITY_LEVELS];
+
+	/** Aggregated particle radii per quality level (uses max radius). */
+	float AggregatedRadius[NUM_SHADOW_QUALITY_LEVELS] = { 0.0f, 0.0f, 0.0f };
+
+	/** Whether any particles were registered this frame per quality. */
+	bool bHasParticlesThisFrame[NUM_SHADOW_QUALITY_LEVELS] = { false, false, false };
+
 	/** Cached instance transforms for batch update. */
 	TArray<FTransform> CachedInstanceTransforms;
+
+	/** Flush aggregated particles to ISM components. Called in Tick. */
+	void FlushShadowInstances();
+
+	/** Clear aggregation buffers for next frame. */
+	void ClearAggregationBuffers();
+
+	/** Cleanup all shadow resources. */
+	void CleanupShadowResources();
 };
