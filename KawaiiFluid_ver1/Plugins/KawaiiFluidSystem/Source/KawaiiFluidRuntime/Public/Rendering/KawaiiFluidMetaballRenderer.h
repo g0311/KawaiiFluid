@@ -77,12 +77,12 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidMetaballRendererSettings
 	float RefractiveIndex = 1.33f;
 
 	/**
-	 * Fluid opacity (0 = fully transparent, 1 = fully opaque).
-	 * Controls overall light absorption strength through the fluid.
-	 * 0 = see-through like clear water, 1 = opaque like thick paint.
+	 * Base light absorption strength.
+	 * Combined with Thickness to determine final opacity.
+	 * 0 = fully transparent, 1 = maximum absorption.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Appearance", meta = (EditCondition = "bEnabled", ClampMin = "0.0", ClampMax = "1.0"))
-	float Opacity = 0.5f;
+	float AbsorptionStrength = 0.5f;
 
 	/** Specular strength */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Appearance", meta = (EditCondition = "bEnabled", ClampMin = "0.0", ClampMax = "2.0"))

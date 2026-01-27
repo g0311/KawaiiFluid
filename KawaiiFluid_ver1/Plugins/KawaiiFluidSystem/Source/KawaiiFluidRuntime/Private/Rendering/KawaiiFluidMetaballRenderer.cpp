@@ -95,7 +95,7 @@ void UKawaiiFluidMetaballRenderer::ApplySettings(const FKawaiiFluidMetaballRende
 	LocalParameters.FluidColor = Settings.FluidColor;
 	LocalParameters.FresnelStrength = Settings.FresnelStrength;
 	LocalParameters.RefractiveIndex = Settings.RefractiveIndex;
-	LocalParameters.Opacity = Settings.Opacity;
+	LocalParameters.AbsorptionStrength = Settings.AbsorptionStrength;
 	LocalParameters.SpecularStrength = Settings.SpecularStrength;
 	LocalParameters.SpecularRoughness = Settings.SpecularRoughness;
 	LocalParameters.ParticleRenderRadius = Settings.ParticleRenderRadius;
