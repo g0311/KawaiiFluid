@@ -492,7 +492,8 @@ int32 UKawaiiFluidEmitterComponent::SpawnParticlesSphereHexagonal(FVector Center
 				);
 
 				// Check sphere bounds
-				if (LocalPos.SizeSquared() > RadiusSq)
+				const float DistSq = LocalPos.SizeSquared();
+				if (DistSq > RadiusSq)
 				{
 					continue;
 				}
@@ -501,14 +502,22 @@ int32 UKawaiiFluidEmitterComponent::SpawnParticlesSphereHexagonal(FVector Center
 				FVector RotatedPos = Rotation.RotateVector(LocalPos);
 				FVector WorldPos = Center + RotatedPos;
 
-				// Apply jitter
+				// Apply jitter with distance-based falloff (center: 100%, surface: 0%)
+				// This prevents surface particles from protruding and causing jagged edges
 				if (bUseJitter && JitterRange > 0.0f)
 				{
-					WorldPos += FVector(
-						FMath::FRandRange(-JitterRange, JitterRange),
-						FMath::FRandRange(-JitterRange, JitterRange),
-						FMath::FRandRange(-JitterRange, JitterRange)
-					);
+					const float Dist = FMath::Sqrt(DistSq);
+					const float JitterFactor = FMath::Clamp(1.0f - (Dist / Radius), 0.0f, 1.0f);
+					const float ActualJitter = JitterRange * JitterFactor;
+
+					if (ActualJitter > 0.0f)
+					{
+						WorldPos += FVector(
+							FMath::FRandRange(-ActualJitter, ActualJitter),
+							FMath::FRandRange(-ActualJitter, ActualJitter),
+							FMath::FRandRange(-ActualJitter, ActualJitter)
+						);
+					}
 				}
 
 				Positions.Add(WorldPos);

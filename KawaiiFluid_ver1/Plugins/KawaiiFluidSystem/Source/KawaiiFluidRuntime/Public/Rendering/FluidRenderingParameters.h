@@ -224,6 +224,15 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	int32 SmoothingRadius = 20;
 
 	/**
+	 * Number of smoothing filter iterations.
+	 * More iterations = smoother surface but higher cost.
+	 * Recommended: 2-5 for dynamic fluids.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Depth & Smoothing",
+		meta = (ClampMin = "1", ClampMax = "10"))
+	int32 SmoothingIterations = 3;
+
+	/**
 	 * Depth difference threshold ratio. Lower = sharper edges, higher = smoother.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Depth & Smoothing",
@@ -554,6 +563,7 @@ FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
 	Hash = HashCombine(Hash, GetTypeHash(Params.ReflectionMipLevel));
 	Hash = HashCombine(Hash, GetTypeHash(Params.ParticleRenderRadius));
 	Hash = HashCombine(Hash, GetTypeHash(Params.SmoothingRadius));
+	Hash = HashCombine(Hash, GetTypeHash(Params.SmoothingIterations));
 	// Narrow-Range parameters
 	Hash = HashCombine(Hash, GetTypeHash(Params.NarrowRangeThresholdRatio));
 	Hash = HashCombine(Hash, GetTypeHash(Params.NarrowRangeClampRatio));
@@ -623,6 +633,7 @@ FORCEINLINE bool operator==(const FFluidRenderingParameters& A, const FFluidRend
 		FMath::IsNearlyEqual(A.ReflectionMipLevel, B.ReflectionMipLevel, 0.001f) &&
 		FMath::IsNearlyEqual(A.ParticleRenderRadius, B.ParticleRenderRadius, 0.001f) &&
 		A.SmoothingRadius == B.SmoothingRadius &&
+		A.SmoothingIterations == B.SmoothingIterations &&
 		// Narrow-Range parameters
 		FMath::IsNearlyEqual(A.NarrowRangeThresholdRatio, B.NarrowRangeThresholdRatio, 0.01f) &&
 		FMath::IsNearlyEqual(A.NarrowRangeClampRatio, B.NarrowRangeClampRatio, 0.01f) &&

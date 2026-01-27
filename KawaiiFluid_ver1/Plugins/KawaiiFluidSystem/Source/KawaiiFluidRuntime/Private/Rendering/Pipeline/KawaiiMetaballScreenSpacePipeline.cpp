@@ -59,7 +59,7 @@ static bool GenerateIntermediateTextures(
 		float AnisotropyMultiplier = FMath::Max(1.0f, RenderParams.AnisotropyParams.MaxStretch);
 		DepthFalloff *= AnisotropyMultiplier * 2.0f;
 	}
-	int32 NumIterations = 3;
+	const int32 NumIterations = RenderParams.SmoothingIterations;
 
 	// 1. Depth Pass (outputs linear depth + screen-space velocity + occlusion mask)
 	FRDGTextureRef DepthTexture = nullptr;
