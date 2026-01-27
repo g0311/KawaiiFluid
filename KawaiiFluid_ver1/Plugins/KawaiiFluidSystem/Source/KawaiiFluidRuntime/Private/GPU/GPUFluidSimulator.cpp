@@ -170,8 +170,14 @@ void FGPUFluidSimulator::Release()
 		StaticBoundaryManager.Reset();
 	}
 
-	// Release Shadow Readback objects
-	ReleaseShadowReadbackObjects();
+	// Release Anisotropy Readback objects
+	ReleaseAnisotropyReadbackObjects();
+
+	// Clear Shadow data (extracted from StatsReadback)
+	ReadyShadowPositions.Empty();
+	ReadyShadowVelocities.Empty();
+	ReadyShadowNeighborCounts.Empty();
+	ReadyShadowPositionsFrame.store(0);
 
 	// Release Stats Readback objects
 	ReleaseStatsReadbackObjects();
@@ -488,20 +494,25 @@ void FGPUFluidSimulator::BeginFrame()
 			Self->ProcessCollisionFeedbackReadback(RHICmdList);
 			Self->ProcessColliderContactCountReadback(RHICmdList);
 
+			// Process stats readback - also extracts shadow data if bShadowReadbackEnabled
 			const bool bNeedStatsReadback = GetFluidStatsCollector().IsAnyReadbackNeeded();
-			if (bNeedStatsReadback)
+			const bool bNeedShadowReadback = Self->bShadowReadbackEnabled.load();
+			if (bNeedStatsReadback || bNeedShadowReadback)
 			{
-				Self->ProcessStatsReadback();
+				SCOPED_DRAW_EVENT(RHICmdList, GPUFluid_BeginFrame_ProcessStatsReadback);
+				Self->ProcessStatsReadback(RHICmdList);
 			}
 
-			if (Self->bShadowReadbackEnabled.load())
+			// Anisotropy readback is separate (different GPU buffer)
+			if (Self->bAnisotropyReadbackEnabled.load())
 			{
-				Self->ProcessShadowReadback();
+				SCOPED_DRAW_EVENT(RHICmdList, GPUFluid_BeginFrame_ANISO);
 				Self->ProcessAnisotropyReadback();
 			}
 
 			if (Self->SpawnManager.IsValid())
 			{
+				SCOPED_DRAW_EVENT(RHICmdList, GPUFluid_BeginFrame_SOURCECOUNT);
 				Self->SpawnManager->ProcessSourceCounterReadback();
 			}
 
@@ -526,6 +537,8 @@ void FGPUFluidSimulator::BeginFrame()
 			// Process Despawn (ID-based removal)
 			if (bHasPendingDespawns && Self->SpawnManager.IsValid() && Self->PersistentParticleBuffer.IsValid())
 			{
+				SCOPED_DRAW_EVENT(RHICmdList, GPUFluid_BeginFrame_Despawn);
+
 				const int32 DespawnCount = Self->SpawnManager->SwapDespawnByIDBuffers();
 				if (DespawnCount > 0)
 				{
@@ -542,6 +555,8 @@ void FGPUFluidSimulator::BeginFrame()
 			const int32 SpawnCount = Self->SpawnManager.IsValid() ? Self->SpawnManager->GetActiveRequestCount() : 0;
 			if (SpawnCount > 0)
 			{
+				SCOPED_DRAW_EVENT(RHICmdList, GPUFluid_BeginFrame_Spawn);
+
 				const bool bFirstSpawn = (PostOpCount == 0) && !ParticleBuffer;
 
 				if (bFirstSpawn)
@@ -703,17 +718,10 @@ void FGPUFluidSimulator::EndFrame()
 					Self->CollisionManager->GetFeedbackManager()->EnqueueReadbackCopy(RHICmdList);
 				}
 
-				// Shadow/Anisotropy readback
-				if (Self->bShadowReadbackEnabled.load())
+				// Anisotropy readback (Shadow data is now extracted in ProcessStatsReadback)
+				if (Self->bShadowReadbackEnabled.load() && Self->bAnisotropyReadbackEnabled.load())
 				{
-					Self->EnqueueShadowPositionReadback(RHICmdList,
-						Self->PersistentParticleBuffer->GetRHI(),
-						Self->CurrentParticleCount);
-
-					if (Self->bAnisotropyReadbackEnabled.load())
-					{
-						Self->EnqueueAnisotropyReadback(RHICmdList, Self->CurrentParticleCount);
-					}
+					Self->EnqueueAnisotropyReadback(RHICmdList, Self->CurrentParticleCount);
 				}
 			}
 
@@ -1660,8 +1668,14 @@ const TArray<int32>* FGPUFluidSimulator::GetParticleIDsBySourceID(int32 SourceID
 		return nullptr;
 	}
 
+	if (SourceID < 0 || SourceID >= CachedSourceIDToParticleIDs.Num())
+	{
+		return nullptr;
+	}
+
 	FScopeLock Lock(&const_cast<FCriticalSection&>(BufferLock));
-	return CachedSourceIDToParticleIDs.Find(SourceID);
+	const TArray<int32>& Result = CachedSourceIDToParticleIDs[SourceID];
+	return Result.Num() > 0 ? &Result : nullptr;
 }
 
 const TArray<int32>* FGPUFluidSimulator::GetAllParticleIDs() const
@@ -2117,13 +2131,21 @@ void FGPUFluidSimulator::FinalizeUpload()
 
 		// Build readback cache at upload time (immediately usable in ClearAllParticles etc.)
 		// Build cache immediately from CPU data without waiting for GPU readback
-		CachedSourceIDToParticleIDs.Empty();
+		constexpr int32 MaxSources = EGPUParticleSource::MaxSourceCount;
+		CachedSourceIDToParticleIDs.SetNum(MaxSources);
+		for (int32 i = 0; i < MaxSources; ++i)
+		{
+			CachedSourceIDToParticleIDs[i].Reset();
+		}
 		CachedAllParticleIDs.Empty();
 		CachedAllParticleIDs.Reserve(ParticleCount);
 
 		for (const FGPUFluidParticle& P : CachedGPUParticles)
 		{
-			CachedSourceIDToParticleIDs.FindOrAdd(P.SourceID).Add(P.ParticleID);
+			if (P.SourceID >= 0 && P.SourceID < MaxSources)
+			{
+				CachedSourceIDToParticleIDs[P.SourceID].Add(P.ParticleID);
+			}
 			CachedAllParticleIDs.Add(P.ParticleID);
 		}
 
@@ -2693,187 +2715,59 @@ void FGPUFluidSimulator::ProcessColliderContactCountReadback(FRHICommandListImme
 }
 
 //=============================================================================
-// Shadow Position Readback (Async GPU→CPU for HISM Shadow Instances)
+// Anisotropy Readback (Async GPU→CPU for Ellipsoid HISM Shadows)
 //=============================================================================
 
 /**
- * @brief Allocate shadow readback objects for async GPU→CPU transfer.
+ * @brief Allocate anisotropy readback objects for async GPU→CPU transfer.
  * @param RHICmdList RHI command list.
  */
-void FGPUFluidSimulator::AllocateShadowReadbackObjects(FRHICommandListImmediate& RHICmdList)
+void FGPUFluidSimulator::AllocateAnisotropyReadbackObjects(FRHICommandListImmediate& RHICmdList)
 {
-	for (int32 i = 0; i < NUM_SHADOW_READBACK_BUFFERS; ++i)
+	for (int32 i = 0; i < NUM_ANISOTROPY_READBACK_BUFFERS; ++i)
 	{
-		if (ShadowPositionReadbacks[i] == nullptr)
-		{
-			ShadowPositionReadbacks[i] = new FRHIGPUBufferReadback(*FString::Printf(TEXT("ShadowPositionReadback_%d"), i));
-		}
-		ShadowReadbackFrameNumbers[i] = 0;
-		ShadowReadbackParticleCounts[i] = 0;
+		AnisotropyReadbackFrameNumbers[i] = 0;
+		AnisotropyReadbackParticleCounts[i] = 0;
 
 		// Allocate anisotropy readback objects (3 buffers per frame: Axis1, Axis2, Axis3)
 		for (int32 j = 0; j < 3; ++j)
 		{
-			if (ShadowAnisotropyReadbacks[i][j] == nullptr)
+			if (AnisotropyReadbacks[i][j] == nullptr)
 			{
-				ShadowAnisotropyReadbacks[i][j] = new FRHIGPUBufferReadback(
-					*FString::Printf(TEXT("ShadowAnisotropyReadback_%d_Axis%d"), i, j + 1));
+				AnisotropyReadbacks[i][j] = new FRHIGPUBufferReadback(
+					*FString::Printf(TEXT("AnisotropyReadback_%d_Axis%d"), i, j + 1));
 			}
 		}
 	}
 
-	UE_LOG(LogGPUFluidSimulator, Log, TEXT("Shadow readback objects allocated (NumBuffers=%d, with Anisotropy)"), NUM_SHADOW_READBACK_BUFFERS);
+	UE_LOG(LogGPUFluidSimulator, Log, TEXT("Anisotropy readback objects allocated (NumBuffers=%d)"), NUM_ANISOTROPY_READBACK_BUFFERS);
 }
 
 /**
- * @brief Release shadow readback objects.
+ * @brief Release anisotropy readback objects.
  */
-void FGPUFluidSimulator::ReleaseShadowReadbackObjects()
+void FGPUFluidSimulator::ReleaseAnisotropyReadbackObjects()
 {
-	for (int32 i = 0; i < NUM_SHADOW_READBACK_BUFFERS; ++i)
+	for (int32 i = 0; i < NUM_ANISOTROPY_READBACK_BUFFERS; ++i)
 	{
-		if (ShadowPositionReadbacks[i] != nullptr)
-		{
-			delete ShadowPositionReadbacks[i];
-			ShadowPositionReadbacks[i] = nullptr;
-		}
-		ShadowReadbackFrameNumbers[i] = 0;
-		ShadowReadbackParticleCounts[i] = 0;
+		AnisotropyReadbackFrameNumbers[i] = 0;
+		AnisotropyReadbackParticleCounts[i] = 0;
 
 		// Release anisotropy readback objects
 		for (int32 j = 0; j < 3; ++j)
 		{
-			if (ShadowAnisotropyReadbacks[i][j] != nullptr)
+			if (AnisotropyReadbacks[i][j] != nullptr)
 			{
-				delete ShadowAnisotropyReadbacks[i][j];
-				ShadowAnisotropyReadbacks[i][j] = nullptr;
+				delete AnisotropyReadbacks[i][j];
+				AnisotropyReadbacks[i][j] = nullptr;
 			}
 		}
 	}
-	ShadowReadbackWriteIndex = 0;
-	ReadyShadowPositions.Empty();
-	ReadyShadowVelocities.Empty();
-	ReadyShadowNeighborCounts.Empty();
+	AnisotropyReadbackWriteIndex = 0;
 	ReadyShadowAnisotropyAxis1.Empty();
 	ReadyShadowAnisotropyAxis2.Empty();
 	ReadyShadowAnisotropyAxis3.Empty();
-	ReadyShadowPositionsFrame.store(0);
-}
-
-/**
- * @brief Enqueue shadow position copy to readback buffer (non-blocking).
- * @param RHICmdList RHI command list.
- * @param SourceBuffer Source GPU buffer containing particle data.
- * @param ParticleCount Number of particles to read back.
- */
-void FGPUFluidSimulator::EnqueueShadowPositionReadback(FRHICommandListImmediate& RHICmdList, FRHIBuffer* SourceBuffer, int32 ParticleCount)
-{
-	if (!bShadowReadbackEnabled.load() || ParticleCount <= 0 || SourceBuffer == nullptr)
-	{
-		return;
-	}
-
-	// Validate source buffer size before copying
-	const uint32 SourceBufferSize = SourceBuffer->GetSize();
-	const uint32 RequiredSize = ParticleCount * sizeof(FGPUFluidParticle);
-	if (RequiredSize > SourceBufferSize)
-	{
-		UE_LOG(LogGPUFluidSimulator, Warning,
-			TEXT("EnqueueShadowPositionReadback: CopySize (%u) exceeds SourceBuffer size (%u). ParticleCount=%d, Skipping."),
-			RequiredSize, SourceBufferSize, ParticleCount);
-		return;
-	}
-
-	// Allocate readback objects if needed
-	if (ShadowPositionReadbacks[0] == nullptr)
-	{
-		AllocateShadowReadbackObjects(RHICmdList);
-	}
-
-	// Get current write index and advance for next frame
-	const int32 WriteIdx = ShadowReadbackWriteIndex;
-	ShadowReadbackWriteIndex = (ShadowReadbackWriteIndex + 1) % NUM_SHADOW_READBACK_BUFFERS;
-
-	// Calculate copy size (only positions: FVector3f per particle)
-	// Note: We're reading from FGPUFluidParticle buffer, position is at offset 0
-	const int32 CopySize = ParticleCount * sizeof(FGPUFluidParticle);
-
-	// Enqueue async copy
-	RHICmdList.Transition(FRHITransitionInfo(SourceBuffer, ERHIAccess::UAVCompute, ERHIAccess::CopySrc));
-	ShadowPositionReadbacks[WriteIdx]->EnqueueCopy(RHICmdList, SourceBuffer, CopySize);
-	RHICmdList.Transition(FRHITransitionInfo(SourceBuffer, ERHIAccess::CopySrc, ERHIAccess::UAVCompute));
-	ShadowReadbackFrameNumbers[WriteIdx] = GFrameCounterRenderThread;
-	ShadowReadbackParticleCounts[WriteIdx] = ParticleCount;
-}
-
-/**
- * @brief Process shadow readback - check for completion and copy to ready buffer.
- */
-void FGPUFluidSimulator::ProcessShadowReadback()
-{
-	if (!bShadowReadbackEnabled.load() || ShadowPositionReadbacks[0] == nullptr)
-	{
-		return;
-	}
-
-	// Search for oldest ready buffer
-	int32 ReadIdx = -1;
-	uint64 OldestFrame = UINT64_MAX;
-
-	for (int32 i = 0; i < NUM_SHADOW_READBACK_BUFFERS; ++i)
-	{
-		if (ShadowPositionReadbacks[i] != nullptr &&
-			ShadowReadbackFrameNumbers[i] > 0 &&
-			ShadowPositionReadbacks[i]->IsReady())
-		{
-			if (ShadowReadbackFrameNumbers[i] < OldestFrame)
-			{
-				OldestFrame = ShadowReadbackFrameNumbers[i];
-				ReadIdx = i;
-			}
-		}
-	}
-
-	if (ReadIdx < 0)
-	{
-		return;  // No ready buffers
-	}
-
-	const int32 ParticleCount = ShadowReadbackParticleCounts[ReadIdx];
-	if (ParticleCount <= 0)
-	{
-		return;
-	}
-
-	// Lock and copy position data
-	const int32 BufferSize = ParticleCount * sizeof(FGPUFluidParticle);
-	const FGPUFluidParticle* ParticleData = (const FGPUFluidParticle*)ShadowPositionReadbacks[ReadIdx]->Lock(BufferSize);
-
-	if (ParticleData)
-	{
-		FScopeLock Lock(&BufferLock);
-		ReadyShadowPositions.SetNumUninitialized(ParticleCount);
-		ReadyShadowVelocities.SetNumUninitialized(ParticleCount);
-		ReadyShadowNeighborCounts.SetNumUninitialized(ParticleCount);
-
-		for (int32 i = 0; i < ParticleCount; ++i)
-		{
-			ReadyShadowPositions[i] = ParticleData[i].Position;
-			ReadyShadowVelocities[i] = ParticleData[i].Velocity;
-			ReadyShadowNeighborCounts[i] = ParticleData[i].NeighborCount;
-		}
-
-		ReadyShadowPositionsFrame.store(ShadowReadbackFrameNumbers[ReadIdx]);
-	}
-
-	ShadowPositionReadbacks[ReadIdx]->Unlock();
-
-	// Store the buffer index so ProcessAnisotropyReadback() can read from the same buffer.
-	// This ensures position and anisotropy data are synchronized (same frame).
-	LastProcessedShadowReadbackIndex = ReadIdx;
-
-	// Mark buffer as available for next write cycle
-	ShadowReadbackFrameNumbers[ReadIdx] = 0;
+	ReadyShadowAnisotropyFrame.store(0);
 }
 
 /**
@@ -2978,10 +2872,15 @@ void FGPUFluidSimulator::EnqueueAnisotropyReadback(FRHICommandListImmediate& RHI
 		return;
 	}
 
-	// Use the same write index as position readback (they are synchronized)
-	// Note: ShadowReadbackWriteIndex was already advanced in EnqueueShadowPositionReadback
-	// So we use the previous index
-	const int32 WriteIdx = (ShadowReadbackWriteIndex + NUM_SHADOW_READBACK_BUFFERS - 1) % NUM_SHADOW_READBACK_BUFFERS;
+	// Allocate readback objects if needed
+	if (AnisotropyReadbacks[0][0] == nullptr)
+	{
+		AllocateAnisotropyReadbackObjects(RHICmdList);
+	}
+
+	// Get current write index and advance for next frame
+	const int32 WriteIdx = AnisotropyReadbackWriteIndex;
+	AnisotropyReadbackWriteIndex = (AnisotropyReadbackWriteIndex + 1) % NUM_ANISOTROPY_READBACK_BUFFERS;
 
 	// Calculate copy size (float4 per particle per axis)
 	const uint32 RequiredSize = ParticleCount * sizeof(FVector4f);
@@ -2993,46 +2892,40 @@ void FGPUFluidSimulator::EnqueueAnisotropyReadback(FRHICommandListImmediate& RHI
 
 	// Validate all buffers and readbacks exist
 	if (!Axis1RHI || !Axis2RHI || !Axis3RHI ||
-		!ShadowAnisotropyReadbacks[WriteIdx][0] ||
-		!ShadowAnisotropyReadbacks[WriteIdx][1] ||
-		!ShadowAnisotropyReadbacks[WriteIdx][2])
+		!AnisotropyReadbacks[WriteIdx][0] ||
+		!AnisotropyReadbacks[WriteIdx][1] ||
+		!AnisotropyReadbacks[WriteIdx][2])
 	{
 		return;
 	}
 
 	// Check if ALL buffers have sufficient size BEFORE enqueueing any copies
-	// This prevents partial copies and ensures ParticleCount matches actual copied data
 	const uint32 Axis1Size = Axis1RHI->GetSize();
 	const uint32 Axis2Size = Axis2RHI->GetSize();
 	const uint32 Axis3Size = Axis3RHI->GetSize();
 
 	if (RequiredSize > Axis1Size || RequiredSize > Axis2Size || RequiredSize > Axis3Size)
 	{
-		// Buffer too small - don't enqueue and don't update particle count
-		// This prevents buffer overrun in ProcessAnisotropyReadback
 		return;
 	}
 
 	// All buffers are valid and large enough - now safe to store particle count and enqueue
-	ShadowAnisotropyReadbackParticleCounts[WriteIdx] = ParticleCount;
+	AnisotropyReadbackParticleCounts[WriteIdx] = ParticleCount;
+	AnisotropyReadbackFrameNumbers[WriteIdx] = GFrameCounterRenderThread;
 
 	RHICmdList.Transition(FRHITransitionInfo(Axis1RHI, ERHIAccess::UAVCompute, ERHIAccess::CopySrc));
 	RHICmdList.Transition(FRHITransitionInfo(Axis2RHI, ERHIAccess::UAVCompute, ERHIAccess::CopySrc));
 	RHICmdList.Transition(FRHITransitionInfo(Axis3RHI, ERHIAccess::UAVCompute, ERHIAccess::CopySrc));
-	ShadowAnisotropyReadbacks[WriteIdx][0]->EnqueueCopy(RHICmdList, Axis1RHI, RequiredSize);
-	ShadowAnisotropyReadbacks[WriteIdx][1]->EnqueueCopy(RHICmdList, Axis2RHI, RequiredSize);
-	ShadowAnisotropyReadbacks[WriteIdx][2]->EnqueueCopy(RHICmdList, Axis3RHI, RequiredSize);
+	AnisotropyReadbacks[WriteIdx][0]->EnqueueCopy(RHICmdList, Axis1RHI, RequiredSize);
+	AnisotropyReadbacks[WriteIdx][1]->EnqueueCopy(RHICmdList, Axis2RHI, RequiredSize);
+	AnisotropyReadbacks[WriteIdx][2]->EnqueueCopy(RHICmdList, Axis3RHI, RequiredSize);
 	RHICmdList.Transition(FRHITransitionInfo(Axis1RHI, ERHIAccess::CopySrc, ERHIAccess::UAVCompute));
 	RHICmdList.Transition(FRHITransitionInfo(Axis2RHI, ERHIAccess::CopySrc, ERHIAccess::UAVCompute));
 	RHICmdList.Transition(FRHITransitionInfo(Axis3RHI, ERHIAccess::CopySrc, ERHIAccess::UAVCompute));
 }
 
 /**
- * @brief Process anisotropy readback using the same buffer index as position readback.
- *
- * This function reads anisotropy data from the buffer that was just processed
- * by ProcessShadowReadback(), ensuring position and anisotropy data are from
- * the same simulation frame.
+ * @brief Process anisotropy readback - check for completion and copy to ready buffer.
  */
 void FGPUFluidSimulator::ProcessAnisotropyReadback()
 {
@@ -3041,61 +2934,69 @@ void FGPUFluidSimulator::ProcessAnisotropyReadback()
 		return;
 	}
 
-	// Read from the same buffer index that ProcessShadowReadback() just processed.
-	const int32 ReadIdx = LastProcessedShadowReadbackIndex;
-	if (ReadIdx < 0 || ReadIdx >= NUM_SHADOW_READBACK_BUFFERS)
+	// Search for oldest ready buffer
+	int32 ReadIdx = -1;
+	uint64 OldestFrame = UINT64_MAX;
+
+	for (int32 i = 0; i < NUM_ANISOTROPY_READBACK_BUFFERS; ++i)
 	{
-		return;
+		if (AnisotropyReadbackFrameNumbers[i] > 0 &&
+			AnisotropyReadbacks[i][0] != nullptr &&
+			AnisotropyReadbacks[i][0]->IsReady() &&
+			AnisotropyReadbacks[i][1]->IsReady() &&
+			AnisotropyReadbacks[i][2]->IsReady())
+		{
+			if (AnisotropyReadbackFrameNumbers[i] < OldestFrame)
+			{
+				OldestFrame = AnisotropyReadbackFrameNumbers[i];
+				ReadIdx = i;
+			}
+		}
 	}
 
-	// Use the particle count that was stored when the readback was enqueued
-	// This prevents buffer overrun when particle count changes between enqueue and process
-	const int32 EnqueuedParticleCount = ShadowAnisotropyReadbackParticleCounts[ReadIdx];
+	if (ReadIdx < 0)
+	{
+		return;  // No ready buffers
+	}
+
+	const int32 EnqueuedParticleCount = AnisotropyReadbackParticleCounts[ReadIdx];
 	if (EnqueuedParticleCount <= 0)
 	{
 		return;
 	}
 
-	// All 3 axis buffers must be ready
-	for (int32 AxisIndex = 0; AxisIndex < 3; ++AxisIndex)
-	{
-		if (ShadowAnisotropyReadbacks[ReadIdx][AxisIndex] == nullptr ||
-			!ShadowAnisotropyReadbacks[ReadIdx][AxisIndex]->IsReady())
-		{
-			return;
-		}
-	}
-
 	const int32 BufferSize = EnqueuedParticleCount * sizeof(FVector4f);
 	FScopeLock Lock(&BufferLock);
 
-	// Copy all 3 axes using the enqueued particle count (safe, matches actual buffer size)
-	const FVector4f* Axis1Data = (const FVector4f*)ShadowAnisotropyReadbacks[ReadIdx][0]->Lock(BufferSize);
+	// Copy all 3 axes
+	const FVector4f* Axis1Data = (const FVector4f*)AnisotropyReadbacks[ReadIdx][0]->Lock(BufferSize);
 	if (Axis1Data)
 	{
 		ReadyShadowAnisotropyAxis1.SetNumUninitialized(EnqueuedParticleCount);
 		FMemory::Memcpy(ReadyShadowAnisotropyAxis1.GetData(), Axis1Data, BufferSize);
-		ShadowAnisotropyReadbacks[ReadIdx][0]->Unlock();
+		AnisotropyReadbacks[ReadIdx][0]->Unlock();
 	}
 
-	const FVector4f* Axis2Data = (const FVector4f*)ShadowAnisotropyReadbacks[ReadIdx][1]->Lock(BufferSize);
+	const FVector4f* Axis2Data = (const FVector4f*)AnisotropyReadbacks[ReadIdx][1]->Lock(BufferSize);
 	if (Axis2Data)
 	{
 		ReadyShadowAnisotropyAxis2.SetNumUninitialized(EnqueuedParticleCount);
 		FMemory::Memcpy(ReadyShadowAnisotropyAxis2.GetData(), Axis2Data, BufferSize);
-		ShadowAnisotropyReadbacks[ReadIdx][1]->Unlock();
+		AnisotropyReadbacks[ReadIdx][1]->Unlock();
 	}
 
-	const FVector4f* Axis3Data = (const FVector4f*)ShadowAnisotropyReadbacks[ReadIdx][2]->Lock(BufferSize);
+	const FVector4f* Axis3Data = (const FVector4f*)AnisotropyReadbacks[ReadIdx][2]->Lock(BufferSize);
 	if (Axis3Data)
 	{
 		ReadyShadowAnisotropyAxis3.SetNumUninitialized(EnqueuedParticleCount);
 		FMemory::Memcpy(ReadyShadowAnisotropyAxis3.GetData(), Axis3Data, BufferSize);
-		ShadowAnisotropyReadbacks[ReadIdx][2]->Unlock();
+		AnisotropyReadbacks[ReadIdx][2]->Unlock();
 	}
 
-	// Invalidate the index to prevent reading the same data again
-	LastProcessedShadowReadbackIndex = -1;
+	ReadyShadowAnisotropyFrame.store(AnisotropyReadbackFrameNumbers[ReadIdx]);
+
+	// Mark buffer as available for next write cycle
+	AnisotropyReadbackFrameNumbers[ReadIdx] = 0;
 }
 
 //=============================================================================
@@ -3169,7 +3070,7 @@ void FGPUFluidSimulator::EnqueueStatsReadback(FRHICommandListImmediate& RHICmdLi
 	StatsReadbackParticleCounts[WriteIdx] = ParticleCount;
 }
 
-void FGPUFluidSimulator::ProcessStatsReadback()
+void FGPUFluidSimulator::ProcessStatsReadback(FRHICommandListImmediate& RHICmdList)
 {
 	if (StatsReadbacks[0] == nullptr)
 	{
@@ -3212,13 +3113,33 @@ void FGPUFluidSimulator::ProcessStatsReadback()
 	if (ParticleData && ParticleCount > 0)
 	{
 		// Parallel cache build: local map per chunk → merge
+		// Also extract shadow data (Position, Velocity, NeighborCount) in the same pass
 		const int32 NumChunks = FMath::Clamp(FPlatformMisc::NumberOfCoresIncludingHyperthreads(), 1, ParticleCount);
 		const int32 ChunkSize = (ParticleCount + NumChunks - 1) / NumChunks;
 
-		TArray<TMap<int32, TArray<int32>>> ChunkMaps;
+		// Use fixed-size arrays instead of TMap (SourceID is 0~63 range)
+		constexpr int32 MaxSources = EGPUParticleSource::MaxSourceCount;  // 64
+		TArray<TArray<TArray<int32>>> ChunkSourceArrays;  // [NumChunks][MaxSources][]
 		TArray<TArray<int32>> ChunkAllIDs;
-		ChunkMaps.SetNum(NumChunks);
+		ChunkSourceArrays.SetNum(NumChunks);
 		ChunkAllIDs.SetNum(NumChunks);
+		for (int32 c = 0; c < NumChunks; ++c)
+		{
+			ChunkSourceArrays[c].SetNum(MaxSources);
+		}
+
+		// Pre-allocate data arrays (will be filled in parallel)
+		// Position/Velocity/NeighborCount only when shadow readback enabled
+		const bool bNeedShadowData = bShadowReadbackEnabled.load();
+		TArray<FVector3f> NewPositions;
+		TArray<FVector3f> NewVelocities;
+		TArray<uint32> NewNeighborCounts;
+		if (bNeedShadowData)
+		{
+			NewPositions.SetNumUninitialized(ParticleCount);
+			NewVelocities.SetNumUninitialized(ParticleCount);
+			NewNeighborCounts.SetNumUninitialized(ParticleCount);
+		}
 
 		ParallelFor(NumChunks, [&](int32 ChunkIndex)
 		{
@@ -3226,7 +3147,7 @@ void FGPUFluidSimulator::ProcessStatsReadback()
 			const int32 EndIdx = FMath::Min(StartIdx + ChunkSize, ParticleCount);
 			if (StartIdx >= EndIdx) return;  // Safety check
 
-			auto& LocalMap = ChunkMaps[ChunkIndex];
+			auto& LocalSourceArrays = ChunkSourceArrays[ChunkIndex];
 			auto& LocalAllIDs = ChunkAllIDs[ChunkIndex];
 			LocalAllIDs.Reserve(EndIdx - StartIdx);
 
@@ -3234,32 +3155,76 @@ void FGPUFluidSimulator::ProcessStatsReadback()
 			{
 				const FGPUFluidParticle& P = ParticleData[i];
 				LocalAllIDs.Add(P.ParticleID);
-				LocalMap.FindOrAdd(P.SourceID).Add(P.ParticleID);
+
+				// Direct array indexing instead of TMap hash lookup
+				if (P.SourceID >= 0 && P.SourceID < MaxSources)
+				{
+					LocalSourceArrays[P.SourceID].Add(P.ParticleID);
+				}
+
+				// Position/Velocity/NeighborCount only when shadow readback enabled
+				if (bNeedShadowData)
+				{
+					NewPositions[i] = P.Position;
+					NewVelocities[i] = P.Velocity;
+					NewNeighborCounts[i] = P.NeighborCount;
+				}
 			}
 		});
 
-		// Merge (single thread)
-		TMap<int32, TArray<int32>> NewSourceIDMap;
+		// Merge (single thread) - array-based, no hash operations, MoveTemp for zero-copy
+		TArray<TArray<int32>> NewSourceIDArrays;
 		TArray<int32> NewAllParticleIDs;
-		NewAllParticleIDs.Reserve(ParticleCount);
-
-		for (int32 c = 0; c < NumChunks; ++c)
 		{
-			NewAllParticleIDs.Append(ChunkAllIDs[c]);
-			for (auto& Pair : ChunkMaps[c])
+			SCOPED_DRAW_EVENT(RHICmdList, Merge);
+			NewSourceIDArrays.SetNum(MaxSources);
+			NewAllParticleIDs.Reserve(ParticleCount);
+
+			for (int32 c = 0; c < NumChunks; ++c)
 			{
-				NewSourceIDMap.FindOrAdd(Pair.Key).Append(Pair.Value);
+				NewAllParticleIDs.Append(MoveTemp(ChunkAllIDs[c]));
+			}
+
+			// Merge SourceID arrays - first chunk uses MoveTemp, rest uses Append
+			for (int32 SourceID = 0; SourceID < MaxSources; ++SourceID)
+			{
+				for (int32 c = 0; c < NumChunks; ++c)
+				{
+					if (ChunkSourceArrays[c][SourceID].Num() > 0)
+					{
+						if (NewSourceIDArrays[SourceID].Num() == 0)
+						{
+							NewSourceIDArrays[SourceID] = MoveTemp(ChunkSourceArrays[c][SourceID]);
+						}
+						else
+						{
+							NewSourceIDArrays[SourceID].Append(MoveTemp(ChunkSourceArrays[c][SourceID]));
+						}
+					}
+				}
 			}
 		}
 
-		// Hold lock briefly and swap + copy ReadbackGPUParticles
+		// Hold lock briefly and swap
 		{
+			SCOPED_DRAW_EVENT(RHICmdList, Lock);
 			FScopeLock Lock(&BufferLock);
-			ReadbackGPUParticles.SetNumUninitialized(ParticleCount);
-			FMemory::Memcpy(ReadbackGPUParticles.GetData(), ParticleData, BufferSize);
-			CachedSourceIDToParticleIDs = MoveTemp(NewSourceIDMap);
+			CachedSourceIDToParticleIDs = MoveTemp(NewSourceIDArrays);
 			CachedAllParticleIDs = MoveTemp(NewAllParticleIDs);
+
+			// Copy full particle data for GetReadbackGPUParticles
+			ReadbackGPUParticles.SetNumUninitialized(ParticleCount);
+			FMemory::Memcpy(ReadbackGPUParticles.GetData(), ParticleData, ParticleCount * sizeof(FGPUFluidParticle));
 			bHasValidGPUResults.store(true);
+
+			// Position/Velocity/NeighborCount only when shadow readback enabled
+			if (bNeedShadowData)
+			{
+				ReadyShadowPositions = MoveTemp(NewPositions);
+				ReadyShadowVelocities = MoveTemp(NewVelocities);
+				ReadyShadowNeighborCounts = MoveTemp(NewNeighborCounts);
+				ReadyShadowPositionsFrame.store(StatsReadbackFrameNumbers[ReadIdx]);
+			}
 		}
 
 		// Grab DespawnByIDLock outside BufferLock (prevent lock nesting)

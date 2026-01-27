@@ -1002,7 +1002,8 @@ private:
 	TArray<FGPUFluidParticle> ReadbackGPUParticles;
 
 	// Cached SourceID → ParticleIDs mapping (built during readback processing)
-	TMap<int32, TArray<int32>> CachedSourceIDToParticleIDs;
+	// Fixed-size array indexed by SourceID (0~63), no hash lookup needed
+	TArray<TArray<int32>> CachedSourceIDToParticleIDs;
 
 	// Cached all particle IDs (built during readback processing)
 	TArray<int32> CachedAllParticleIDs;
@@ -1133,60 +1134,50 @@ private:
 	TUniquePtr<FGPUStaticBoundaryManager> StaticBoundaryManager;
 
 	//=============================================================================
-	// Shadow Position Readback (Async GPU→CPU for HISM Shadow Instances)
+	// Shadow Data (extracted from StatsReadback in ProcessStatsReadback)
+	//=============================================================================
+
+	/** Ready positions (extracted from StatsReadback) */
+	TArray<FVector3f> ReadyShadowPositions;
+
+	/** Ready velocities (extracted from StatsReadback, for prediction) */
+	TArray<FVector3f> ReadyShadowVelocities;
+
+	/** Ready neighbor counts (extracted from StatsReadback, for isolation detection) */
+	TArray<uint32> ReadyShadowNeighborCounts;
+
+	/** Frame number of ready shadow data */
+	std::atomic<uint64> ReadyShadowPositionsFrame{0};
+
+	/** Enable flag for shadow data extraction */
+	std::atomic<bool> bShadowReadbackEnabled{false};
+
+	//=============================================================================
+	// Anisotropy Readback (Async GPU→CPU for Ellipsoid HISM Shadows)
 	// Uses FRHIGPUBufferReadback for non-blocking readback (2-3 frame latency)
 	//=============================================================================
 
-	static constexpr int32 NUM_SHADOW_READBACK_BUFFERS = 3;  // Triple buffering
+	static constexpr int32 NUM_ANISOTROPY_READBACK_BUFFERS = 3;  // Triple buffering
 
-	/** Async readback objects for position data */
-	FRHIGPUBufferReadback* ShadowPositionReadbacks[NUM_SHADOW_READBACK_BUFFERS] = { nullptr };
+	/** Async readback objects for anisotropy data (3 axes) */
+	FRHIGPUBufferReadback* AnisotropyReadbacks[NUM_ANISOTROPY_READBACK_BUFFERS][3] = { {nullptr} };
 
-	/** Current write index for ring buffer (round-robin: 0 → 1 → 2 → 0 ...) */
-	int32 ShadowReadbackWriteIndex = 0;
+	/** Current write index for anisotropy ring buffer */
+	int32 AnisotropyReadbackWriteIndex = 0;
 
-	/**
-	 * Buffer index from the most recent ProcessShadowReadback() call.
-	 * ProcessAnisotropyReadback() uses this to read from the same buffer,
-	 * ensuring position and anisotropy data are from the same frame.
-	 * Reset to -1 after anisotropy is processed to prevent duplicate reads.
-	 */
-	int32 LastProcessedShadowReadbackIndex = -1;
+	/** Frame number tracking for each anisotropy readback buffer */
+	uint64 AnisotropyReadbackFrameNumbers[NUM_ANISOTROPY_READBACK_BUFFERS] = { 0 };
 
-	/** Frame number tracking for each readback buffer */
-	uint64 ShadowReadbackFrameNumbers[NUM_SHADOW_READBACK_BUFFERS] = { 0 };
-
-	/** Particle count for each readback buffer */
-	int32 ShadowReadbackParticleCounts[NUM_SHADOW_READBACK_BUFFERS] = { 0 };
-
-	/** Ready positions (copied from completed readback) */
-	TArray<FVector3f> ReadyShadowPositions;
-
-	/** Ready velocities (copied from completed readback, for prediction) */
-	TArray<FVector3f> ReadyShadowVelocities;
+	/** Particle count at the time anisotropy readback was enqueued */
+	int32 AnisotropyReadbackParticleCounts[NUM_ANISOTROPY_READBACK_BUFFERS] = { 0 };
 
 	/** Ready anisotropy data (copied from completed readback, for ellipsoid shadows) */
 	TArray<FVector4f> ReadyShadowAnisotropyAxis1;
 	TArray<FVector4f> ReadyShadowAnisotropyAxis2;
 	TArray<FVector4f> ReadyShadowAnisotropyAxis3;
 
-	/** Ready neighbor counts (copied from shadow readback, for isolation detection) */
-	TArray<uint32> ReadyShadowNeighborCounts;
-
-	/** Async readback objects for anisotropy data (separate from position readback) */
-	FRHIGPUBufferReadback* ShadowAnisotropyReadbacks[NUM_SHADOW_READBACK_BUFFERS][3] = { {nullptr} };
-
-	/** Particle count at the time anisotropy readback was enqueued (prevents buffer overrun) */
-	int32 ShadowAnisotropyReadbackParticleCounts[NUM_SHADOW_READBACK_BUFFERS] = { 0 };
-
-	/** Frame number of ready positions */
-	std::atomic<uint64> ReadyShadowPositionsFrame{0};
-
-	/** Frame number of ready anisotropy (must match ReadyShadowPositionsFrame for valid ellipsoid) */
+	/** Frame number of ready anisotropy */
 	std::atomic<uint64> ReadyShadowAnisotropyFrame{0};
-
-	/** Enable flag for shadow readback */
-	std::atomic<bool> bShadowReadbackEnabled{false};
 
 	//=============================================================================
 	// Stats/Recycle Readback (Async GPU→CPU for ParticleID-based operations)
@@ -1307,20 +1298,14 @@ public:
 	bool GetShadowNeighborCounts(TArray<int32>& OutNeighborCounts) const;
 
 private:
-	/** Allocate shadow readback objects */
-	void AllocateShadowReadbackObjects(FRHICommandListImmediate& RHICmdList);
+	/** Allocate anisotropy readback objects */
+	void AllocateAnisotropyReadbackObjects(FRHICommandListImmediate& RHICmdList);
 
-	/** Release shadow readback objects */
-	void ReleaseShadowReadbackObjects();
-
-	/** Enqueue shadow position copy to readback buffer */
-	void EnqueueShadowPositionReadback(FRHICommandListImmediate& RHICmdList, FRHIBuffer* SourceBuffer, int32 ParticleCount);
+	/** Release anisotropy readback objects */
+void ReleaseAnisotropyReadbackObjects();	
 
 	/** Enqueue anisotropy data copy to readback buffer */
 	void EnqueueAnisotropyReadback(FRHICommandListImmediate& RHICmdList, int32 ParticleCount);
-
-	/** Process shadow readback (check for completion, copy to ready buffer) */
-	void ProcessShadowReadback();
 
 	/** Process anisotropy readback */
 	void ProcessAnisotropyReadback();
@@ -1339,7 +1324,7 @@ private:
 	void EnqueueStatsReadback(FRHICommandListImmediate& RHICmdList, FRHIBuffer* SourceBuffer, int32 ParticleCount);
 
 	/** Process stats readback (check for completion, copy to ReadbackGPUParticles) */
-	void ProcessStatsReadback();
+	void ProcessStatsReadback(FRHICommandListImmediate& RHICmdList);
 };
 
 /**
