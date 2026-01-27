@@ -515,14 +515,10 @@ void UFluidRendererSubsystem::RegisterShadowParticles(const FVector* ParticlePos
 	TArray<FVector>& Buffer = AggregatedPositions[QualityIndex];
 	Buffer.Reserve(Buffer.Num() + NumToAdd);
 
-	// Add positions with skip factor
+	// Add positions with skip factor (no validation - simulation guarantees valid data)
 	for (int32 i = 0; i < NumParticles; i += SkipFactor)
 	{
-		const FVector& Pos = ParticlePositions[i];
-		if (FMath::IsFinite(Pos.X) && FMath::IsFinite(Pos.Y) && FMath::IsFinite(Pos.Z))
-		{
-			Buffer.Add(Pos);
-		}
+		Buffer.Add(ParticlePositions[i]);
 	}
 
 	// Track max radius for this quality level
@@ -578,14 +574,28 @@ void UFluidRendererSubsystem::FlushShadowInstances()
 		CachedInstanceTransforms.SetNumUninitialized(NumInstances);
 		const FVector SphereScale = FVector(Radius / 50.0f);
 
-		// Parallelize transform generation
-		ParallelFor(NumInstances, [&](int32 i)
+		// Generate transforms (parallelize only when count is large enough to offset overhead)
+		constexpr int32 ParallelThreshold = 1024;
+		if (NumInstances >= ParallelThreshold)
 		{
-			FTransform& T = CachedInstanceTransforms[i];
-			T.SetTranslation(Positions[i]);
-			T.SetRotation(FQuat::Identity);
-			T.SetScale3D(SphereScale);
-		});
+			ParallelFor(NumInstances, [&](int32 i)
+			{
+				FTransform& T = CachedInstanceTransforms[i];
+				T.SetTranslation(Positions[i]);
+				T.SetRotation(FQuat::Identity);
+				T.SetScale3D(SphereScale);
+			});
+		}
+		else
+		{
+			for (int32 i = 0; i < NumInstances; ++i)
+			{
+				FTransform& T = CachedInstanceTransforms[i];
+				T.SetTranslation(Positions[i]);
+				T.SetRotation(FQuat::Identity);
+				T.SetScale3D(SphereScale);
+			}
+		}
 
 		// Update ISM
 		const int32 CurrentCount = ISM->GetInstanceCount();
