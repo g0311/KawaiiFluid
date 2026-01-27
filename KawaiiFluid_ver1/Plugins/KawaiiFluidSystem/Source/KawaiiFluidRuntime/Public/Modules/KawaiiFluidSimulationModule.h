@@ -550,15 +550,15 @@ public:
 
 	/** Get registered collider list */
 	const TArray<TObjectPtr<UFluidCollider>>& GetColliders() const { return Colliders; }
-	
+
 	//========================================
-	// SpatialHash (Independent 모드용)
+	// SpatialHash (for Independent mode)
 	//========================================
 
-	/** SpatialHash 가져오기 */
+	/** Get SpatialHash */
 	FSpatialHash* GetSpatialHash() const { return SpatialHash.Get(); }
 
-	/** SpatialHash 초기화 */
+	/** Initialize SpatialHash */
 	void InitializeSpatialHash(float InCellSize);
 
 	//========================================
@@ -615,7 +615,7 @@ public:
 	// Collision Settings
 	//========================================
 
-	/** World Collision 사용 여부 */
+	/** Enable World Collision */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Collision")
 	bool bUseWorldCollision = true;
 

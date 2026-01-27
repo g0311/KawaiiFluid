@@ -53,7 +53,7 @@ void RenderFluidDepthPass(
 
 	OutVelocityTexture = GraphBuilder.CreateTexture(VelocityDesc, TEXT("FluidVelocity"));
 
-	// OcclusionMask Texture 생성 (1.0 = visible, 0.0 = occluded by scene geometry)
+	// Create OcclusionMask Texture (1.0 = visible, 0.0 = occluded by scene geometry)
 	FRDGTextureDesc OcclusionMaskDesc = FRDGTextureDesc::Create2D(
 		View.UnscaledViewRect.Size(),
 		PF_R8,  // Single channel, 8-bit is sufficient for mask

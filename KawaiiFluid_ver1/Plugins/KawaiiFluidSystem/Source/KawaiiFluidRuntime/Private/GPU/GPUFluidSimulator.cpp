@@ -3340,7 +3340,7 @@ bool FGPUFluidSimulator::GetShadowDataWithAnisotropy(
 		ReadyShadowAnisotropyAxis2.Num() != Count ||
 		ReadyShadowAnisotropyAxis3.Num() != Count)
 	{
-		// DEBUG: 개수 불일치 로깅
+		// DEBUG: Log count mismatch
 		static int32 MismatchLogCounter = 0;
 		if (++MismatchLogCounter % 10 == 1)
 		{

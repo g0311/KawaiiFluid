@@ -1467,17 +1467,17 @@ void AKawaiiFluidVolume::GenerateEditorBoundaryParticlesPreview()
 			}
 			else
 			{
-				// IndexData가 없으면 ChaosConvex에서 planes 가져오기
+				// If no IndexData, get planes from ChaosConvex
 				TArray<FPlane> ChaosPlanes;
 				ConvexElem.GetPlanes(ChaosPlanes);
 				
 				for (const FPlane& ChaosPlane : ChaosPlanes)
 				{
-					// ChaosPlane은 로컬 좌표계이므로 월드 좌표계로 변환
+					// ChaosPlane is in local space, so transform to world space
 					const FVector LocalNormal = FVector(ChaosPlane.X, ChaosPlane.Y, ChaosPlane.Z);
 					const FVector WorldNormal = ComponentTransform.TransformVectorNoScale(LocalNormal);
-					
-					// 플레인 위의 한 점을 월드 좌표로 변환
+
+					// Transform a point on the plane to world space
 					const FVector LocalPoint = LocalNormal * ChaosPlane.W;
 					const FVector WorldPoint = ComponentTransform.TransformPosition(LocalPoint);
 					
@@ -1644,7 +1644,7 @@ int32 AKawaiiFluidVolume::RemoveParticlesInRadius(const FVector& WorldCenter, fl
 		}
 	}
 
-	// Submit ID-based despawn request (CleanupCompletedRequests는 Readback 시 호출됨)
+	// Submit ID-based despawn request (CleanupCompletedRequests called on Readback)
 	if (ParticleIDsToRemove.Num() > 0)
 	{
 		GPUSimulator->AddDespawnByIDRequests(ParticleIDsToRemove);

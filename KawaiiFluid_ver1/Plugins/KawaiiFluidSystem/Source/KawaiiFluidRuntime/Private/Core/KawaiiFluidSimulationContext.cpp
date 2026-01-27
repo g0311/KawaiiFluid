@@ -1374,8 +1374,8 @@ void UKawaiiFluidSimulationContext::AppendGPUWorldCollisionPrimitives(
 		TArray<FOverlapResult> Overlaps;
 		const FVector QueryCenter = QueryBounds.GetCenter();
 		const FVector QueryExtent = QueryBounds.GetExtent();
-		
-		// WorldStatic과 WorldDynamic 모두 쿼리
+
+		// Query both WorldStatic and WorldDynamic
 		FCollisionObjectQueryParams ObjectQueryParams;
 		ObjectQueryParams.AddObjectTypesToQuery(ECC_WorldStatic);
 		ObjectQueryParams.AddObjectTypesToQuery(ECC_WorldDynamic);
@@ -1407,7 +1407,7 @@ void UKawaiiFluidSimulationContext::AppendGPUWorldCollisionPrimitives(
 				continue;
 			}
 
-			// WorldStatic과 WorldDynamic 모두 World Collision 대상으로 허용
+			// Allow both WorldStatic and WorldDynamic as World Collision targets
 			const ECollisionChannel ObjectType = PrimComp->GetCollisionObjectType();
 			if (ObjectType != ECC_WorldStatic && ObjectType != ECC_WorldDynamic)
 			{

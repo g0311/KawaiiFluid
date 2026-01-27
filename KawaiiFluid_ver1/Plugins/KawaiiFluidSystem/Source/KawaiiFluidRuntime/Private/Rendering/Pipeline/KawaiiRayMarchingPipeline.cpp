@@ -543,7 +543,7 @@ void FKawaiiRayMarchingPipeline::ExecuteRayMarching(
 		SDFParams->SimulationBoundsMin = CachedZOrderInput.BoundsMin;
 		SDFParams->SimulationBoundsMax = CachedZOrderInput.BoundsMax;
 
-		// Dummy AABB buffer (셰이더 파라미터 validation용)
+		// Dummy AABB buffer (for shader parameter validation)
 		FRDGBufferDesc DummyAABBDesc = FRDGBufferDesc::CreateBufferDesc(sizeof(uint32), 6);
 		FRDGBufferRef DummyAABBBuffer = GraphBuilder.CreateBuffer(DummyAABBDesc, TEXT("DummyFluidAABB"));
 		SDFParams->FluidAABB = GraphBuilder.CreateSRV(DummyAABBBuffer, PF_R32_UINT);

@@ -235,7 +235,7 @@ void FGPUSpawnManager::AddDespawnByIDRequests(const TArray<int32>& ParticleIDs)
 		NewIDs.GetData());
 
 	const int32 FilteredCount = DiffEnd - NewIDs.GetData();
-	NewIDs.SetNum(FilteredCount);  // 실제 크기로 조정
+	NewIDs.SetNum(FilteredCount);  // Adjust to actual size
 
 	if (FilteredCount > 0)
 	{

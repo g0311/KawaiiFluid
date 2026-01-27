@@ -44,8 +44,8 @@ FFluidVolumeTextures FFluidVolumeBuilder::BuildVolumes(
 	// Cache shader map
 	GlobalShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 
-	// NOTE: Tight AABB 기능 비활성화 - Simulation Volume만 사용
-	// Tight AABB는 RDG 버퍼 수명 문제로 크래시 발생하여 제거됨
+	// NOTE: Tight AABB feature disabled - use Simulation Volume only
+	// Tight AABB removed due to RDG buffer lifetime crashes
 
 	FFluidVolumeTextures Result;
 	Result.VolumeResolution = Config.VolumeResolution;

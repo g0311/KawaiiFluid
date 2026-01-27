@@ -175,7 +175,7 @@ void FKawaiiFluidRenderResource::ResizeBuffer(FRHICommandListBase& RHICmdList, i
 }
 
 //========================================
-// GPU 시뮬레이터 인터페이스 구현
+// GPU simulator interface implementation
 //========================================
 
 void FKawaiiFluidRenderResource::SetGPUSimulatorReference(
@@ -289,7 +289,7 @@ bool FKawaiiFluidRenderResource::IsAnisotropyEnabled() const
 }
 
 //========================================
-// Bounds 및 RenderParticle 버퍼 관리
+// Bounds and RenderParticle buffer management
 //========================================
 
 void FKawaiiFluidRenderResource::SetBoundsBuffer(TRefCountPtr<FRDGPooledBuffer> InBoundsBuffer)

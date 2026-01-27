@@ -664,7 +664,7 @@ public:
 		SHADER_PARAMETER(int32, MaxCollisionFeedback)
 		SHADER_PARAMETER(int32, bEnableCollisionFeedback)
 
-		// Collider Contact Counts (간단한 충돌 카운트용)
+		// Collider Contact Counts (for simple collision counting)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, ColliderContactCounts)
 		SHADER_PARAMETER(int32, MaxColliderCount)
 	END_SHADER_PARAMETER_STRUCT()

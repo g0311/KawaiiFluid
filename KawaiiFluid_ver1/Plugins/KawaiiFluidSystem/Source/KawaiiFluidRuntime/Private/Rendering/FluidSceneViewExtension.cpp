@@ -278,7 +278,7 @@ void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 
 				UFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
 
-				// 유효성 검사
+				// Validity check
 				bool bHasAnyModules = SubsystemPtr && SubsystemPtr->GetAllRenderingModules().Num() >
 					0;
 

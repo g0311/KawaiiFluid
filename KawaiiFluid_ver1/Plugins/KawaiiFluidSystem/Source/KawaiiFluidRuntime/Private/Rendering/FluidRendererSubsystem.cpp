@@ -56,7 +56,7 @@ void UFluidRendererSubsystem::Deinitialize()
 }
 
 //========================================
-// RenderingModule 관리
+// RenderingModule management
 //========================================
 
 void UFluidRendererSubsystem::RegisterRenderingModule(UKawaiiFluidRenderingModule* Module)
