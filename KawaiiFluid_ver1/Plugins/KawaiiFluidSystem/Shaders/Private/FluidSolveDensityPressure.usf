@@ -160,7 +160,7 @@ uint GetMortonCellIDFromCellCoord(int3 cellCoord)
 					float lambda_j_prev = neighbor.Lambda; \
 					float diff = h2 - r2; \
 					float W_r = diff * diff * diff; \
-					float ratio = saturate(W_r * InvW_DeltaQ); \
+					float ratio = W_r * InvW_DeltaQ; \
 					float ratio2 = ratio * ratio; \
 					float ratioN = ratio2; \
 					if (TensileN >= 4) ratioN *= ratio2; \
@@ -217,7 +217,7 @@ uint GetMortonCellIDFromCellCoord(int3 cellCoord)
 				float lambda_j_prev = neighbor.Lambda; \
 				float diff = h2 - r2; \
 				float W_r = diff * diff * diff; \
-				float ratio = saturate(W_r * InvW_DeltaQ); \
+				float ratio = W_r * InvW_DeltaQ; \
 				float ratio2 = ratio * ratio; \
 				float ratioN = ratio2; \
 				if (TensileN >= 4) ratioN *= ratio2; \
@@ -376,7 +376,7 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 									// When disabled, tensileK_scaled = 0, so scorr = 0
 									float diff = h2 - r2;
 									float W_r = diff * diff * diff;
-									float ratio = saturate(W_r * InvW_DeltaQ);
+									float ratio = W_r * InvW_DeltaQ;
 									float ratio2 = ratio * ratio;
 									float ratioN = ratio2;
 									if (TensileN >= 4) ratioN *= ratio2;
@@ -462,7 +462,7 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 									// Branchless tensile instability using pre-computed tensileK_scaled
 									float diff = h2 - r2;
 									float W_r = diff * diff * diff;
-									float ratio = saturate(W_r * InvW_DeltaQ);
+									float ratio = W_r * InvW_DeltaQ;
 									float ratio2 = ratio * ratio;
 									float ratioN = ratio2;
 									if (TensileN >= 4) ratioN *= ratio2;
@@ -538,7 +538,7 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 					// Branchless tensile instability using pre-computed tensileK_scaled
 					float diff = h2 - r2;
 					float W_r = diff * diff * diff;
-					float ratio = saturate(W_r * InvW_DeltaQ);
+					float ratio = W_r * InvW_DeltaQ;
 					float ratio2 = ratio * ratio;
 					float ratioN = ratio2;
 					if (TensileN >= 4) ratioN *= ratio2;

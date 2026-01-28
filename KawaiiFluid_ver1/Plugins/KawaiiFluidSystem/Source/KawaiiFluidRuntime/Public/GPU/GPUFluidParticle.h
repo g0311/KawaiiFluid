@@ -245,9 +245,10 @@ struct FGPUFluidSimulationParams
 		// Precompute dt²
 		DeltaTimeSq = DeltaTime * DeltaTime;
 
-		// Tensile Instability: Precompute 1/W(Δq, h)
-		// W(Δq) = Poly6Coeff * (h² - (Δq*h)²)³
-		// where Δq = TensileDeltaQ * h
+		// Tensile Instability: Precompute 1/W(Δq, h) for ratio calculation
+		// ratio = W(r)/W(Δq) = (h²-r²)³ / (h²-Δq²)³
+		// Poly6Coeff cancels out in the ratio, so we only store 1/(h²-Δq²)³
+		// GPU computes: ratio = (h²-r²)³ * InvW_DeltaQ
 		if (bEnableTensileInstability && TensileDeltaQ > 0.0f)
 		{
 			const float DeltaQ = TensileDeltaQ * h;  // Δq in meters
@@ -255,8 +256,10 @@ struct FGPUFluidSimulationParams
 			const float Diff = h2 - DeltaQ2;
 			if (Diff > 0.0f)
 			{
-				const float W_DeltaQ = Poly6Coeff * Diff * Diff * Diff;
-				InvW_DeltaQ = (W_DeltaQ > 1e-10f) ? (1.0f / W_DeltaQ) : 0.0f;
+				// NOTE: Poly6Coeff is intentionally omitted here because it cancels out
+				// in the ratio W(r)/W(Δq). GPU shader also computes W_r without Poly6Coeff.
+				const float W_DeltaQ = Diff * Diff * Diff;
+				InvW_DeltaQ = (W_DeltaQ > 1e-30f) ? (1.0f / W_DeltaQ) : 0.0f;
 			}
 			else
 			{

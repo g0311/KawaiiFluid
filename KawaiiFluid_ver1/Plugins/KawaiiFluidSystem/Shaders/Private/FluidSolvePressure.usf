@@ -133,8 +133,8 @@ void SolvePressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 						float diffQ = h2 - deltaQ2;  // 0.96h²
 						float W_deltaQ = diffQ * diffQ * diffQ;
 
-						// Ratio clamped to [0,1] for numerical stability
-						float ratio = (W_deltaQ > 0.0f) ? saturate(W_r / W_deltaQ) : 0.0f;
+						// Ratio NOT clamped - ratio > 1 when r < Δq provides repulsion for close particles
+						float ratio = (W_deltaQ > 0.0f) ? (W_r / W_deltaQ) : 0.0f;
 
 						// s_corr = -k * ratio^n
 						// Manually compute ratio^n for common exponents to avoid loop/pow issues
