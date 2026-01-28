@@ -367,14 +367,31 @@ void FGPUZOrderSortManager::AddReorderParticlesPass(
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 	TShaderMapRef<FReorderParticlesCS> ComputeShader(ShaderMap);
 
+	// Determine if we should reorder attachments
+	const bool bReorderAttachments = (OldAttachmentsSRV != nullptr && SortedAttachmentsUAV != nullptr);
+
+	// Create dummy buffers if attachments are not provided (shader requires non-null parameters)
+	FRDGBufferSRVRef AttachmentsSRV = OldAttachmentsSRV;
+	FRDGBufferUAVRef AttachmentsUAV = SortedAttachmentsUAV;
+	if (!bReorderAttachments)
+	{
+		// Create minimal dummy buffer (1 element) to satisfy shader parameter requirements
+		FRDGBufferDesc DummyDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(FGPUBoneDeltaAttachment), 1);
+		FRDGBufferRef DummyBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("GPUFluid.DummyAttachment"));
+		// Clear dummy buffer to satisfy RDG validation (buffer must be written before read)
+		AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(DummyBuffer), 0);
+		AttachmentsSRV = GraphBuilder.CreateSRV(DummyBuffer);
+		AttachmentsUAV = GraphBuilder.CreateUAV(DummyBuffer);
+	}
+
 	FReorderParticlesCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FReorderParticlesCS::FParameters>();
 	PassParameters->OldParticles = OldParticlesSRV;
 	PassParameters->SortedIndices = SortedIndicesSRV;
 	PassParameters->SortedParticles = SortedParticlesUAV;
-	// Optional: BoneDeltaAttachment reordering
-	PassParameters->OldBoneDeltaAttachments = OldAttachmentsSRV;
-	PassParameters->SortedBoneDeltaAttachments = SortedAttachmentsUAV;
-	PassParameters->bReorderAttachments = (OldAttachmentsSRV != nullptr && SortedAttachmentsUAV != nullptr) ? 1 : 0;
+	// BoneDeltaAttachment reordering (dummy buffer used if not actually reordering)
+	PassParameters->OldBoneDeltaAttachments = AttachmentsSRV;
+	PassParameters->SortedBoneDeltaAttachments = AttachmentsUAV;
+	PassParameters->bReorderAttachments = bReorderAttachments ? 1 : 0;
 	PassParameters->ParticleCount = CurrentParticleCount;
 
 	const int32 NumGroups = FMath::DivideAndRoundUp(CurrentParticleCount, FReorderParticlesCS::ThreadGroupSize);
@@ -382,7 +399,7 @@ void FGPUZOrderSortManager::AddReorderParticlesPass(
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
 		RDG_EVENT_NAME("GPUFluid::ReorderParticles(%d)%s", CurrentParticleCount,
-			PassParameters->bReorderAttachments ? TEXT("+Attachments") : TEXT("")),
+			bReorderAttachments ? TEXT("+Attachments") : TEXT("")),
 		ComputeShader,
 		PassParameters,
 		FIntVector(NumGroups, 1, 1)

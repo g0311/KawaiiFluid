@@ -65,8 +65,8 @@ StructuredBuffer<FGPUBoundaryParticleWithBone> WorldBoundaryParticles;
 int WorldBoundaryParticleCount;
 
 // Parameters
-float AttachRadius;        // Radius within which to attach to boundary (cm)
-float DetachDistance;      // Distance threshold for detaching (default: 300cm)
+float AttachRadius;        // Radius within which to attach to boundary (= BoundaryAttachRadius)
+float DetachDistance;      // Distance threshold for detaching (= BoundaryAttachRadius * 5.0)
 
 // Z-Order bounds (must match fluid simulation)
 float3 MortonBoundsMin;
@@ -109,12 +109,21 @@ void UpdateBoneDeltaAttachmentCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	//=========================================================================
 	// Step 1: Detach Check (if already attached)
-	// If particle moved more than DetachDistance from previous position, detach
+	// Detach if:
+	//   1. Particle moved more than DetachDistance from previous position (급격한 이동)
+	//   2. LocalOffset exceeds AttachRadius * 2 (Boundary에서 너무 멀어짐)
 	//=========================================================================
 	if (attachment.BoundaryParticleIndex >= 0)
 	{
 		float moveDist = length(pos - attachment.PreviousPosition);
-		if (moveDist > DetachDistance)
+
+		// LocalOffset 거리 체크 (물리에 의해 누적된 Boundary로부터의 거리)
+		float3 localOffset = attachment.Reserved;
+		float offsetDist = length(localOffset);
+
+		// 조건 1: 프레임 간 급격한 이동 (DetachDistance = BoundaryAttachRadius * 5)
+		// 조건 2: LocalOffset이 AttachRadius의 5배 초과 (Boundary에서 너무 멀어짐)
+		if (moveDist > DetachDistance || offsetDist > AttachRadius * 5.0f)
 		{
 			// Detach! Distance exceeded threshold
 			attachment.BoundaryParticleIndex = BONE_DELTA_INVALID_INDEX;

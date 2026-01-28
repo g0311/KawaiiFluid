@@ -687,8 +687,9 @@ void FGPUFluidSimulator::AddUpdateBoneDeltaAttachmentPass(
 	PassParameters->WorldBoundaryParticleCount = WorldBoundaryParticleCount;
 
 	// Attachment parameters
-	PassParameters->AttachRadius = Params.SmoothingRadius;  // Use smoothing radius as attach radius
-	PassParameters->DetachDistance = EBoundaryAttachment::DetachDistance;
+	PassParameters->AttachRadius = Params.BoundaryAttachRadius;  // Use BoundaryAttachRadius from preset
+	// DetachDistance = BoundaryAttachRadius * 5.0 (파티클이 AttachRadius의 5배 이상 급격히 이동하면 detach)
+	PassParameters->DetachDistance = Params.BoundaryAttachRadius * 5.0f;
 
 	// Z-Order bounds (for cell ID calculation)
 	PassParameters->MortonBoundsMin = SimulationBoundsMin;

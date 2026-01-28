@@ -1796,6 +1796,9 @@ FRDGBufferRef FGPUFluidSimulator::ExecuteParticleIDSortPipeline(
 	FRDGBufferDesc DummyAttachmentDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(FGPUBoneDeltaAttachment), 1);
 	FRDGBufferRef DummyAttachmentBuffer = GraphBuilder.CreateBuffer(DummyAttachmentDesc, TEXT("ParticleIDSort.DummyAttachment"));
 
+	// Clear dummy buffer to satisfy RDG validation (buffer must be written before read)
+	AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(DummyAttachmentBuffer), 0);
+
 	{
 		TShaderMapRef<FReorderParticlesCS> ComputeShader(ShaderMap);
 		FReorderParticlesCS::FParameters* Params = GraphBuilder.AllocParameters<FReorderParticlesCS::FParameters>();

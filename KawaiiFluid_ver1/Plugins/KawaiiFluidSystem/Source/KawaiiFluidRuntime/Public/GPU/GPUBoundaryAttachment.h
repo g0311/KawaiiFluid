@@ -64,11 +64,14 @@ static_assert(sizeof(FGPUBoneDeltaAttachment) == 48, "FGPUBoneDeltaAttachment mu
 static_assert(alignof(FGPUBoneDeltaAttachment) <= 16, "FGPUBoneDeltaAttachment alignment must not exceed 16 bytes");
 
 /**
- * Detach distance threshold (in cm)
- * If particle moves more than this distance from previous position, it detaches
+ * Boundary Attachment Constants
+ *
+ * NOTE: DetachDistance is now calculated dynamically as SmoothingRadius * 3.0f
+ * in GPUFluidSimulator_SimPasses.cpp (UpdateBoneDeltaAttachmentPass)
  */
 namespace EBoundaryAttachment
 {
-	constexpr float DetachDistance = 100000.0f;  // 100000cm = 1km (테스트용: 거의 탈락 안함)
+	// DetachDistance is no longer used - now dynamic (SmoothingRadius * 3.0f)
+	// constexpr float DetachDistance = 100000.0f;  // DEPRECATED
 	constexpr int32 InvalidBoneIndex = -1;
 }
