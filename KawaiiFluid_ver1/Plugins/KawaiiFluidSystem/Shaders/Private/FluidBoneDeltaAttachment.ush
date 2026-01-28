@@ -1,0 +1,78 @@
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// GPU Bone Delta Attachment - Boundary Particle following system
+//
+// This header provides structures and constants for per-particle boundary attachment data.
+// Particles attach to WorldBoundaryParticles using OriginalIndex (stable across Z-Order sorting).
+//
+// Used by ApplyBoneTransform (simulation start) and UpdateBoneDeltaAttachment (simulation end)
+
+#pragma once
+
+#include "/Engine/Public/Platform.ush"
+
+//=============================================================================
+// FGPUBoneDeltaAttachment Structure (must match C++ in GPUBoundaryAttachment.h)
+// 48 bytes, 16-byte aligned
+//=============================================================================
+
+struct FGPUBoneDeltaAttachment
+{
+	int BoundaryParticleIndex;  // 4 bytes - Index into WorldBoundaryParticles (-1 = not attached)
+	float Padding1;             // 4 bytes - Alignment padding (total: 8)
+
+	float3 Reserved;            // 12 bytes - Reserved for future use
+	float Padding2;             // 4 bytes - Alignment padding (total: 24)
+
+	float3 PreviousPosition;    // 12 bytes - Previous frame position (for detach check)
+	float Padding3;             // 4 bytes - Alignment padding (total: 40)
+
+	// Additional padding to reach 48 bytes (16-byte aligned)
+	float Padding4;             // 4 bytes
+	float Padding5;             // 4 bytes (total: 48)
+};
+
+//=============================================================================
+// Constants
+//=============================================================================
+
+// Detach distance threshold in cm
+// If particle moves more than this distance from previous position, it detaches
+#define BONE_DELTA_DETACH_DISTANCE 100000.0f  // 100000cm = 1km (테스트용: 거의 탈락 안함)
+
+// Invalid boundary particle index (not attached)
+#define BONE_DELTA_INVALID_INDEX -1
+
+//=============================================================================
+// Helper Functions
+//=============================================================================
+
+/**
+ * Check if attachment is valid (attached to a boundary particle)
+ */
+bool IsBoneDeltaAttached(FGPUBoneDeltaAttachment attachment)
+{
+	return attachment.BoundaryParticleIndex >= 0;
+}
+
+/**
+ * Clear attachment data
+ */
+void ClearBoneDeltaAttachment(inout FGPUBoneDeltaAttachment attachment)
+{
+	attachment.BoundaryParticleIndex = BONE_DELTA_INVALID_INDEX;
+	attachment.Reserved = float3(0, 0, 0);
+	// Note: PreviousPosition is kept for reference
+}
+
+/**
+ * Check if particle should detach based on distance from previous position
+ * @param currentPos - Current world position
+ * @param attachment - Attachment data containing previous position
+ * @return true if should detach
+ */
+bool ShouldDetachByDistance(float3 currentPos, FGPUBoneDeltaAttachment attachment)
+{
+	float dist = length(currentPos - attachment.PreviousPosition);
+	return dist > BONE_DELTA_DETACH_DISTANCE;
+}
+
