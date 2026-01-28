@@ -52,6 +52,7 @@ int BoneCount;
 // Fallback transform for static meshes (BoneIndex == -1)
 float4x4 ComponentTransform;
 
+
 //=============================================================================
 // Main Compute Shader
 //=============================================================================

@@ -462,6 +462,7 @@ FGPUFluidSimulationParams UKawaiiFluidSimulationContext::BuildGPUSimParams(
 	GPUParams.BoundaryDetachSpeedThreshold = Preset->BoundaryDetachSpeedThreshold;
 	GPUParams.BoundaryMaxDetachSpeed = Preset->BoundaryMaxDetachSpeed;
 	GPUParams.BoundaryAttachRadius = Preset->AdhesionRadius;  // Use AdhesionRadius for BoneDeltaAttachment
+	GPUParams.bEnableBoundaryAttachment = Preset->bEnableBoundaryAttachment ? 1 : 0;
 
 	// Particle Sleeping (NVIDIA Flex stabilization)
 	GPUParams.bEnableParticleSleeping = Preset->bEnableParticleSleeping ? 1 : 0;

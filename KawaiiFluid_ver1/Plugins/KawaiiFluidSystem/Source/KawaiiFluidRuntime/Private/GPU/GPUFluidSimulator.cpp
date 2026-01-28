@@ -529,7 +529,8 @@ void FGPUFluidSimulator::SimulateSubstep_RDG(FRDGBuilder& GraphBuilder, const FG
 
 			// Step 2: Apply bone transform (SIMULATION START)
 			// Position is set here, and FinalizePositions will PRESERVE it for attached particles
-			if (SkinningOutputs.LocalBoundaryParticlesBuffer && SkinningOutputs.BoneTransformsBuffer)
+			// Only run if BoundaryAttachment is enabled
+			if (Params.bEnableBoundaryAttachment && SkinningOutputs.LocalBoundaryParticlesBuffer && SkinningOutputs.BoneTransformsBuffer)
 			{
 				FRDGBufferSRVRef LocalBoundarySRV = GraphBuilder.CreateSRV(SkinningOutputs.LocalBoundaryParticlesBuffer);
 				FRDGBufferSRVRef BoneTransformsSRV = GraphBuilder.CreateSRV(SkinningOutputs.BoneTransformsBuffer);
@@ -632,7 +633,8 @@ void FGPUFluidSimulator::SimulateSubstep_RDG(FRDGBuilder& GraphBuilder, const FG
 			BoundaryCount = SpatialData.StaticBoundaryParticleCount;
 		}
 
-		if (BoundarySRV && CellStartSRV && CellEndSRV && BoundaryCount > 0 && WorldBoundaryParticlesSRVLocal)
+		// Only run if BoundaryAttachment is enabled
+		if (Params.bEnableBoundaryAttachment && BoundarySRV && CellStartSRV && CellEndSRV && BoundaryCount > 0 && WorldBoundaryParticlesSRVLocal)
 		{
 			AddUpdateBoneDeltaAttachmentPass(
 				GraphBuilder,

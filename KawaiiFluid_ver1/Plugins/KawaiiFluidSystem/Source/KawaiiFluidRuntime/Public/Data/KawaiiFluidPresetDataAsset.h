@@ -216,6 +216,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|Adhesion", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float AdhesionBoneVelocityScale = 1.0f;
 
+	/**
+	 * Enable Boundary Attachment (BoneDeltaAttachment)
+	 * When enabled, particles near boundary will attach and follow bone movement.
+	 * Disable to use only adhesion forces without position constraint.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|Adhesion")
+	bool bEnableBoundaryAttachment = true;
+
 	//========================================
 	// Physics | Simulation | Boundary | Interaction
 	//========================================
