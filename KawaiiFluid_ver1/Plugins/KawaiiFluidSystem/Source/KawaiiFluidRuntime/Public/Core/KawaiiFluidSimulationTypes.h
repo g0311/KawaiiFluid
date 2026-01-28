@@ -188,6 +188,19 @@ enum class EFluidBrushMode : uint8
 };
 
 /**
+ * Method for estimating submerged volume for buoyancy calculation
+ */
+UENUM(BlueprintType)
+enum class ESubmergedVolumeMethod : uint8
+{
+	/** Estimate submerged volume from number of contacting fluid particles. Fast but approximate. */
+	ContactBased UMETA(DisplayName = "Contact Based"),
+
+	/** Use a fixed percentage of the object's bounding box volume. Simple and predictable. */
+	FixedRatio UMETA(DisplayName = "Fixed Ratio"),
+};
+
+/**
  * Brush settings struct for editor brush tool
  */
 USTRUCT(BlueprintType)

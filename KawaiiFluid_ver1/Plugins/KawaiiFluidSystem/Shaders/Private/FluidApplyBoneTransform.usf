@@ -52,6 +52,8 @@ int BoneCount;
 // Fallback transform for static meshes (BoneIndex == -1)
 float4x4 ComponentTransform;
 
+// Time parameter for velocity calculation
+float DeltaTime;
 
 //=============================================================================
 // Main Compute Shader
@@ -116,11 +118,28 @@ void ApplyBoneTransformCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	// Apply LocalOffset (stored in Reserved field)
 	// This allows physics to affect the particle while still following the boundary
 	float3 localOffset = attachment.Reserved;
-	float3 attachedPos = boundaryWorldPos + localOffset;
+	float3 targetPos = boundaryWorldPos + localOffset;
 
-	// Update position to follow boundary
-	particle.Position = attachedPos;
-	particle.PredictedPosition = attachedPos;
+	// =========================================================================
+	// VELOCITY-ONLY CORRECTION (위치 텔레포트 없음!)
+	// 위치를 직접 바꾸지 않고, bone이 이동한 만큼의 속도만 설정
+	// 물리 시뮬레이션이 position += velocity * dt로 자연스럽게 이동시킴
+	// 이렇게 하면 순간이동으로 인한 밀도 급증/압력 폭발 방지
+	// =========================================================================
+
+	if (DeltaTime > 0.0001f)
+	{
+		// 현재 위치에서 목표 위치까지의 변위
+		float3 displacement = targetPos - particle.Position;
+
+		// 한 프레임에 이 거리를 이동하기 위한 속도
+		// velocity = displacement / dt → position += velocity * dt = displacement
+		particle.Velocity = displacement / DeltaTime;
+	}
+
+	// 위치는 건드리지 않음! 물리가 알아서 이동시킴
+	// particle.Position = 변경 안함
+	// particle.PredictedPosition = 변경 안함
 
 	// Write back
 	Particles[idx] = particle;

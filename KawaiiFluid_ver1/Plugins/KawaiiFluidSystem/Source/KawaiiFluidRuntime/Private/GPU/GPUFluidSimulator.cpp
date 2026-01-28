@@ -528,7 +528,8 @@ void FGPUFluidSimulator::SimulateSubstep_RDG(FRDGBuilder& GraphBuilder, const FG
 			BoneDeltaAttachmentUAVLocal = GraphBuilder.CreateUAV(BoneDeltaAttachmentBufferRDG);
 
 			// Step 2: Apply bone transform (SIMULATION START)
-			// Position is set here, and FinalizePositions will PRESERVE it for attached particles
+			// Sets VELOCITY for attached particles to follow bone movement naturally
+			// No position teleport - physics will move particle via velocity
 			// Only run if BoundaryAttachment is enabled
 			if (Params.bEnableBoundaryAttachment && SkinningOutputs.LocalBoundaryParticlesBuffer && SkinningOutputs.BoneTransformsBuffer)
 			{
@@ -543,7 +544,8 @@ void FGPUFluidSimulator::SimulateSubstep_RDG(FRDGBuilder& GraphBuilder, const FG
 					WorldBoundaryParticleCount,
 					BoneTransformsSRV,
 					SkinningOutputs.BoneCount,
-					SkinningOutputs.ComponentTransform);
+					SkinningOutputs.ComponentTransform,
+					Params.DeltaTime);
 			}
 
 			// Debug log

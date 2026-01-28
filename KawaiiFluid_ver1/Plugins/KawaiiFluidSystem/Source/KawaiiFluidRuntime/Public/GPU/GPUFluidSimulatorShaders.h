@@ -2360,6 +2360,9 @@ public:
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FMatrix44f>, BoneTransforms)
 		SHADER_PARAMETER(int32, BoneCount)
 		SHADER_PARAMETER(FMatrix44f, ComponentTransform)
+
+		// Time parameter for velocity calculation
+		SHADER_PARAMETER(float, DeltaTime)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 256;
@@ -2413,6 +2416,7 @@ public:
 		// Parameters
 		SHADER_PARAMETER(float, AttachRadius)       // Radius for attaching to boundary (cm)
 		SHADER_PARAMETER(float, DetachDistance)     // Distance threshold for detaching (default: 300cm)
+		SHADER_PARAMETER(float, AdhesionStrength)   // Adhesion strength - if 0, no attachment
 
 		// Z-Order bounds
 		SHADER_PARAMETER(FVector3f, MortonBoundsMin)

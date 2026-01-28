@@ -136,6 +136,12 @@ void UFluidInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickT
 			DrawDebugBoundaryParticles();
 		}
 	}
+
+	// Apply automatic physics forces (buoyancy + drag) for physics-simulating objects
+	if (bEnableAutoPhysicsForces)
+	{
+		ApplyAutoPhysicsForces(DeltaTime);
+	}
 }
 
 void UFluidInteractionComponent::CreateAutoCollider()
@@ -2110,5 +2116,252 @@ void UFluidInteractionComponent::SampleAggGeomSurfaces(const FKAggregateGeom& Ag
 	for (const FKBoxElem& Box : AggGeom.BoxElems)
 	{
 		SampleBoxSurface(Box, BoneIndex);
+	}
+}
+
+//=============================================================================
+// Auto Physics Forces Implementation (Buoyancy/Drag for StaticMesh)
+//=============================================================================
+
+UPrimitiveComponent* UFluidInteractionComponent::FindPhysicsBody() const
+{
+	AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		return nullptr;
+	}
+
+	// Priority: StaticMeshComponent > other PrimitiveComponents
+	// Skip SkeletalMeshComponent (use CharacterMovement for characters)
+	// Skip CapsuleComponent (typically character capsule)
+
+	UStaticMeshComponent* StaticMesh = Owner->FindComponentByClass<UStaticMeshComponent>();
+	if (StaticMesh && StaticMesh->IsSimulatingPhysics())
+	{
+		return StaticMesh;
+	}
+
+	// Fallback: any PrimitiveComponent with physics enabled
+	TArray<UPrimitiveComponent*> PrimitiveComponents;
+	Owner->GetComponents<UPrimitiveComponent>(PrimitiveComponents);
+
+	for (UPrimitiveComponent* PrimComp : PrimitiveComponents)
+	{
+		// Skip skeletal mesh and capsule
+		if (PrimComp->IsA<USkeletalMeshComponent>() || PrimComp->IsA<UCapsuleComponent>())
+		{
+			continue;
+		}
+
+		if (PrimComp->IsSimulatingPhysics())
+		{
+			return PrimComp;
+		}
+	}
+
+	return nullptr;
+}
+
+float UFluidInteractionComponent::CalculateSubmergedVolumeFromContacts(int32 ContactCount, float ParticleRadius) const
+{
+	if (ContactCount <= 0 || ParticleRadius <= 0.0f)
+	{
+		return 0.0f;
+	}
+
+	// 유체 입자 부피 계산 (cm³)
+	// V_particle = (4/3) * PI * r³
+	const float ParticleRadiusCm = ParticleRadius;  // 이미 cm 단위
+	const float ParticleVolume = (4.0f / 3.0f) * PI * FMath::Pow(ParticleRadiusCm, 3.0f);
+
+	// Random sphere packing density (약 64%)
+	// 입자들이 빈틈없이 채워지지 않으므로 packing factor 적용
+	const float PackingFactor = 0.64f;
+
+	// 침수 부피 추정
+	// 접촉 입자 수 × 입자 부피 × 패킹 팩터
+	const float SubmergedVolume = static_cast<float>(ContactCount) * ParticleVolume * PackingFactor;
+
+	return SubmergedVolume;
+}
+
+FVector UFluidInteractionComponent::CalculateBuoyancyForce(float SubmergedVolume, float FluidDensity, const FVector& Gravity) const
+{
+	if (SubmergedVolume <= 0.0f || FluidDensity <= 0.0f)
+	{
+		return FVector::ZeroVector;
+	}
+
+	// 단위 변환
+	// SubmergedVolume: cm³
+	// FluidDensity: kg/m³
+	// Gravity: cm/s²
+	// 결과: Force in N (then converted to UE units)
+
+	// cm³ → m³
+	const float SubmergedVolumeM3 = SubmergedVolume * 1e-6f;  // 1 cm³ = 1e-6 m³
+
+	// 부력 공식: F = ρ_fluid × V_submerged × g
+	// F (N) = (kg/m³) × (m³) × (m/s²)
+
+	// Gravity는 cm/s² 단위이므로 m/s²로 변환
+	const float GravityMagnitude = Gravity.Size() * 0.01f;  // cm/s² → m/s²
+
+	// 부력 크기 (N)
+	const float BuoyancyMagnitude = FluidDensity * SubmergedVolumeM3 * GravityMagnitude;
+
+	// 부력 방향: 중력 반대 방향 (위쪽)
+	const FVector BuoyancyDirection = -Gravity.GetSafeNormal();
+
+	// N → UE force units (cm 기반이므로 100 곱함)
+	// F_UE = F_N × 100 (N·m → N·cm scale)
+	const float ForceInUE = BuoyancyMagnitude * 100.0f;
+
+	return BuoyancyDirection * ForceInUE * BuoyancyMultiplier;
+}
+
+float UFluidInteractionComponent::GetCurrentFluidDensity() const
+{
+	if (!TargetSubsystem)
+	{
+		return 1000.0f;  // Default: water density (kg/m³)
+	}
+
+	// 첫 번째 GPU 모듈의 Preset에서 밀도 가져오기
+	for (UKawaiiFluidSimulationModule* Module : TargetSubsystem->GetAllModules())
+	{
+		if (Module)
+		{
+			UKawaiiFluidPresetDataAsset* Preset = Module->GetPreset();
+			if (Preset)
+			{
+				return Preset->Density;
+			}
+		}
+	}
+
+	return 1000.0f;
+}
+
+float UFluidInteractionComponent::GetCurrentParticleRadius() const
+{
+	if (!TargetSubsystem)
+	{
+		return 5.0f;  // Default: 5cm
+	}
+
+	for (UKawaiiFluidSimulationModule* Module : TargetSubsystem->GetAllModules())
+	{
+		if (Module)
+		{
+			return Module->GetParticleRadius();
+		}
+	}
+
+	return 5.0f;
+}
+
+FVector UFluidInteractionComponent::GetCurrentGravity() const
+{
+	UWorld* World = GetWorld();
+	if (World)
+	{
+		// UE 기본 중력: -980 cm/s² (Z축 아래 방향)
+		return FVector(0.0f, 0.0f, World->GetGravityZ());
+	}
+
+	return FVector(0.0f, 0.0f, -980.0f);
+}
+
+void UFluidInteractionComponent::ApplyAutoPhysicsForces(float DeltaTime)
+{
+	// 물리 시뮬레이션 중인 컴포넌트 찾기
+	UPrimitiveComponent* PhysicsBody = FindPhysicsBody();
+	if (!PhysicsBody)
+	{
+		// 물리 바디가 없으면 부력/항력 초기화
+		CurrentBuoyancyForce = FVector::ZeroVector;
+		EstimatedSubmergedVolume = 0.0f;
+		return;
+	}
+
+	// 유체와 접촉 중이 아니면 부력 없음
+	if (CurrentContactCount <= 0)
+	{
+		CurrentBuoyancyForce = FVector::ZeroVector;
+		EstimatedSubmergedVolume = 0.0f;
+		return;
+	}
+
+	// 물리 파라미터 수집
+	const float ParticleRadius = GetCurrentParticleRadius();
+	const float FluidDensity = GetCurrentFluidDensity();
+	const FVector Gravity = GetCurrentGravity();
+
+	//========================================
+	// 1. 부력 계산 및 적용
+	//========================================
+	if (bApplyBuoyancy)
+	{
+		// 침수 부피 계산
+		float SubmergedVolume = 0.0f;
+
+		if (SubmergedVolumeMethod == ESubmergedVolumeMethod::ContactBased)
+		{
+			// 접촉 기반: 입자 접촉 수로 부피 추정
+			SubmergedVolume = CalculateSubmergedVolumeFromContacts(CurrentContactCount, ParticleRadius);
+		}
+		else // FixedRatio
+		{
+			// 고정 비율: 바운딩 박스의 일정 비율
+			FBoxSphereBounds Bounds = PhysicsBody->Bounds;
+			FVector BoxExtent = Bounds.BoxExtent;  // Half-extent
+			float BoundingVolume = BoxExtent.X * BoxExtent.Y * BoxExtent.Z * 8.0f;  // Full box volume
+			SubmergedVolume = BoundingVolume * FixedSubmersionRatio;
+		}
+
+		EstimatedSubmergedVolume = SubmergedVolume;
+
+		// 부력 계산
+		FVector BuoyancyForce = CalculateBuoyancyForce(SubmergedVolume, FluidDensity, Gravity);
+
+		// 댐핑 적용 (수직 속도에 비례한 저항)
+		// 위로 움직이면 → 아래로 힘 (부력 감소)
+		// 아래로 움직이면 → 위로 힘 (낙하 감속)
+		if (BuoyancyDamping > 0.0f)
+		{
+			FVector Velocity = PhysicsBody->GetPhysicsLinearVelocity();
+			FVector UpDirection = -Gravity.GetSafeNormal();
+			float VerticalVelocity = FVector::DotProduct(Velocity, UpDirection);
+
+			// 댐핑 힘: 속도 반대 방향으로 적용
+			FVector DampingForce = -UpDirection * VerticalVelocity * BuoyancyDamping * 100.0f;
+			BuoyancyForce += DampingForce;
+		}
+
+		CurrentBuoyancyForce = BuoyancyForce;
+
+		// 부력 적용
+		if (!BuoyancyForce.IsNearlyZero())
+		{
+			PhysicsBody->AddForce(BuoyancyForce);
+		}
+	}
+	else
+	{
+		CurrentBuoyancyForce = FVector::ZeroVector;
+		EstimatedSubmergedVolume = 0.0f;
+	}
+
+	//========================================
+	// 2. 항력 계산 및 적용
+	//========================================
+	if (bApplyDrag && !CurrentFluidForce.IsNearlyZero())
+	{
+		// CurrentFluidForce는 이미 ProcessCollisionFeedback에서 계산됨
+		// PhysicsDragMultiplier로 스케일링하여 적용
+		FVector DragForce = CurrentFluidForce * PhysicsDragMultiplier;
+
+		PhysicsBody->AddForce(DragForce);
 	}
 }

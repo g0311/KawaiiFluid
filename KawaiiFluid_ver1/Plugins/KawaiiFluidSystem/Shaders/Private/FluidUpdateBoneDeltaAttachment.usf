@@ -67,6 +67,7 @@ int WorldBoundaryParticleCount;
 // Parameters
 float AttachRadius;        // Radius within which to attach to boundary (= BoundaryAttachRadius)
 float DetachDistance;      // Distance threshold for detaching (= BoundaryAttachRadius * 5.0)
+float AdhesionStrength;    // Adhesion strength - if 0, no attachment allowed
 
 // Z-Order bounds (must match fluid simulation)
 float3 MortonBoundsMin;
@@ -147,9 +148,10 @@ void UpdateBoneDeltaAttachmentCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	// Step 2: Find new attachment (if not attached)
 	// Only attach particles that already have NEAR_BOUNDARY flag (set by collision)
 	// This prevents ALL particles from attaching just because they spawned near player
+	// Also requires AdhesionStrength > 0 (if adhesion is disabled, no attachment)
 	//=========================================================================
 	bool bHasNearBoundaryFlag = HasFlag(particle.Flags, GPU_PARTICLE_FLAG_NEAR_BOUNDARY);
-	if (attachment.BoundaryParticleIndex < 0 && BoundaryParticleCount > 0 && bHasNearBoundaryFlag)
+	if (attachment.BoundaryParticleIndex < 0 && BoundaryParticleCount > 0 && bHasNearBoundaryFlag && AdhesionStrength > 0.0f)
 	{
 		int nearestOriginalIndex = BONE_DELTA_INVALID_INDEX;
 		float nearestDist = AttachRadius;

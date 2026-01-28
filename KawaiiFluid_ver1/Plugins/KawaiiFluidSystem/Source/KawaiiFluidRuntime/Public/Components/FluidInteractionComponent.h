@@ -442,6 +442,107 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Fluid Interaction")
 	bool HasValidTarget() const { return TargetSubsystem != nullptr; }
 
+	//========================================
+	// Auto Physics Forces (Buoyancy/Drag for StaticMesh)
+	//========================================
+
+	/**
+	 * Enable automatic physics forces (buoyancy and drag) for objects with Simulate Physics enabled.
+	 * Works with StaticMeshComponent and other PrimitiveComponents.
+	 * For CharacterMovementComponent, use ApplyFluidForceToCharacterMovement() instead.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Interaction|Auto Physics Forces",
+	          meta = (ToolTip = "Enable automatic buoyancy and drag forces for physics-simulating objects.\nRequires a PrimitiveComponent with Simulate Physics enabled.\nFor characters, use ApplyFluidForceToCharacterMovement() instead."))
+	bool bEnableAutoPhysicsForces = false;
+
+	/**
+	 * Apply buoyancy force (upward force counteracting gravity).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Interaction|Auto Physics Forces",
+	          meta = (EditCondition = "bEnableAutoPhysicsForces",
+	                  ToolTip = "Apply buoyancy force based on estimated submerged volume.\nObjects will float or sink based on density ratio."))
+	bool bApplyBuoyancy = true;
+
+	/**
+	 * Apply drag force (resistance from fluid).
+	 * Uses CurrentFluidForce computed from GPU collision feedback.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Interaction|Auto Physics Forces",
+	          meta = (EditCondition = "bEnableAutoPhysicsForces",
+	                  ToolTip = "Apply drag force from fluid flow.\nUses the existing GPU collision feedback system."))
+	bool bApplyDrag = true;
+
+	/**
+	 * Buoyancy force multiplier.
+	 * 1.0 = physically accurate, <1.0 = less buoyant, >1.0 = more buoyant.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Interaction|Auto Physics Forces",
+	          meta = (EditCondition = "bEnableAutoPhysicsForces && bApplyBuoyancy", ClampMin = "0.0", ClampMax = "5.0",
+	                  ToolTip = "Buoyancy multiplier.\n1.0 = physically accurate\n<1.0 = less buoyant (sinks faster)\n>1.0 = more buoyant (floats higher)"))
+	float BuoyancyMultiplier = 1.0f;
+
+	/**
+	 * Drag force multiplier for physics bodies.
+	 * Separate from DragForceMultiplier used for CharacterMovement.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Interaction|Auto Physics Forces",
+	          meta = (EditCondition = "bEnableAutoPhysicsForces && bApplyDrag", ClampMin = "0.0", ClampMax = "10.0",
+	                  ToolTip = "Drag multiplier for physics bodies.\nHigher values = more resistance from fluid."))
+	float PhysicsDragMultiplier = 1.0f;
+
+	/**
+	 * Method for estimating submerged volume.
+	 * ContactBased: Uses particle contact count (dynamic, more accurate for partial submersion)
+	 * FixedRatio: Uses fixed percentage of bounding box (predictable, good for fully submerged objects)
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Interaction|Auto Physics Forces",
+	          meta = (EditCondition = "bEnableAutoPhysicsForces && bApplyBuoyancy",
+	                  ToolTip = "Method for estimating submerged volume.\nContactBased: Dynamic based on particle contacts\nFixedRatio: Fixed percentage of bounding box"))
+	ESubmergedVolumeMethod SubmergedVolumeMethod = ESubmergedVolumeMethod::ContactBased;
+
+	/**
+	 * Fixed submersion ratio (0-1) when using FixedRatio method.
+	 * 0.5 = half submerged, 1.0 = fully submerged.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Interaction|Auto Physics Forces",
+	          meta = (EditCondition = "bEnableAutoPhysicsForces && bApplyBuoyancy && SubmergedVolumeMethod == ESubmergedVolumeMethod::FixedRatio",
+	                  ClampMin = "0.0", ClampMax = "1.0",
+	                  ToolTip = "Fixed submersion ratio when using FixedRatio method.\n0.5 = half submerged\n1.0 = fully submerged"))
+	float FixedSubmersionRatio = 0.5f;
+
+	/**
+	 * Buoyancy damping coefficient.
+	 * Reduces vertical oscillation when floating. Higher = more stable but slower settling.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Interaction|Auto Physics Forces",
+	          meta = (EditCondition = "bEnableAutoPhysicsForces && bApplyBuoyancy", ClampMin = "0.0", ClampMax = "2.0",
+	                  ToolTip = "Damping to reduce vertical oscillation.\n0.0 = no damping (bouncy)\n0.3 = light damping (default)\n1.0+ = heavy damping (stable but sluggish)"))
+	float BuoyancyDamping = 0.3f;
+
+	/**
+	 * Current buoyancy force being applied (read-only, for debugging).
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Fluid Interaction|Auto Physics Forces")
+	FVector CurrentBuoyancyForce = FVector::ZeroVector;
+
+	/**
+	 * Estimated submerged volume (cm³, read-only, for debugging).
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Fluid Interaction|Auto Physics Forces")
+	float EstimatedSubmergedVolume = 0.0f;
+
+	/**
+	 * Get the current buoyancy force.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Fluid Interaction|Auto Physics Forces")
+	FVector GetCurrentBuoyancyForce() const { return CurrentBuoyancyForce; }
+
+	/**
+	 * Get the estimated submerged volume (cm³).
+	 */
+	UFUNCTION(BlueprintPure, Category = "Fluid Interaction|Auto Physics Forces")
+	float GetEstimatedSubmergedVolume() const { return EstimatedSubmergedVolume; }
+
 protected:
 	virtual void OnRegister() override;
 	virtual void OnUnregister() override;
@@ -530,6 +631,31 @@ private:
 
 	/** Auto-enable GPU collision feedback. */
 	void EnableGPUCollisionFeedbackIfNeeded();
+
+	//========================================
+	// Auto Physics Forces Internal
+	//========================================
+
+	/** Find the physics-enabled PrimitiveComponent (StaticMesh, etc.). */
+	class UPrimitiveComponent* FindPhysicsBody() const;
+
+	/** Calculate submerged volume from contact count. */
+	float CalculateSubmergedVolumeFromContacts(int32 ContactCount, float ParticleRadius) const;
+
+	/** Calculate buoyancy force. */
+	FVector CalculateBuoyancyForce(float SubmergedVolume, float FluidDensity, const FVector& Gravity) const;
+
+	/** Get current fluid density from Preset (kg/m³). */
+	float GetCurrentFluidDensity() const;
+
+	/** Get current particle radius from Module (cm). */
+	float GetCurrentParticleRadius() const;
+
+	/** Get current gravity vector (cm/s²). */
+	FVector GetCurrentGravity() const;
+
+	/** Apply automatic physics forces (buoyancy + drag). Called in TickComponent. */
+	void ApplyAutoPhysicsForces(float DeltaTime);
 
 	//========================================
 	// Boundary Particles (Flex-style Adhesion)

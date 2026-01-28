@@ -606,7 +606,8 @@ void FGPUFluidSimulator::AddApplyBoneTransformPass(
 	int32 BoundaryParticleCount,
 	FRDGBufferSRVRef BoneTransformsSRV,
 	int32 BoneCount,
-	const FMatrix44f& ComponentTransform)
+	const FMatrix44f& ComponentTransform,
+	float DeltaTime)
 {
 	if (CurrentParticleCount <= 0 || !BoneDeltaAttachmentSRV || !LocalBoundaryParticlesSRV || BoundaryParticleCount <= 0)
 	{
@@ -627,6 +628,7 @@ void FGPUFluidSimulator::AddApplyBoneTransformPass(
 	PassParameters->BoneTransforms = BoneTransformsSRV;
 	PassParameters->BoneCount = BoneCount;
 	PassParameters->ComponentTransform = ComponentTransform;
+	PassParameters->DeltaTime = DeltaTime;
 
 	const uint32 NumGroups = FMath::DivideAndRoundUp(CurrentParticleCount, FApplyBoneTransformCS::ThreadGroupSize);
 
@@ -690,6 +692,8 @@ void FGPUFluidSimulator::AddUpdateBoneDeltaAttachmentPass(
 	PassParameters->AttachRadius = Params.BoundaryAttachRadius;  // Use BoundaryAttachRadius from preset
 	// DetachDistance = BoundaryAttachRadius * 5.0 (파티클이 AttachRadius의 5배 이상 급격히 이동하면 detach)
 	PassParameters->DetachDistance = Params.BoundaryAttachRadius * 5.0f;
+	// AdhesionStrength: if 0, no attachment allowed
+	PassParameters->AdhesionStrength = Params.BoundaryAdhesionStrength;
 
 	// Z-Order bounds (for cell ID calculation)
 	PassParameters->MortonBoundsMin = SimulationBoundsMin;

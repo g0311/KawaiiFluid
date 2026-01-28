@@ -1039,9 +1039,9 @@ private:
 
 	/**
 	 * Add apply bone transform pass (runs at SIMULATION START)
-	 * Moves attached particles by DIRECTLY applying bone transforms to local positions.
+	 * Sets velocity for attached particles to follow bone movement naturally.
+	 * Uses velocity-only correction (no position teleport) to prevent pressure explosion.
 	 * Uses the SAME bone transform buffer as BoundarySkinningCS for PERFECT sync.
-	 * This eliminates the 1-frame delay by not using pre-computed WorldBoundaryParticles.
 	 * @param GraphBuilder - RDG builder
 	 * @param ParticlesUAV - Particles buffer (read/write)
 	 * @param BoneDeltaAttachmentSRV - Attachment data (read only)
@@ -1050,6 +1050,7 @@ private:
 	 * @param BoneTransformsSRV - Bone transforms (same as BoundarySkinningCS uses)
 	 * @param BoneCount - Number of bones
 	 * @param ComponentTransform - Fallback transform for static meshes
+	 * @param DeltaTime - Frame delta time for velocity calculation
 	 */
 	void AddApplyBoneTransformPass(
 		FRDGBuilder& GraphBuilder,
@@ -1059,7 +1060,8 @@ private:
 		int32 BoundaryParticleCount,
 		FRDGBufferSRVRef BoneTransformsSRV,
 		int32 BoneCount,
-		const FMatrix44f& ComponentTransform);
+		const FMatrix44f& ComponentTransform,
+		float DeltaTime);
 
 	/**
 	 * Add update bone delta attachment pass (runs at SIMULATION END)
