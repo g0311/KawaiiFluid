@@ -515,9 +515,9 @@ public:
 	 * Reduces vertical oscillation when floating. Higher = more stable but slower settling.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Interaction|Auto Physics Forces",
-	          meta = (EditCondition = "bEnableAutoPhysicsForces && bApplyBuoyancy", ClampMin = "0.0", ClampMax = "2.0",
-	                  ToolTip = "Damping to reduce vertical oscillation.\n0.0 = no damping (bouncy)\n0.3 = light damping (default)\n1.0+ = heavy damping (stable but sluggish)"))
-	float BuoyancyDamping = 0.3f;
+	          meta = (EditCondition = "bEnableAutoPhysicsForces && bApplyBuoyancy", ClampMin = "0.0", ClampMax = "20.0",
+	                  ToolTip = "Damping to reduce vertical oscillation.\n0.0 = no damping (bouncy)\n2.0 = light damping\n5.0 = moderate damping (default)\n10.0+ = heavy damping (very stable)"))
+	float BuoyancyDamping = 5.0f;
 
 	/**
 	 * Added Mass coefficient (C_m).

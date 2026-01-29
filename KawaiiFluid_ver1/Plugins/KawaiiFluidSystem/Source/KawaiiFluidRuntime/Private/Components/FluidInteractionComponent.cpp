@@ -530,7 +530,7 @@ void UFluidInteractionComponent::ProcessCollisionFeedback(float DeltaTime)
 
 		// Buoyancy center calculation: average of particle positions
 		// Apply smoothing to prevent abrupt changes
-		const float BuoyancyCenterSmoothingSpeed = 5.0f;  // Fast response, oscillation prevented by angular velocity damping
+		const float BuoyancyCenterSmoothingSpeed = 0.5f;  // Slow response to filter out fluid particle noise
 
 		if (BuoyancyContactCount > 0)
 		{
@@ -2464,39 +2464,110 @@ void UFluidInteractionComponent::ApplyAutoPhysicsForces(float DeltaTime)
 
 		CurrentBuoyancyForce = BuoyancyForce;
 
-		// Apply buoyancy (force at buoyancy center → generates restoring torque)
+		//========================================
+		// 정석 방식: 부력과 회전 보정 분리
+		//========================================
 		if (!BuoyancyForce.IsNearlyZero())
 		{
-			// Buoyancy center calculation: object center + offset
-			// If offset exists → torque generated → object rotates to stable pose
-			FVector ObjectCenter = PhysicsBody->GetComponentLocation();
+			// 1. 부력: 물체 중심에 적용 (토크 발생 안 함)
+			//    → 순수하게 위로 뜨는 힘만 적용
+			PhysicsBody->AddForce(BuoyancyForce);
 
-			// Angular velocity-based offset scaling to prevent oscillation
-			// When rotating fast, reduce offset effect to prevent over-rotation
-			FVector AngularVelocity = PhysicsBody->GetPhysicsAngularVelocityInRadians();
-			float AngularSpeed = AngularVelocity.Size();
-			const float MaxAngularSpeedForFullOffset = 0.2f;  // rad/s, above this start reducing (lowered for stronger damping)
-			const float MinOffsetScale = 0.0f;  // Allow complete suppression when rotating fast
-			float OffsetScale = FMath::Clamp(1.0f - (AngularSpeed / MaxAngularSpeedForFullOffset), MinOffsetScale, 1.0f);
+			// 2. 회전 보정: 목표 자세(수평)와 현재 자세의 차이로 복원 토크 계산
+			//    → 파티클 분포와 무관하게 항상 수평으로 복원
+			//    → 가장 짧은 축(얇은 방향)이 위로 향하도록 (평평하게 눕힘)
 
-			FVector ScaledOffset = EstimatedBuoyancyCenterOffset * OffsetScale;
-			FVector BuoyancyCenter = ObjectCenter + ScaledOffset;
+			// 로컬 바운딩 박스에서 가장 짧은 축 찾기
+			FVector LocalExtent = FVector::OneVector;
 
-			// Debug: buoyancy application position
-			static int32 ForceDebugCounter = 0;
-			if (++ForceDebugCounter % 60 == 0)
+			// StaticMeshComponent에서 로컬 바운딩 박스 가져오기 (스케일 적용)
+			if (UStaticMeshComponent* SMC = Cast<UStaticMeshComponent>(PhysicsBody))
 			{
-				AActor* OwnerActor = GetOwner();
-				UE_LOG(LogTemp, Warning, TEXT("[ApplyBuoyancy] Owner=%s, Force=(%.1f), Offset=(%.1f, %.1f, %.1f), Scale=%.2f, AngSpeed=%.2f"),
-					OwnerActor ? *OwnerActor->GetName() : TEXT("None"),
-					BuoyancyForce.Z,
-					EstimatedBuoyancyCenterOffset.X, EstimatedBuoyancyCenterOffset.Y, EstimatedBuoyancyCenterOffset.Z,
-					OffsetScale,
-					AngularSpeed);
+				if (UStaticMesh* Mesh = SMC->GetStaticMesh())
+				{
+					FBox LocalBox = Mesh->GetBoundingBox();
+					FVector Scale = SMC->GetComponentScale();
+					LocalExtent = LocalBox.GetExtent() * Scale;  // 스케일 적용
+				}
 			}
 
-			// AddForceAtLocation: apply force at specific position → torque based on distance from center
-			PhysicsBody->AddForceAtLocation(BuoyancyForce, BuoyancyCenter);
+			// Unreal 로컬 축 → 월드 공간 변환
+			// GetForwardVector() = 로컬 X (Forward)
+			// GetRightVector() = 로컬 Y (Right)
+			// GetUpVector() = 로컬 Z (Up)
+			FVector AxisX = PhysicsBody->GetForwardVector();  // 로컬 X
+			FVector AxisY = PhysicsBody->GetRightVector();    // 로컬 Y
+			FVector AxisZ = PhysicsBody->GetUpVector();       // 로컬 Z
+
+			// 가장 짧은 축 찾기 (평평한 물체의 "얇은" 방향)
+			FVector ShortestAxis;
+			float MinExtent = FMath::Min3(LocalExtent.X, LocalExtent.Y, LocalExtent.Z);
+
+			if (FMath::IsNearlyEqual(MinExtent, LocalExtent.X, 0.1f))
+			{
+				ShortestAxis = AxisX;  // X가 가장 짧으면 Forward 방향
+			}
+			else if (FMath::IsNearlyEqual(MinExtent, LocalExtent.Y, 0.1f))
+			{
+				ShortestAxis = AxisY;  // Y가 가장 짧으면 Right 방향
+			}
+			else
+			{
+				ShortestAxis = AxisZ;  // Z가 가장 짧으면 Up 방향
+			}
+
+			// 가장 짧은 축이 위로 향하도록 (또는 아래로 - 둘 다 안정)
+			FVector TargetUp = FVector::UpVector;
+			if (FVector::DotProduct(ShortestAxis, FVector::UpVector) < 0)
+			{
+				ShortestAxis = -ShortestAxis;  // 위쪽을 향하도록 뒤집기
+			}
+			FVector CurrentUp = ShortestAxis;
+
+			// 현재 Up과 목표 Up 사이의 회전축과 각도 계산
+			FVector RotationAxis = FVector::CrossProduct(CurrentUp, TargetUp);
+			float CrossMagnitude = RotationAxis.Size();
+
+			if (CrossMagnitude > KINDA_SMALL_NUMBER)
+			{
+				RotationAxis /= CrossMagnitude;  // 정규화
+
+				// 각도 계산 (0 ~ PI)
+				float DotProduct = FVector::DotProduct(CurrentUp, TargetUp);
+				DotProduct = FMath::Clamp(DotProduct, -1.0f, 1.0f);
+				float RotationAngle = FMath::Acos(DotProduct);  // radians
+
+				// 복원 토크: 스프링처럼 각도에 비례
+				// 물체 질량과 크기에 따라 스케일링
+				float Mass = PhysicsBody->GetMass();
+				const float RotationSpringConstant = 500.0f;  // 복원력 강도 (10배 증가)
+				FVector RestoringTorque = RotationAxis * RotationAngle * Mass * RotationSpringConstant;
+
+				// 3. 각속도 댐핑: 회전 속도에 비례하는 저항
+				//    → 오버슈팅 방지, 부드러운 수렴
+				FVector AngularVelocity = PhysicsBody->GetPhysicsAngularVelocityInRadians();
+				const float RotationDampingConstant = 100.0f;  // 댐핑 강도 (조절 가능)
+				FVector DampingTorque = -AngularVelocity * Mass * RotationDampingConstant;
+
+				// 최종 토크 적용
+				FVector TotalTorque = RestoringTorque + DampingTorque;
+				PhysicsBody->AddTorqueInRadians(TotalTorque);
+
+				// Debug 로그
+				static int32 ForceDebugCounter = 0;
+				if (++ForceDebugCounter % 60 == 0)
+				{
+					AActor* OwnerActor = GetOwner();
+					float AngleDegrees = FMath::RadiansToDegrees(RotationAngle);
+					float AngularSpeed = AngularVelocity.Size();
+					UE_LOG(LogTemp, Warning, TEXT("[ApplyBuoyancy] Owner=%s, Force=(%.1f), TiltAngle=%.1f deg, AngSpeed=%.2f rad/s, RestoringTorque=%.1f"),
+						OwnerActor ? *OwnerActor->GetName() : TEXT("None"),
+						BuoyancyForce.Z,
+						AngleDegrees,
+						AngularSpeed,
+						RestoringTorque.Size());
+				}
+			}
 		}
 	}
 	else
