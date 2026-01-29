@@ -3572,11 +3572,10 @@ void FGPUFluidSimulator::ProcessStatsReadback(FRHICommandListImmediate& RHICmdLi
 		// Position/SourceID are ALWAYS copied (needed for lightweight despawn API)
 		// Velocity only when ISM rendering enabled
 		// NeighborCount only when shadow readback enabled
-		// Density/VelocityMagnitude/Mass only when detailed GPU stats enabled
+		// Density/VelocityMagnitude/Mass/Flags only when detailed GPU stats enabled
 		const bool bNeedShadowData = bShadowReadbackEnabled.load();
 		const bool bNeedVelocity = bFullReadbackEnabled.load() || bNeedShadowData;  // ISM or Shadow needs velocity
 		const bool bNeedDetailedStats = GetFluidStatsCollector().IsDetailedGPUEnabled();
-		const bool bNeedBasicStats = GetFluidStatsCollector().IsEnabled();
 		TArray<FVector3f> NewPositions;
 		TArray<int32> NewSourceIDs;
 		TArray<FVector3f> NewVelocities;
@@ -3591,21 +3590,16 @@ void FGPUFluidSimulator::ProcessStatsReadback(FRHICommandListImmediate& RHICmdLi
 		{
 			NewVelocities.SetNumUninitialized(ParticleCount);  // ISM rendering
 		}
-		if (bNeedShadowData || bNeedBasicStats)
+		if (bNeedShadowData)
 		{
 			NewNeighborCounts.SetNumUninitialized(ParticleCount);
 		}
-		if (bNeedDetailedStats || bNeedBasicStats)
+		if (bNeedDetailedStats)
 		{
 			NewDensities.SetNumUninitialized(ParticleCount);
 			NewVelocityMagnitudes.SetNumUninitialized(ParticleCount);
-		}
-		if (bNeedDetailedStats)
-		{
 			NewMasses.SetNumUninitialized(ParticleCount);
-		}
-		if (bNeedBasicStats)
-		{
+			NewNeighborCounts.SetNumUninitialized(ParticleCount);
 			NewFlags.SetNumUninitialized(ParticleCount);
 		}
 
@@ -3640,28 +3634,19 @@ void FGPUFluidSimulator::ProcessStatsReadback(FRHICommandListImmediate& RHICmdLi
 					NewVelocities[i] = P.Velocity;
 				}
 
-				// NeighborCount when shadow readback or basic stats enabled
-				if (bNeedShadowData || bNeedBasicStats)
+				// NeighborCount when shadow readback enabled
+				if (bNeedShadowData)
 				{
 					NewNeighborCounts[i] = P.NeighborCount;
 				}
 
-				// Density and Velocity magnitude for detailed or basic stats
-				if (bNeedDetailedStats || bNeedBasicStats)
+				// Detailed GPU stats: all particle data for stats calculation
+				if (bNeedDetailedStats)
 				{
 					NewDensities[i] = P.Density;
 					NewVelocityMagnitudes[i] = P.Velocity.Length();
-				}
-
-				// Mass only for detailed stats (stability metrics calculation)
-				if (bNeedDetailedStats)
-				{
 					NewMasses[i] = P.Mass;
-				}
-
-				// Flags for basic stats (attached particle count)
-				if (bNeedBasicStats)
-				{
+					NewNeighborCounts[i] = P.NeighborCount;
 					NewFlags[i] = P.Flags;
 				}
 			}
@@ -3735,8 +3720,8 @@ void FGPUFluidSimulator::ProcessStatsReadback(FRHICommandListImmediate& RHICmdLi
 			SpawnManager->CleanupCompletedRequests(CachedAllParticleIDs);
 		}
 
-		// Calculate basic stats from GPU readback data
-		if (bNeedBasicStats && ParticleCount > 0)
+		// Calculate all stats from GPU readback data (only when detailed stats enabled)
+		if (bNeedDetailedStats && ParticleCount > 0)
 		{
 			// Count attached particles
 			int32 AttachedCount = 0;
@@ -3784,7 +3769,7 @@ void FGPUFluidSimulator::ProcessStatsReadback(FRHICommandListImmediate& RHICmdLi
 				MaxNeighbor = FMath::Max(MaxNeighbor, Neighbor);
 			}
 
-			// Update stats collector
+			// Update stats collector - basic stats
 			auto& Collector = GetFluidStatsCollector();
 			auto& Stats = const_cast<FKawaiiFluidSimulationStats&>(Collector.GetStats());
 
@@ -3812,13 +3797,9 @@ void FGPUFluidSimulator::ProcessStatsReadback(FRHICommandListImmediate& RHICmdLi
 			Stats.MaxNeighborCount = MaxNeighbor;
 
 			Stats.bIsGPUSimulation = true;
-		}
 
-		// Calculate stability metrics for detailed GPU stats
-		if (bNeedDetailedStats && ParticleCount > 0)
-		{
-			const float RestDensity = GetFluidStatsCollector().GetStats().RestDensity;
-			GetFluidStatsCollector().CalculateStabilityMetrics(
+			// Calculate stability metrics
+			Collector.CalculateStabilityMetrics(
 				NewDensities.GetData(),
 				NewVelocityMagnitudes.GetData(),
 				NewMasses.GetData(),

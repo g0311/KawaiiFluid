@@ -197,9 +197,10 @@ void FKawaiiFluidSimulationStatsCollector::BeginFrame()
 	// Save previous stats
 	PreviousStats = CurrentStats;
 
-	// For GPU simulation, stats are updated asynchronously via readback.
+	// For GPU simulation with detailed stats enabled, stats are updated asynchronously via readback.
 	// Preserve all GPU-updated stats before reset to avoid flickering.
-	const bool bIsGPU = CurrentStats.bIsGPUSimulation;
+	// When detailed stats is disabled, allow stats to reset to 0.
+	const bool bPreserveGPUStats = CurrentStats.bIsGPUSimulation && bDetailedGPU;
 
 	// Save basic stats (GPU readback is async, not every frame)
 	const int32 SavedParticleCount = CurrentStats.ParticleCount;
@@ -227,7 +228,7 @@ void FKawaiiFluidSimulationStatsCollector::BeginFrame()
 	CurrentStats.Reset();
 
 	// Restore GPU stats (only updated when GPU readback completes)
-	if (bIsGPU)
+	if (bPreserveGPUStats)
 	{
 		CurrentStats.bIsGPUSimulation = true;
 		CurrentStats.ParticleCount = SavedParticleCount;
@@ -264,8 +265,8 @@ void FKawaiiFluidSimulationStatsCollector::BeginFrame()
 	CohesionForceSum = 0.0;
 	CohesionForceSampleCount = 0;
 
-	// Initialize min/max (only for CPU simulation - GPU stats are preserved above)
-	if (!bIsGPU)
+	// Initialize min/max (only when not preserving GPU stats)
+	if (!bPreserveGPUStats)
 	{
 		CurrentStats.MinVelocity = TNumericLimits<float>::Max();
 		CurrentStats.MaxVelocity = TNumericLimits<float>::Lowest();
