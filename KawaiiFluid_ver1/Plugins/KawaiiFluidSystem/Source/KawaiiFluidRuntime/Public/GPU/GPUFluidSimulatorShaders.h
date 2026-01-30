@@ -116,6 +116,8 @@ public:
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, PrevNeighborCounts)
 		SHADER_PARAMETER(int32, bUsePrevNeighborCache)   // 0 = skip forces (first frame)
 		SHADER_PARAMETER(int32, PrevParticleCount)       // Safety: bounds check
+		// Position-Based Cohesion flag (when enabled, skip Force-based cohesion)
+		SHADER_PARAMETER(int32, bUsePositionBasedCohesion)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 256;
@@ -307,6 +309,21 @@ public:
 		SHADER_PARAMETER(float, BoundaryMaxDetachSpeed)
 		SHADER_PARAMETER(float, BoundaryAdhesionStrength)
 		SHADER_PARAMETER(int32, SolverIterationCount)
+		// Position-Based Surface Tension (NVIDIA Flex style)
+		// Creates rounded droplets by minimizing surface area
+		SHADER_PARAMETER(int32, bEnablePositionBasedSurfaceTension)
+		SHADER_PARAMETER(float, SurfaceTensionStrength)
+		SHADER_PARAMETER(float, SurfaceTensionActivationDistance)   // cm (h * ratio)
+		SHADER_PARAMETER(float, SurfaceTensionFalloffDistance)      // cm (h * ratio)
+		SHADER_PARAMETER(int32, SurfaceTensionSurfaceThreshold)
+		// Position-Based Cohesion (NVIDIA Flex style)
+		// Keeps particles connected at rest distance (ParticleSpacing)
+		SHADER_PARAMETER(int32, bEnablePositionBasedCohesion)
+		SHADER_PARAMETER(float, CohesionStrength)
+		SHADER_PARAMETER(float, CohesionRestDistance)               // cm (ParticleSpacing)
+		SHADER_PARAMETER(float, CohesionFalloffDistance)            // cm (h * ratio)
+		// Shared for both Surface Tension and Cohesion
+		SHADER_PARAMETER(float, MaxCohesionCorrection)              // cm per iteration
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 256;

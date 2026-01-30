@@ -54,9 +54,26 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Material", meta = (ClampMin = "0.0", ClampMax = "0.001"))
 	float Compressibility = 0.00001f;
 
-	/** Surface tension between particles (0=dispersed, 1=tight blob like water droplet) */
+	/**
+	 * Surface Tension (Position-Based)
+	 * Minimizes surface area - creates rounded water droplets
+	 * Higher values = particles pull together more at the surface
+	 * 0 = dispersed, 1 = tight spherical blobs
+	 * Note: Uses Position-Based constraint (stable at low viscosity)
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Material", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float SurfaceTension = 0.3f;
+
+	/**
+	 * Cohesion (Position-Based)
+	 * Keeps particles connected at rest distance (ParticleSpacing)
+	 * Higher values = water streams stay connected, don't scatter like sand
+	 * 0 = no cohesion (particles scatter freely)
+	 * 0.3~0.5 = water-like (streams stay connected)
+	 * Note: Different from Surface Tension - this maintains connections, not shape
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Material", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float Cohesion = 0.0f;
 
 	/**
 	 * Adhesion (Akinci 2013)
@@ -368,6 +385,83 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|Stability",
 		meta = (EditCondition = "bEnableStackPressure", ClampMin = "0.0"))
 	float StackPressureRadius = 0.0f;
+
+	//========================================
+	// Physics | Simulation | Surface Tension (Position-Based)
+	//========================================
+
+	/**
+	 * Enable Position-Based Surface Tension (NVIDIA Flex style)
+	 * When enabled, surface tension is handled as position constraint instead of force.
+	 * This eliminates oscillation/jittering that occurs with force-based at low viscosity.
+	 * Recommended for water-like fluids.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|SurfaceTension")
+	bool bEnablePositionBasedSurfaceTension = false;
+
+	/**
+	 * Surface Tension activation distance as ratio of SmoothingRadius
+	 * Surface tension is applied when particle distance exceeds this.
+	 * Lower values = tighter surface (more spherical droplets)
+	 * Typical: 0.3 ~ 0.5
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|SurfaceTension",
+		meta = (EditCondition = "bEnablePositionBasedSurfaceTension", ClampMin = "0.1", ClampMax = "0.9"))
+	float SurfaceTensionActivationRatio = 0.4f;
+
+	/**
+	 * Surface Tension falloff distance as ratio of SmoothingRadius
+	 * Beyond this, strength decreases linearly to zero at SmoothingRadius.
+	 * Must be > SurfaceTensionActivationRatio
+	 * Typical: 0.6 ~ 0.9
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|SurfaceTension",
+		meta = (EditCondition = "bEnablePositionBasedSurfaceTension", ClampMin = "0.2", ClampMax = "1.0"))
+	float SurfaceTensionFalloffRatio = 0.7f;
+
+	/**
+	 * Surface particles neighbor threshold
+	 * Particles with fewer neighbors get stronger surface tension (actual surface particles).
+	 * This creates proper droplet formation at fluid boundaries.
+	 * 0 = uniform strength for all particles
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|SurfaceTension",
+		meta = (EditCondition = "bEnablePositionBasedSurfaceTension", ClampMin = "0", ClampMax = "30"))
+	int32 SurfaceTensionSurfaceThreshold = 15;
+
+	//========================================
+	// Physics | Simulation | Cohesion (Position-Based)
+	//========================================
+
+	/**
+	 * Enable Position-Based Cohesion (NVIDIA Flex style)
+	 * Keeps particles connected at rest distance (ParticleSpacing).
+	 * Different from Surface Tension: maintains stream connections, not surface shape.
+	 * Recommended for water streams that shouldn't scatter like sand.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|Cohesion")
+	bool bEnablePositionBasedCohesion = false;
+
+	/**
+	 * Cohesion falloff start as ratio of SmoothingRadius
+	 * Beyond ParticleSpacing, cohesion stays full until this distance.
+	 * Then fades to zero at SmoothingRadius.
+	 * Lower = cohesion fades earlier, Higher = cohesion stays strong longer
+	 * Typical: 0.5 ~ 0.8
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|Cohesion",
+		meta = (EditCondition = "bEnablePositionBasedCohesion", ClampMin = "0.3", ClampMax = "1.0"))
+	float CohesionFalloffRatio = 0.7f;
+
+	/**
+	 * Maximum correction per iteration (cm)
+	 * Limits position change from cohesion/surface tension per solver iteration.
+	 * Prevents instability from large corrections.
+	 * 0 = no limit (not recommended)
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|Cohesion",
+		meta = (ClampMin = "0.0", ClampMax = "50.0"))
+	float MaxCohesionCorrectionPerIteration = 5.0f;
 
 	//========================================
 	// Utility Functions

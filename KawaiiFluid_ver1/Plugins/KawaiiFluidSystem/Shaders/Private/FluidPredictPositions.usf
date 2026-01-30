@@ -48,6 +48,10 @@ StructuredBuffer<uint> PrevNeighborCounts;
 int bUsePrevNeighborCache;   // 0 = skip forces (first frame)
 int PrevParticleCount;       // Safety: bounds check
 
+// Position-Based Cohesion flag
+// When enabled, skip Force-based cohesion (handled in SolveDensityPressure instead)
+int bUsePositionBasedCohesion;
+
 //=============================================================================
 // Main Compute Shader
 //=============================================================================
@@ -81,6 +85,10 @@ void PredictPositionsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
     // bUsePrevNeighborCache: first frame has no cache, multiply by 0 to skip
     float cacheValid = (float)bUsePrevNeighborCache * activeMask;
 
+    // When Position-Based Cohesion is enabled, skip Force-based cohesion
+    // Position-Based handles cohesion in SolveDensityPressure as position constraint
+    float forceCohesionStrength = CohesionStrength * (1.0f - (float)bUsePositionBasedCohesion);
+
     FForceAccumulationResult forceResult = CalculateForceAccumulation(
         idx,
         particle.Position,
@@ -88,7 +96,8 @@ void PredictPositionsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
         particle.Mass,
         particle.Density,
         // Cohesion params - multiplied by cacheValid to handle first frame & attached
-        CohesionStrength * cacheValid,
+        // Also multiplied by (1 - bUsePositionBasedCohesion) to disable when using position-based
+        forceCohesionStrength * cacheValid,
         MaxCohesionForce,
         RestDensity,
         // Viscosity params

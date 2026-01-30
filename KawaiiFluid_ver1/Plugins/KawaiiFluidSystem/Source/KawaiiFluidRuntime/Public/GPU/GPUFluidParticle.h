@@ -164,6 +164,24 @@ struct FGPUFluidSimulationParams
 	float BoundaryAttachCooldown;           // seconds, cooldown after detach before re-attach
 	float BoundaryAttachConstraintBlend;    // 0~1, position constraint strength (1 = fully follow boundary)
 
+	// Position-Based Surface Tension (NVIDIA Flex style)
+	// Creates rounded droplets by minimizing surface area
+	int32 bEnablePositionBasedSurfaceTension;   // Enable position-based surface tension
+	float SurfaceTensionStrength;               // 0~1, from Physics|Material SurfaceTension
+	float SurfaceTensionActivationRatio;        // 0~1, distance ratio where ST activates
+	float SurfaceTensionFalloffRatio;           // 0~1, distance ratio where ST starts fading
+	int32 SurfaceTensionSurfaceThreshold;       // Surface particles get stronger ST
+
+	// Position-Based Cohesion (NVIDIA Flex style)
+	// Keeps particles connected at rest distance (ParticleSpacing)
+	int32 bEnablePositionBasedCohesion;         // Enable position-based cohesion
+	float CohesionStrengthPB;                   // 0~1, from Physics|Material Cohesion (PB = Position-Based)
+	float ParticleSpacing;                      // cm, rest distance for cohesion (2 * ParticleRadius)
+	float CohesionFalloffRatio;                 // 0~1, distance ratio where cohesion starts fading
+
+	// Shared parameters for both Surface Tension and Cohesion
+	float MaxCohesionCorrectionPerIteration;    // cm, max position correction per iteration
+
 	FGPUFluidSimulationParams()
 		: RestDensity(1000.0f)
 		, SmoothingRadius(20.0f)
@@ -217,6 +235,19 @@ struct FGPUFluidSimulationParams
 		, BoundaryAttachDetachSpeedThreshold(500.0f)
 		, BoundaryAttachCooldown(0.2f)
 		, BoundaryAttachConstraintBlend(0.8f)
+		// Position-Based Surface Tension
+		, bEnablePositionBasedSurfaceTension(0)
+		, SurfaceTensionStrength(0.3f)
+		, SurfaceTensionActivationRatio(0.4f)
+		, SurfaceTensionFalloffRatio(0.7f)
+		, SurfaceTensionSurfaceThreshold(15)
+		// Position-Based Cohesion
+		, bEnablePositionBasedCohesion(0)
+		, CohesionStrengthPB(0.0f)
+		, ParticleSpacing(10.0f)
+		, CohesionFalloffRatio(0.7f)
+		// Shared
+		, MaxCohesionCorrectionPerIteration(5.0f)
 	{
 	}
 

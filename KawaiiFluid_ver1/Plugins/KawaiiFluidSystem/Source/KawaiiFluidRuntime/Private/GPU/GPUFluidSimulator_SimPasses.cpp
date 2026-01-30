@@ -62,6 +62,10 @@ void FGPUFluidSimulator::AddPredictPositionsPass(
 	                                       PrevNeighborCountsBuffer.IsValid() &&
 	                                       PrevNeighborBufferParticleCount > 0;
 
+	// Position-Based Cohesion flag (skip Force-based if EITHER Position-Based mode is enabled)
+	// Both Surface Tension and Cohesion are Position-Based variants that replace Force-based cohesion
+	PassParameters->bUsePositionBasedCohesion = (Params.bEnablePositionBasedCohesion || Params.bEnablePositionBasedSurfaceTension) ? 1 : 0;
+
 	if (bCanUsePrevNeighborCache)
 	{
 		// Register previous frame's persistent neighbor cache buffers
@@ -69,7 +73,7 @@ void FGPUFluidSimulator::AddPredictPositionsPass(
 			PrevNeighborListBuffer, TEXT("GPUFluidPrevNeighborList"));
 		FRDGBufferRef PrevNeighborCountsRDG = GraphBuilder.RegisterExternalBuffer(
 			PrevNeighborCountsBuffer, TEXT("GPUFluidPrevNeighborCounts"));
-		
+
 		PassParameters->PrevNeighborList = GraphBuilder.CreateSRV(PrevNeighborListRDG);
 		PassParameters->PrevNeighborCounts = GraphBuilder.CreateSRV(PrevNeighborCountsRDG);
 		PassParameters->bUsePrevNeighborCache = 1;
@@ -83,12 +87,12 @@ void FGPUFluidSimulator::AddPredictPositionsPass(
 			FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 1), TEXT("DummyPrevNeighborList"));
 		FRDGBufferRef DummyCounts = GraphBuilder.CreateBuffer(
 			FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 1), TEXT("DummyPrevNeighborCounts"));
-		
+
 		// Initialize dummy buffers to zero
 		uint32 Zero = 0;
 		GraphBuilder.QueueBufferUpload(DummyList, &Zero, sizeof(uint32));
 		GraphBuilder.QueueBufferUpload(DummyCounts, &Zero, sizeof(uint32));
-		
+
 		PassParameters->PrevNeighborList = GraphBuilder.CreateSRV(DummyList);
 		PassParameters->PrevNeighborCounts = GraphBuilder.CreateSRV(DummyCounts);
 		PassParameters->bUsePrevNeighborCache = 0;
@@ -221,6 +225,24 @@ void FGPUFluidSimulator::AddSolveDensityPressurePass(
 	PassParameters->BoundaryMaxDetachSpeed = Params.BoundaryMaxDetachSpeed;
 	PassParameters->BoundaryAdhesionStrength = FMath::Clamp(Params.BoundaryAdhesionStrength, 0.0f, 1.0f);
 	PassParameters->SolverIterationCount = Params.SolverIterations;
+
+	// Position-Based Surface Tension (NVIDIA Flex style)
+	// Creates rounded droplets by minimizing surface area
+	PassParameters->bEnablePositionBasedSurfaceTension = Params.bEnablePositionBasedSurfaceTension ? 1 : 0;
+	PassParameters->SurfaceTensionStrength = Params.SurfaceTensionStrength;
+	PassParameters->SurfaceTensionActivationDistance = Params.SmoothingRadius * Params.SurfaceTensionActivationRatio;
+	PassParameters->SurfaceTensionFalloffDistance = Params.SmoothingRadius * Params.SurfaceTensionFalloffRatio;
+	PassParameters->SurfaceTensionSurfaceThreshold = Params.SurfaceTensionSurfaceThreshold;
+
+	// Position-Based Cohesion (NVIDIA Flex style)
+	// Keeps particles connected at rest distance (ParticleSpacing)
+	PassParameters->bEnablePositionBasedCohesion = Params.bEnablePositionBasedCohesion ? 1 : 0;
+	PassParameters->CohesionStrength = Params.CohesionStrengthPB;
+	PassParameters->CohesionRestDistance = Params.ParticleSpacing;  // Rest distance = ParticleSpacing
+	PassParameters->CohesionFalloffDistance = Params.SmoothingRadius * Params.CohesionFalloffRatio;
+
+	// Shared for both
+	PassParameters->MaxCohesionCorrection = Params.MaxCohesionCorrectionPerIteration;
 
 	// =========================================================================
 	// Boundary Particles for density contribution (Akinci 2012)
