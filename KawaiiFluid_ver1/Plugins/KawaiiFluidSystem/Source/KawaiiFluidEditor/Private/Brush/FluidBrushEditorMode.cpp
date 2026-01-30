@@ -1,7 +1,6 @@
 // Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #include "Brush/FluidBrushEditorMode.h"
-#include "Components/KawaiiFluidComponent.h"
 #include "Components/KawaiiFluidVolumeComponent.h"
 #include "Actors/KawaiiFluidVolume.h"
 #include "Modules/KawaiiFluidSimulationModule.h"
@@ -60,13 +59,6 @@ void FFluidBrushEditorMode::Exit()
 		SelectionChangedHandle.Reset();
 	}
 
-	// Cleanup Component mode
-	if (TargetComponent.IsValid())
-	{
-		TargetComponent->bBrushModeActive = false;
-	}
-	TargetComponent.Reset();
-
 	// Cleanup Volume mode
 	if (TargetVolumeComponent.IsValid())
 	{
@@ -82,29 +74,8 @@ void FFluidBrushEditorMode::Exit()
 	UE_LOG(LogTemp, Log, TEXT("Fluid Brush Mode Exited"));
 }
 
-void FFluidBrushEditorMode::SetTargetComponent(UKawaiiFluidComponent* Component)
-{
-	// Clear existing Volume target
-	TargetVolume.Reset();
-	TargetVolumeComponent.Reset();
-
-	TargetComponent = Component;
-	if (Component)
-	{
-		Component->bBrushModeActive = true;
-		TargetOwnerActor = Component->GetOwner();
-	}
-	else
-	{
-		TargetOwnerActor.Reset();
-	}
-}
-
 void FFluidBrushEditorMode::SetTargetVolume(AKawaiiFluidVolume* Volume)
 {
-	// Clear existing Component target
-	TargetComponent.Reset();
-
 	TargetVolume = Volume;
 	if (Volume)
 	{
@@ -125,19 +96,12 @@ void FFluidBrushEditorMode::SetTargetVolume(AKawaiiFluidVolume* Volume)
 bool FFluidBrushEditorMode::InputKey(FEditorViewportClient* ViewportClient, FViewport* Viewport,
                                       FKey Key, EInputEvent Event)
 {
-	// Either Component or Volume must be valid
-	const bool bHasComponent = TargetComponent.IsValid();
-	const bool bHasVolume = TargetVolume.IsValid() && TargetVolumeComponent.IsValid();
-
-	if (!bHasComponent && !bHasVolume)
+	if (!TargetVolume.IsValid() || !TargetVolumeComponent.IsValid())
 	{
 		return false;
 	}
 
-	// Get BrushSettings reference (branched)
-	FFluidBrushSettings& Settings = bHasVolume
-		? TargetVolumeComponent->BrushSettings
-		: TargetComponent->BrushSettings;
+	FFluidBrushSettings& Settings = TargetVolumeComponent->BrushSettings;
 
 	// Left click: Painting
 	if (Key == EKeys::LeftMouseButton)
@@ -423,24 +387,12 @@ bool FFluidBrushEditorMode::UpdateBrushLocation(FEditorViewportClient* ViewportC
 
 void FFluidBrushEditorMode::ApplyBrush()
 {
-	if (!bValidLocation)
+	if (!bValidLocation || !TargetVolume.IsValid() || !TargetVolumeComponent.IsValid())
 	{
 		return;
 	}
 
-	// Either Component or Volume must be valid
-	const bool bHasComponent = TargetComponent.IsValid();
-	const bool bHasVolume = TargetVolume.IsValid() && TargetVolumeComponent.IsValid();
-
-	if (!bHasComponent && !bHasVolume)
-	{
-		return;
-	}
-
-	// Get BrushSettings reference (branched)
-	const FFluidBrushSettings& Settings = bHasVolume
-		? TargetVolumeComponent->BrushSettings
-		: TargetComponent->BrushSettings;
+	const FFluidBrushSettings& Settings = TargetVolumeComponent->BrushSettings;
 
 	// Stroke interval
 	double Now = FPlatformTime::Seconds();
@@ -450,49 +402,23 @@ void FFluidBrushEditorMode::ApplyBrush()
 	}
 	LastStrokeTime = Now;
 
-	// Volume mode
-	if (bHasVolume)
+	TargetVolume->Modify();
+	switch (Settings.Mode)
 	{
-		TargetVolume->Modify();
-		switch (Settings.Mode)
-		{
-			case EFluidBrushMode::Add:
-				TargetVolume->AddParticlesInRadius(
-					BrushLocation,
-					Settings.Radius,
-					Settings.ParticlesPerStroke,
-					Settings.InitialVelocity,
-					Settings.Randomness,
-					BrushNormal
-				);
-				break;
+		case EFluidBrushMode::Add:
+			TargetVolume->AddParticlesInRadius(
+				BrushLocation,
+				Settings.Radius,
+				Settings.ParticlesPerStroke,
+				Settings.InitialVelocity,
+				Settings.Randomness,
+				BrushNormal
+			);
+			break;
 
-			case EFluidBrushMode::Remove:
-				TargetVolume->RemoveParticlesInRadius(BrushLocation, Settings.Radius);
-				break;
-		}
-	}
-	// Component mode
-	else
-	{
-		TargetComponent->Modify();
-		switch (Settings.Mode)
-		{
-			case EFluidBrushMode::Add:
-				TargetComponent->AddParticlesInRadius(
-					BrushLocation,
-					Settings.Radius,
-					Settings.ParticlesPerStroke,
-					Settings.InitialVelocity,
-					Settings.Randomness,
-					BrushNormal
-				);
-				break;
-
-			case EFluidBrushMode::Remove:
-				TargetComponent->RemoveParticlesInRadius(BrushLocation, Settings.Radius);
-				break;
-		}
+		case EFluidBrushMode::Remove:
+			TargetVolume->RemoveParticlesInRadius(BrushLocation, Settings.Radius);
+			break;
 	}
 }
 
@@ -500,8 +426,7 @@ void FFluidBrushEditorMode::Render(const FSceneView* View, FViewport* Viewport, 
 {
 	FEdMode::Render(View, Viewport, PDI);
 
-	const bool bHasTarget = TargetComponent.IsValid() || (TargetVolume.IsValid() && TargetVolumeComponent.IsValid());
-	if (bValidLocation && bHasTarget)
+	if (bValidLocation && TargetVolume.IsValid() && TargetVolumeComponent.IsValid())
 	{
 		DrawBrushPreview(PDI);
 	}
@@ -509,19 +434,12 @@ void FFluidBrushEditorMode::Render(const FSceneView* View, FViewport* Viewport, 
 
 void FFluidBrushEditorMode::DrawBrushPreview(FPrimitiveDrawInterface* PDI)
 {
-	// Either Component or Volume must be valid
-	const bool bHasComponent = TargetComponent.IsValid();
-	const bool bHasVolume = TargetVolume.IsValid() && TargetVolumeComponent.IsValid();
-
-	if (!bHasComponent && !bHasVolume)
+	if (!TargetVolume.IsValid() || !TargetVolumeComponent.IsValid())
 	{
 		return;
 	}
 
-	// Get BrushSettings reference (branched)
-	const FFluidBrushSettings& Settings = bHasVolume
-		? TargetVolumeComponent->BrushSettings
-		: TargetComponent->BrushSettings;
+	const FFluidBrushSettings& Settings = TargetVolumeComponent->BrushSettings;
 	FColor Color = GetBrushColor().ToFColor(true);
 
 	// Circle based on normal (actual spawn area - hemisphere base)
@@ -545,19 +463,12 @@ void FFluidBrushEditorMode::DrawBrushPreview(FPrimitiveDrawInterface* PDI)
 
 FLinearColor FFluidBrushEditorMode::GetBrushColor() const
 {
-	// Either Component or Volume must be valid
-	const bool bHasComponent = TargetComponent.IsValid();
-	const bool bHasVolume = TargetVolume.IsValid() && TargetVolumeComponent.IsValid();
-
-	if (!bHasComponent && !bHasVolume)
+	if (!TargetVolume.IsValid() || !TargetVolumeComponent.IsValid())
 	{
 		return FLinearColor::White;
 	}
 
-	// Get BrushSettings reference (branched)
-	EFluidBrushMode Mode = bHasVolume
-		? TargetVolumeComponent->BrushSettings.Mode
-		: TargetComponent->BrushSettings.Mode;
+	EFluidBrushMode Mode = TargetVolumeComponent->BrushSettings.Mode;
 
 	switch (Mode)
 	{
@@ -575,45 +486,23 @@ void FFluidBrushEditorMode::DrawHUD(FEditorViewportClient* ViewportClient, FView
 {
 	FEdMode::DrawHUD(ViewportClient, Viewport, View, Canvas);
 
-	// Either Component or Volume must be valid
-	const bool bHasComponent = TargetComponent.IsValid();
-	const bool bHasVolume = TargetVolume.IsValid() && TargetVolumeComponent.IsValid();
-
-	if (!Canvas || (!bHasComponent && !bHasVolume) || !GEngine)
+	if (!Canvas || !TargetVolume.IsValid() || !TargetVolumeComponent.IsValid() || !GEngine)
 	{
 		return;
 	}
 
-	// Get BrushSettings reference (branched)
-	const FFluidBrushSettings& Settings = bHasVolume
-		? TargetVolumeComponent->BrushSettings
-		: TargetComponent->BrushSettings;
+	const FFluidBrushSettings& Settings = TargetVolumeComponent->BrushSettings;
 	FString ModeStr = (Settings.Mode == EFluidBrushMode::Add) ? TEXT("ADD") : TEXT("REMOVE");
 
-	// Particle count (branched)
 	int32 ParticleCount = -1;
-	if (bHasVolume)
+	if (UKawaiiFluidSimulationModule* SimModule = TargetVolume->GetSimulationModule())
 	{
-		// Volume mode: Total particle count from Volume's SimulationModule
-		if (UKawaiiFluidSimulationModule* SimModule = TargetVolume->GetSimulationModule())
-		{
-			ParticleCount = SimModule->GetParticleCount();
-		}
-	}
-	else
-	{
-		// Component mode: Particle count owned by this component (per-source count)
-		if (TargetComponent->GetSimulationModule())
-		{
-			const int32 SourceID = TargetComponent->GetSimulationModule()->GetSourceID();
-			ParticleCount = TargetComponent->GetSimulationModule()->GetParticleCountForSource(SourceID);
-		}
+		ParticleCount = SimModule->GetParticleCount();
 	}
 
 	FString ParticleStr = (ParticleCount >= 0) ? FString::FromInt(ParticleCount) : TEXT("-");
-	FString TargetTypeStr = bHasVolume ? TEXT("Volume") : TEXT("Component");
-	FString InfoText = FString::Printf(TEXT("[%s] Brush: %s | Radius: %.0f | Particles: %s | [ ] Size | 1/2 Mode | ESC Exit"),
-	                               *TargetTypeStr, *ModeStr, Settings.Radius, *ParticleStr);
+	FString InfoText = FString::Printf(TEXT("[Volume] Brush: %s | Radius: %.0f | Particles: %s | [ ] Size | 1/2 Mode | ESC Exit"),
+	                               *ModeStr, Settings.Radius, *ParticleStr);
 
 	FCanvasTextItem Text(FVector2D(10, 40), FText::FromString(InfoText),
 	                     GEngine->GetSmallFont(), GetBrushColor());
@@ -622,11 +511,7 @@ void FFluidBrushEditorMode::DrawHUD(FEditorViewportClient* ViewportClient, FView
 
 bool FFluidBrushEditorMode::DisallowMouseDeltaTracking() const
 {
-	// Either Component or Volume must be valid
-	const bool bHasComponent = TargetComponent.IsValid();
-	const bool bHasVolume = TargetVolume.IsValid() && TargetVolumeComponent.IsValid();
-
-	if (!bHasComponent && !bHasVolume)
+	if (!TargetVolume.IsValid() || !TargetVolumeComponent.IsValid())
 	{
 		return false;
 	}
@@ -652,12 +537,8 @@ void FFluidBrushEditorMode::Tick(FEditorViewportClient* ViewportClient, float De
 {
 	FEdMode::Tick(ViewportClient, DeltaTime);
 
-	// Either Component or Volume must be valid
-	const bool bHasComponent = TargetComponent.IsValid();
-	const bool bHasVolume = TargetVolume.IsValid() && TargetVolumeComponent.IsValid();
-
 	// Target destroyed
-	if (!bHasComponent && !bHasVolume)
+	if (!TargetVolume.IsValid() || !TargetVolumeComponent.IsValid())
 	{
 		UE_LOG(LogTemp, Log, TEXT("Fluid Brush Mode: Target destroyed, exiting"));
 		GetModeManager()->DeactivateMode(EM_FluidBrush);

@@ -10,7 +10,6 @@
 
 class UFluidCollider;
 class UKawaiiFluidInteractionComponent;
-class UKawaiiFluidComponent;
 class UKawaiiFluidSimulationModule;
 
 /**
@@ -253,7 +252,7 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidCollisionEvent
 	TObjectPtr<AActor> HitActor = nullptr;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Collision")
-	TObjectPtr<UKawaiiFluidComponent> SourceComponent = nullptr;
+	TObjectPtr<UKawaiiFluidSimulationModule> SourceModule = nullptr;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Collision")
 	TObjectPtr<UKawaiiFluidInteractionComponent> HitInteractionComponent = nullptr;

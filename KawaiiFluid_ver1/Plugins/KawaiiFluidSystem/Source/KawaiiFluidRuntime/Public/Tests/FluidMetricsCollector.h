@@ -8,7 +8,6 @@
 #include "Tests/FluidTestMetrics.h"
 #include "Core/FluidParticle.h"
 
-class UKawaiiFluidComponent;
 class UKawaiiFluidSimulationModule;
 
 /**
@@ -162,14 +161,6 @@ public:
 
 		return Metrics;
 	}
-
-	/**
-	 * Collect metrics from a fluid component
-	 *
-	 * @param Component The fluid component
-	 * @return Collected metrics
-	 */
-	static FFluidTestMetrics CollectFromComponent(const UKawaiiFluidComponent* Component);
 
 	/**
 	 * Collect metrics from a simulation module

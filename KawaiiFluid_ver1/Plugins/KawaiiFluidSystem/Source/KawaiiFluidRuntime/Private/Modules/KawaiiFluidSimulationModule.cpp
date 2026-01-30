@@ -4,7 +4,6 @@
 #include "Core/SpatialHash.h"
 #include "Collision/FluidCollider.h"
 #include "Components/KawaiiFluidInteractionComponent.h"
-#include "Components/KawaiiFluidComponent.h"
 #include "Components/KawaiiFluidVolumeComponent.h"
 #include "Actors/KawaiiFluidVolume.h"
 #include "Data/KawaiiFluidPresetDataAsset.h"
@@ -455,16 +454,7 @@ FKawaiiFluidSimulationParams UKawaiiFluidSimulationModule::BuildSimulationParams
 	Params.bUseWorldCollision = bUseWorldCollision;
 
 	// Get owner component for simulation origin and static boundary settings
-	if (UKawaiiFluidComponent* OwnerComp = Cast<UKawaiiFluidComponent>(GetOuter()))
-	{
-		// Set simulation origin for bounds offset (preset bounds are relative to component)
-		Params.SimulationOrigin = OwnerComp->GetComponentLocation();
-
-		// Static boundary particles (Akinci 2012) - density contribution from walls/floors
-		Params.bEnableStaticBoundaryParticles = OwnerComp->bEnableStaticBoundaryParticles;
-		Params.StaticBoundaryParticleSpacing = OwnerComp->StaticBoundaryParticleSpacing;
-	}
-	else if (UKawaiiFluidVolumeComponent* VolumeComp = GetTargetVolumeComponent())
+	if (UKawaiiFluidVolumeComponent* VolumeComp = GetTargetVolumeComponent())
 	{
 		// Volume-based simulation: use VolumeComponent's static boundary settings
 		Params.SimulationOrigin = VolumeComp->GetComponentLocation();
@@ -606,8 +596,6 @@ void UKawaiiFluidSimulationModule::ProcessCollisionFeedback(
 		return;
 	}
 
-	// Cache SourceComponent
-	UKawaiiFluidComponent* OwnerComponent = GetTypedOuter<UKawaiiFluidComponent>();
 	const float CurrentTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 	int32 EventCount = 0;
 
@@ -659,7 +647,7 @@ void UKawaiiFluidSimulationModule::ProcessCollisionFeedback(
 			Event.HitLocation = FVector(Feedback.ImpactNormal * (-Feedback.Penetration));
 			Event.HitNormal = FVector(Feedback.ImpactNormal);
 			Event.HitSpeed = HitSpeed;
-			Event.SourceComponent = OwnerComponent;
+			Event.SourceModule = const_cast<UKawaiiFluidSimulationModule*>(this);
 
 			// IC lookup (O(1))
 			if (const UKawaiiFluidInteractionComponent* const* FoundIC = OwnerIDToIC.Find(Feedback.ColliderOwnerID))
@@ -703,7 +691,7 @@ void UKawaiiFluidSimulationModule::ProcessCollisionFeedback(
 
 		// Copy event and set additional information
 		FKawaiiFluidCollisionEvent Event = BufferEvent;
-		Event.SourceComponent = OwnerComponent;
+		Event.SourceModule = const_cast<UKawaiiFluidSimulationModule*>(this);
 
 		// IC lookup (O(1)) - CPU buffer may not have IC
 		if (!Event.HitInteractionComponent && Event.ColliderOwnerID >= 0)

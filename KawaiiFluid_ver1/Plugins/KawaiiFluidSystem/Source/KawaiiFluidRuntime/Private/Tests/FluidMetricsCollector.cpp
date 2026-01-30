@@ -1,28 +1,8 @@
 ﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #include "Tests/FluidMetricsCollector.h"
-#include "Components/KawaiiFluidComponent.h"
 #include "Modules/KawaiiFluidSimulationModule.h"
 #include "Data/KawaiiFluidPresetDataAsset.h"
-
-FFluidTestMetrics FFluidMetricsCollector::CollectFromComponent(const UKawaiiFluidComponent* Component)
-{
-	FFluidTestMetrics Metrics;
-
-	if (!Component)
-	{
-		return Metrics;
-	}
-
-	// Get simulation module from component
-	const UKawaiiFluidSimulationModule* Module = Component->GetSimulationModule();
-	if (!Module)
-	{
-		return Metrics;
-	}
-
-	return CollectFromModule(Module);
-}
 
 FFluidTestMetrics FFluidMetricsCollector::CollectFromModule(const UKawaiiFluidSimulationModule* Module)
 {

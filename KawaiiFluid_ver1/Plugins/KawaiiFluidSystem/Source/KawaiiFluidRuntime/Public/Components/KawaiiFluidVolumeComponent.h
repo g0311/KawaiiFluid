@@ -176,6 +176,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume|Rendering", meta = (EditCondition = "bEnableShadow"))
 	EFluidShadowMeshQuality ShadowMeshQuality = EFluidShadowMeshQuality::Medium;
 
+	/** Maximum distance from camera for shadow rendering (cm).
+	 * Particles beyond this distance will skip GPU readback for shadow ISM.
+	 * Set to 0 to use DirectionalLight's DynamicShadowDistance automatically. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume|Rendering", meta = (EditCondition = "bEnableShadow", ClampMin = "0"))
+	float ShadowCullDistance = 0.0f;
+
 	//========================================
 	// Splash VFX
 	//========================================

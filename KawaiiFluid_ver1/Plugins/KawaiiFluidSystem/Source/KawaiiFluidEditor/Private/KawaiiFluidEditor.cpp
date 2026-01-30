@@ -4,9 +4,7 @@
 #include "Style/FluidEditorStyle.h"
 #include "AssetTypeActions/AssetTypeActions_FluidPreset.h"
 #include "Brush/FluidBrushEditorMode.h"
-#include "Details/FluidComponentDetails.h"
 #include "Details/FluidVolumeComponentDetails.h"
-#include "Components/KawaiiFluidComponent.h"
 #include "Components/KawaiiFluidVolumeComponent.h"
 
 #include "IAssetTools.h"
@@ -135,12 +133,6 @@ void FKawaiiFluidEditorModule::RegisterPropertyCustomizations()
 {
 	FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
 
-	// Register KawaiiFluidComponent detail customization
-	PropertyModule.RegisterCustomClassLayout(
-		UKawaiiFluidComponent::StaticClass()->GetFName(),
-		FOnGetDetailCustomizationInstance::CreateStatic(&FFluidComponentDetails::MakeInstance)
-	);
-
 	// Register KawaiiFluidVolumeComponent detail customization
 	PropertyModule.RegisterCustomClassLayout(
 		UKawaiiFluidVolumeComponent::StaticClass()->GetFName(),
@@ -153,7 +145,6 @@ void FKawaiiFluidEditorModule::UnregisterPropertyCustomizations()
 	if (FModuleManager::Get().IsModuleLoaded("PropertyEditor"))
 	{
 		FPropertyEditorModule& PropertyModule = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor");
-		PropertyModule.UnregisterCustomClassLayout(UKawaiiFluidComponent::StaticClass()->GetFName());
 		PropertyModule.UnregisterCustomClassLayout(UKawaiiFluidVolumeComponent::StaticClass()->GetFName());
 	}
 }

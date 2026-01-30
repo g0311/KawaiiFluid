@@ -4,7 +4,6 @@
 #include "Core/KawaiiFluidSimulationContext.h"
 #include "Core/SpatialHash.h"
 #include "Data/KawaiiFluidPresetDataAsset.h"
-#include "Components/KawaiiFluidComponent.h"
 #include "Components/KawaiiFluidVolumeComponent.h"
 #include "Actors/KawaiiFluidVolume.h"
 #include "Modules/KawaiiFluidSimulationModule.h"
@@ -92,7 +91,6 @@ void UKawaiiFluidSimulatorSubsystem::Deinitialize()
 	AllModules.Empty();
 	AllVolumes.Empty();
 	AllVolumeComponents.Empty();
-	AllFluidComponents.Empty();
 	GlobalColliders.Empty();
 	GlobalInteractionComponents.Empty();
 	ContextCache.Empty();
@@ -233,19 +231,7 @@ void UKawaiiFluidSimulatorSubsystem::RegisterModule(UKawaiiFluidSimulationModule
 
 				// Connect MetaballRenderer to SimulationContext
 				// Same Context → Same RenderResource → Single Draw Call
-				if (UKawaiiFluidComponent* OwnerComp = Cast<UKawaiiFluidComponent>(Module->GetOuter()))
-				{
-					if (UKawaiiFluidRenderingModule* RenderingMod = OwnerComp->GetRenderingModule())
-					{
-						if (UKawaiiFluidMetaballRenderer* MR = RenderingMod->GetMetaballRenderer())
-						{
-							MR->SetSimulationContext(Context);
-							UE_LOG(LogTemp, Log, TEXT("SimulationModule: Connected MetaballRenderer to Context (Component)"));
-						}
-					}
-				}
-				// Support for AKawaiiFluidVolume (new architecture)
-				else if (AKawaiiFluidVolume* OwnerVolume = Cast<AKawaiiFluidVolume>(Module->GetOuter()))
+				if (AKawaiiFluidVolume* OwnerVolume = Cast<AKawaiiFluidVolume>(Module->GetOuter()))
 				{
 					if (UKawaiiFluidRenderingModule* RenderingMod = OwnerVolume->GetRenderingModule())
 					{
@@ -321,30 +307,7 @@ void UKawaiiFluidSimulatorSubsystem::ReleaseSourceID(int32 SourceID)
 }
 
 //========================================
-// Component Registration (Deprecated)
-//========================================
-
-void UKawaiiFluidSimulatorSubsystem::RegisterComponent(UKawaiiFluidComponent* Component)
-{
-	if (Component && !AllFluidComponents.Contains(Component))
-	{
-		AllFluidComponents.Add(Component);
-		UE_LOG(LogTemp, Verbose, TEXT("FluidComponent registered: %s"), *Component->GetName());
-	}
-}
-
-void UKawaiiFluidSimulatorSubsystem::UnregisterComponent(UKawaiiFluidComponent* Component)
-{
-	AllFluidComponents.Remove(Component);
-	UE_LOG(LogTemp, Verbose, TEXT("FluidComponent unregistered: %s"), Component ? *Component->GetName() : TEXT("nullptr"));
-}
-
-//========================================
-// Volume Component Registration
-//========================================
-
-//========================================
-// Volume Actor Registration (New Architecture)
+// Volume Actor Registration
 //========================================
 
 void UKawaiiFluidSimulatorSubsystem::RegisterVolume(AKawaiiFluidVolume* Volume)
@@ -424,15 +387,14 @@ TArray<FFluidParticle> UKawaiiFluidSimulatorSubsystem::GetAllParticlesInRadius(F
 	TArray<FFluidParticle> Result;
 	const float RadiusSq = Radius * Radius;
 
-	// New modular components
-	for (const UKawaiiFluidComponent* Component : AllFluidComponents)
+	for (const UKawaiiFluidSimulationModule* Module : AllModules)
 	{
-		if (!Component || !Component->GetSimulationModule())
+		if (!Module)
 		{
 			continue;
 		}
 
-		for (const FFluidParticle& Particle : Component->GetSimulationModule()->GetParticles())
+		for (const FFluidParticle& Particle : Module->GetParticles())
 		{
 			if (FVector::DistSquared(Particle.Position, Location) <= RadiusSq)
 			{
@@ -448,12 +410,11 @@ int32 UKawaiiFluidSimulatorSubsystem::GetTotalParticleCount() const
 {
 	int32 Total = 0;
 
-	// New modular components
-	for (const UKawaiiFluidComponent* Component : AllFluidComponents)
+	for (const UKawaiiFluidSimulationModule* Module : AllModules)
 	{
-		if (Component && Component->GetSimulationModule())
+		if (Module)
 		{
-			Total += Component->GetSimulationModule()->GetParticleCount();
+			Total += Module->GetParticleCount();
 		}
 	}
 
@@ -482,16 +443,7 @@ UKawaiiFluidSimulationModule* UKawaiiFluidSimulatorSubsystem::GetModuleBySourceI
 		}
 	}
 
-	// Method 2: Search in AllFluidComponents (legacy UniqueID matching)
-	for (UKawaiiFluidComponent* Component : AllFluidComponents)
-	{
-		if (Component && Component->GetUniqueID() == SourceID)
-		{
-			return Component->GetSimulationModule();
-		}
-	}
-
-	// Method 3: Search in AllModules' Outer(Component) (legacy UniqueID matching)
+	// Method 2: Search in AllModules' Outer (legacy UniqueID matching)
 	for (UKawaiiFluidSimulationModule* Module : AllModules)
 	{
 		if (Module)

@@ -6,7 +6,6 @@
 #include "GameFramework/Actor.h"
 #include "EdMode.h"
 
-class UKawaiiFluidComponent;
 class AKawaiiFluidVolume;
 class UKawaiiFluidVolumeComponent;
 
@@ -46,14 +45,8 @@ public:
 	virtual void Tick(FEditorViewportClient* ViewportClient, float DeltaTime) override;
 	//~ End FEdMode Interface
 
-	/** Set target component (for KawaiiFluidComponent) */
-	void SetTargetComponent(UKawaiiFluidComponent* Component);
-
 	/** Set target volume (for KawaiiFluidVolume) */
 	void SetTargetVolume(AKawaiiFluidVolume* Volume);
-
-	/** Get target component */
-	UKawaiiFluidComponent* GetTargetComponent() const { return TargetComponent.Get(); }
 
 	/** Get target volume */
 	AKawaiiFluidVolume* GetTargetVolume() const { return TargetVolume.Get(); }
@@ -62,9 +55,6 @@ public:
 	bool IsTargetingVolume() const { return TargetVolume.IsValid(); }
 
 private:
-	/** Target fluid component (KawaiiFluidComponent mode) */
-	TWeakObjectPtr<UKawaiiFluidComponent> TargetComponent;
-
 	/** Target volume (KawaiiFluidVolume mode) */
 	TWeakObjectPtr<AKawaiiFluidVolume> TargetVolume;
 

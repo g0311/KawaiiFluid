@@ -10,7 +10,6 @@
 #include "GPU/GPUFluidParticle.h"
 #include "KawaiiFluidSimulatorSubsystem.generated.h"
 
-class UKawaiiFluidComponent;
 class UKawaiiFluidSimulationModule;
 class UKawaiiFluidSimulationContext;
 class UKawaiiFluidPresetDataAsset;
@@ -21,7 +20,6 @@ class UFluidCollider;
 class UKawaiiFluidInteractionComponent;
 class AActor;
 class ULevel;
-// EFluidType is now defined in KawaiiFluidSimulationTypes.h (included above)
 class FSpatialHash;
 struct FFluidParticle;
 class FGPUFluidSimulator;
@@ -147,19 +145,6 @@ public:
 	const TArray<TObjectPtr<UKawaiiFluidVolumeComponent>>& GetAllVolumeComponents() const { return AllVolumeComponents; }
 
 	//========================================
-	// Component Registration (for backward compatibility)
-	//========================================
-
-	/** Register fluid component (deprecated - use RegisterModule) */
-	void RegisterComponent(UKawaiiFluidComponent* Component);
-
-	/** Unregister fluid component (deprecated - use UnregisterModule) */
-	void UnregisterComponent(UKawaiiFluidComponent* Component);
-
-	/** Get all registered components (deprecated) */
-	const TArray<TObjectPtr<UKawaiiFluidComponent>>& GetAllFluidComponents() const { return AllFluidComponents; }
-
-	//========================================
 	// Global Colliders
 	//========================================
 
@@ -199,9 +184,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "KawaiiFluid|Query")
 	int32 GetTotalParticleCount() const;
 
-	/** Get component count */
+	/** Get module count */
 	UFUNCTION(BlueprintCallable, Category = "KawaiiFluid|Query")
-	int32 GetComponentCount() const { return AllFluidComponents.Num(); }
+	int32 GetModuleCount() const { return AllModules.Num(); }
 
 	/**
 	 * Get Preset by SourceID (for collision event filtering)
@@ -278,10 +263,6 @@ private:
 	//========================================
 	// Component Management (Deprecated)
 	//========================================
-
-	/** All registered modular components (deprecated - kept for backward compatibility) */
-	UPROPERTY()
-	TArray<TObjectPtr<UKawaiiFluidComponent>> AllFluidComponents;
 
 	/** Global colliders */
 	UPROPERTY()

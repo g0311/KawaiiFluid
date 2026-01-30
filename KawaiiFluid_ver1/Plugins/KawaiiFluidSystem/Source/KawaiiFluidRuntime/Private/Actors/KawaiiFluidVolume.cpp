@@ -16,6 +16,10 @@
 #include "DrawDebugHelpers.h"
 #include "NiagaraFunctionLibrary.h"
 #include "Engine/World.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Components/DirectionalLightComponent.h"
+#include "Engine/DirectionalLight.h"
+#include "EngineUtils.h"
 #include "Async/ParallelFor.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "Components/StaticMeshComponent.h"
@@ -290,9 +294,49 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 			// 2. SplashVFX assigned (needs velocity/neighbor data)
 			// 3. Debug visualization enabled (needs particle flags for debug draw)
 			UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>();
-			const bool bNeedShadow = RendererSubsystem &&
-			                         RendererSubsystem->bEnableISMShadow &&
-			                         VolumeComponent->bEnableShadow;
+			bool bNeedShadow = RendererSubsystem &&
+			                   RendererSubsystem->bEnableISMShadow &&
+			                   VolumeComponent->bEnableShadow;
+
+			// Distance-based shadow culling
+			if (bNeedShadow)
+			{
+				// Determine effective shadow distance
+				float EffectiveShadowDistance = VolumeComponent->ShadowCullDistance;
+				if (EffectiveShadowDistance <= 0.0f)
+				{
+					// Auto: Get shadow distance from DirectionalLight
+					for (TActorIterator<ADirectionalLight> It(World); It; ++It)
+					{
+						if (UDirectionalLightComponent* Light = Cast<UDirectionalLightComponent>(It->GetLightComponent()))
+						{
+							if (Light->CastShadows)
+							{
+								EffectiveShadowDistance = (Light->Mobility == EComponentMobility::Movable)
+									? Light->DynamicShadowDistanceMovableLight
+									: Light->DynamicShadowDistanceStationaryLight;
+								break;
+							}
+						}
+					}
+				}
+
+				// Perform distance culling if we have a valid shadow distance
+				if (EffectiveShadowDistance > 0.0f)
+				{
+					if (APlayerCameraManager* CameraManager = World->GetFirstPlayerController() ? World->GetFirstPlayerController()->PlayerCameraManager : nullptr)
+					{
+						const FVector CameraLocation = CameraManager->GetCameraLocation();
+						const FBoxSphereBounds VolumeBounds = VolumeComponent->Bounds;
+
+						// Distance from camera to nearest point of bounds sphere
+						const float DistToBounds = FMath::Max(0.0f,
+							FVector::Dist(CameraLocation, VolumeBounds.Origin) - VolumeBounds.SphereRadius);
+
+						bNeedShadow = (DistToBounds < EffectiveShadowDistance);
+					}
+				}
+			}
 			const bool bNeedVFX = VolumeComponent->SplashVFX != nullptr;
 			const bool bNeedDebug = VolumeComponent->DebugDrawMode == EKawaiiFluidDebugDrawMode::DebugDraw;
 			const bool bNeedReadback = bNeedShadow || bNeedVFX || bNeedDebug;

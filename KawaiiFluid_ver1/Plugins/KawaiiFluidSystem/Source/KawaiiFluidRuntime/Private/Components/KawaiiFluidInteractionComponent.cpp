@@ -1,7 +1,6 @@
 ﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #include "Components/KawaiiFluidInteractionComponent.h"
-#include "Components/KawaiiFluidComponent.h"
 #include "Core/KawaiiFluidSimulatorSubsystem.h"
 #include "Data/KawaiiFluidPresetDataAsset.h"
 #include "Collision/MeshFluidCollider.h"
