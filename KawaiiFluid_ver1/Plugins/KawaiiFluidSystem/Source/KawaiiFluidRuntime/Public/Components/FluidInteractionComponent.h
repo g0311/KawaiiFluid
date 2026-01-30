@@ -850,6 +850,9 @@ private:
 	/** Sample box collider surface. */
 	void SampleBoxSurface(const struct FKBoxElem& Box, int32 BoneIndex);
 
+	/** Sample convex collider surface (triangulated mesh). */
+	void SampleConvexSurface(const struct FKConvexElem& Convex, int32 BoneIndex);
+
 	/** Sample hemisphere surface (capsule top/bottom). */
 	void SampleHemisphere(const FTransform& Transform, float Radius, float ZOffset,
 	                      int32 ZDirection, int32 BoneIndex, int32 NumSamples);

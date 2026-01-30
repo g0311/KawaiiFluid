@@ -1763,9 +1763,10 @@ void UFluidInteractionComponent::GenerateBoundaryParticles()
 
 			if (!BodySetup || (BodySetup->AggGeom.SphereElems.Num() == 0 &&
 			                   BodySetup->AggGeom.SphylElems.Num() == 0 &&
-			                   BodySetup->AggGeom.BoxElems.Num() == 0))
+			                   BodySetup->AggGeom.BoxElems.Num() == 0 &&
+			                   BodySetup->AggGeom.ConvexElems.Num() == 0))
 			{
-				UE_LOG(LogTemp, Warning, TEXT("FluidInteraction: No Simple Collision (Sphere/Capsule/Box) found for StaticMesh '%s'. Boundary particles not generated."),
+				UE_LOG(LogTemp, Warning, TEXT("FluidInteraction: No Simple Collision (Sphere/Capsule/Box/Convex) found for StaticMesh '%s'. Boundary particles not generated."),
 					*StaticMesh->GetName());
 				return;
 			}
@@ -2216,6 +2217,111 @@ void UFluidInteractionComponent::SampleBoxSurface(const FKBoxElem& Box, int32 Bo
 	}
 }
 
+void UFluidInteractionComponent::SampleConvexSurface(const FKConvexElem& Convex, int32 BoneIndex)
+{
+	// Get convex hull vertex data
+	const TArray<FVector>& Vertices = Convex.VertexData;
+	const TArray<int32>& Indices = Convex.IndexData;
+
+	if (Vertices.Num() < 3 || Indices.Num() < 3)
+	{
+		return;
+	}
+
+	FTransform ConvexTransform = Convex.GetTransform();
+
+	// Calculate total surface area and collect triangles
+	struct FTriangle
+	{
+		FVector V0, V1, V2;
+		FVector Normal;
+		float Area;
+	};
+
+	TArray<FTriangle> Triangles;
+	float TotalArea = 0.0f;
+
+	// Process triangles from index buffer
+	for (int32 i = 0; i + 2 < Indices.Num(); i += 3)
+	{
+		int32 I0 = Indices[i];
+		int32 I1 = Indices[i + 1];
+		int32 I2 = Indices[i + 2];
+
+		if (I0 >= Vertices.Num() || I1 >= Vertices.Num() || I2 >= Vertices.Num())
+		{
+			continue;
+		}
+
+		FTriangle Tri;
+		Tri.V0 = Vertices[I0];
+		Tri.V1 = Vertices[I1];
+		Tri.V2 = Vertices[I2];
+
+		// Calculate normal and area
+		FVector Edge1 = Tri.V1 - Tri.V0;
+		FVector Edge2 = Tri.V2 - Tri.V0;
+		FVector CrossProduct = FVector::CrossProduct(Edge1, Edge2);
+		float CrossLength = CrossProduct.Size();
+
+		if (CrossLength < KINDA_SMALL_NUMBER)
+		{
+			continue; // Degenerate triangle
+		}
+
+		Tri.Normal = CrossProduct / CrossLength;
+		Tri.Area = CrossLength * 0.5f;
+		TotalArea += Tri.Area;
+
+		Triangles.Add(Tri);
+	}
+
+	if (Triangles.Num() == 0 || TotalArea < KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	// Calculate total samples based on area
+	float SpacingSq = BoundaryParticleSpacing * BoundaryParticleSpacing;
+	int32 TotalSamples = FMath::Max(12, FMath::CeilToInt(TotalArea / SpacingSq));
+	TotalSamples = FMath::Min(TotalSamples, 2000); // Cap for performance
+
+	// Distribute samples across triangles based on area ratio
+	for (const FTriangle& Tri : Triangles)
+	{
+		float AreaRatio = Tri.Area / TotalArea;
+		int32 TriSamples = FMath::Max(1, FMath::RoundToInt(TotalSamples * AreaRatio));
+
+		// Sample triangle using barycentric coordinates
+		for (int32 s = 0; s < TriSamples; ++s)
+		{
+			// Generate uniform random point in triangle using sqrt method
+			float u = FMath::FRand();
+			float v = FMath::FRand();
+
+			// Ensure point is in triangle (fold if outside)
+			if (u + v > 1.0f)
+			{
+				u = 1.0f - u;
+				v = 1.0f - v;
+			}
+
+			float w = 1.0f - u - v;
+
+			FVector LocalPoint = Tri.V0 * w + Tri.V1 * u + Tri.V2 * v;
+			FVector LocalNormal = Tri.Normal;
+
+			// Transform to bone-local space
+			FVector BoneLocalPos = ConvexTransform.TransformPosition(LocalPoint);
+			FVector BoneLocalNormal = ConvexTransform.TransformVectorNoScale(LocalNormal);
+
+			BoundaryParticleLocalPositions.Add(BoneLocalPos);
+			BoundaryParticleBoneIndices.Add(BoneIndex);
+			BoundaryParticleLocalNormals.Add(BoneLocalNormal);
+		}
+	}
+}
+
 void UFluidInteractionComponent::SampleAggGeomSurfaces(const FKAggregateGeom& AggGeom, int32 BoneIndex)
 {
 	// Sphere colliders
@@ -2234,6 +2340,12 @@ void UFluidInteractionComponent::SampleAggGeomSurfaces(const FKAggregateGeom& Ag
 	for (const FKBoxElem& Box : AggGeom.BoxElems)
 	{
 		SampleBoxSurface(Box, BoneIndex);
+	}
+
+	// Convex colliders
+	for (const FKConvexElem& Convex : AggGeom.ConvexElems)
+	{
+		SampleConvexSurface(Convex, BoneIndex);
 	}
 }
 
