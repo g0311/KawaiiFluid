@@ -9,7 +9,7 @@
 #include "KawaiiFluidSimulationTypes.generated.h"
 
 class UFluidCollider;
-class UFluidInteractionComponent;
+class UKawaiiFluidInteractionComponent;
 class UKawaiiFluidComponent;
 class UKawaiiFluidSimulationModule;
 
@@ -256,7 +256,7 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidCollisionEvent
 	TObjectPtr<UKawaiiFluidComponent> SourceComponent = nullptr;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Collision")
-	TObjectPtr<UFluidInteractionComponent> HitInteractionComponent = nullptr;
+	TObjectPtr<UKawaiiFluidInteractionComponent> HitInteractionComponent = nullptr;
 
 	// Collision data
 	UPROPERTY(BlueprintReadOnly, Category = "Collision")
@@ -300,7 +300,7 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidSimulationParams
 
 	/** Registered interaction components */
 	UPROPERTY(BlueprintReadWrite, Category = "Simulation")
-	TArray<TObjectPtr<UFluidInteractionComponent>> InteractionComponents;
+	TArray<TObjectPtr<UKawaiiFluidInteractionComponent>> InteractionComponents;
 
 	/** World reference for collision queries */
 	UPROPERTY(BlueprintReadWrite, Category = "Simulation")

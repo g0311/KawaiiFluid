@@ -3,7 +3,7 @@
 #include "Components/KawaiiFluidComponent.h"
 #include "Components/KawaiiFluidVolumeComponent.h"
 #include "Actors/KawaiiFluidVolume.h"
-#include "Components/FluidInteractionComponent.h"
+#include "Components/KawaiiFluidInteractionComponent.h"
 #include "Core/KawaiiFluidSimulatorSubsystem.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
 #include "Core/KawaiiFluidSimulationContext.h"
@@ -31,10 +31,10 @@ UKawaiiFluidComponent::UKawaiiFluidComponent()
 	bTickInEditor = true;  // Execute Tick in editor as well (for brush rendering)
 
 	// Create simulation module
-	SimulationModule = CreateDefaultSubobject<UKawaiiFluidSimulationModule>(TEXT("SimulationModule"));
+	SimulationModule = CreateDefaultSubobject<UKawaiiFluidSimulationModule>(TEXT("KawaiiFluidSimulationModule"));
 
 	// Create rendering module`
-	RenderingModule = CreateDefaultSubobject<UKawaiiFluidRenderingModule>(TEXT("RenderingModule"));
+	RenderingModule = CreateDefaultSubobject<UKawaiiFluidRenderingModule>(TEXT("KawaiiFluidRenderingModule"));
 }
 
 #if WITH_EDITOR

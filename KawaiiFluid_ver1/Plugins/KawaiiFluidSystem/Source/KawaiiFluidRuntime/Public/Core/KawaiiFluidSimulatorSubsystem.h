@@ -6,7 +6,7 @@
 #include "Subsystems/WorldSubsystem.h"
 #include "Engine/EngineBaseTypes.h"  // For ELevelTick
 #include "Core/KawaiiFluidSimulationTypes.h"
-#include "Components/FluidInteractionComponent.h"
+#include "Components/KawaiiFluidInteractionComponent.h"
 #include "GPU/GPUFluidParticle.h"
 #include "KawaiiFluidSimulatorSubsystem.generated.h"
 
@@ -18,7 +18,7 @@ class UKawaiiFluidVolumeComponent;
 class AKawaiiFluidVolume;
 class AKawaiiFluidEmitter;
 class UFluidCollider;
-class UFluidInteractionComponent;
+class UKawaiiFluidInteractionComponent;
 class AActor;
 class ULevel;
 // EFluidType is now defined in KawaiiFluidSimulationTypes.h (included above)
@@ -179,13 +179,13 @@ public:
 	//========================================
 
 	/** Register global interaction component (for bone tracking) */
-	void RegisterGlobalInteractionComponent(UFluidInteractionComponent* Component);
+	void RegisterGlobalInteractionComponent(UKawaiiFluidInteractionComponent* Component);
 
 	/** Unregister global interaction component */
-	void UnregisterGlobalInteractionComponent(UFluidInteractionComponent* Component);
+	void UnregisterGlobalInteractionComponent(UKawaiiFluidInteractionComponent* Component);
 
 	/** Get all global interaction components */
-	const TArray<TObjectPtr<UFluidInteractionComponent>>& GetGlobalInteractionComponents() const { return GlobalInteractionComponents; }
+	const TArray<TObjectPtr<UKawaiiFluidInteractionComponent>>& GetGlobalInteractionComponents() const { return GlobalInteractionComponents; }
 
 	//========================================
 	// Query API
@@ -289,7 +289,7 @@ private:
 
 	/** Global interaction components */
 	UPROPERTY()
-	TArray<TObjectPtr<UFluidInteractionComponent>> GlobalInteractionComponents;
+	TArray<TObjectPtr<UKawaiiFluidInteractionComponent>> GlobalInteractionComponents;
 
 	/** Context cache (Preset + VolumeComponent -> Instance) */
 	UPROPERTY()

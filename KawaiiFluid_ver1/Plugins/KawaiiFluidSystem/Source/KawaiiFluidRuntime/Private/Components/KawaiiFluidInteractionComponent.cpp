@@ -1,6 +1,6 @@
 ﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
-#include "Components/FluidInteractionComponent.h"
+#include "Components/KawaiiFluidInteractionComponent.h"
 #include "Components/KawaiiFluidComponent.h"
 #include "Core/KawaiiFluidSimulatorSubsystem.h"
 #include "Data/KawaiiFluidPresetDataAsset.h"
@@ -21,7 +21,7 @@
 #include "PhysicsEngine/BodySetup.h"
 #include "PhysicsEngine/SkeletalBodySetup.h"
 
-UFluidInteractionComponent::UFluidInteractionComponent()
+UKawaiiFluidInteractionComponent::UKawaiiFluidInteractionComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 
@@ -34,7 +34,7 @@ UFluidInteractionComponent::UFluidInteractionComponent()
 	AutoCollider = nullptr;
 }
 
-void UFluidInteractionComponent::OnRegister()
+void UKawaiiFluidInteractionComponent::OnRegister()
 {
 	Super::OnRegister();
 
@@ -58,7 +58,7 @@ void UFluidInteractionComponent::OnRegister()
 #endif
 }
 
-void UFluidInteractionComponent::OnUnregister()
+void UKawaiiFluidInteractionComponent::OnUnregister()
 {
 #if WITH_EDITOR
 	UWorld* World = GetWorld();
@@ -71,7 +71,7 @@ void UFluidInteractionComponent::OnUnregister()
 	Super::OnUnregister();
 }
 
-void UFluidInteractionComponent::BeginPlay()
+void UKawaiiFluidInteractionComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
@@ -99,14 +99,14 @@ void UFluidInteractionComponent::BeginPlay()
 	}
 }
 
-void UFluidInteractionComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+void UKawaiiFluidInteractionComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	UnregisterFromSimulator();
 
 	Super::EndPlay(EndPlayReason);
 }
 
-void UFluidInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+void UKawaiiFluidInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
@@ -145,7 +145,7 @@ void UFluidInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickT
 	}
 }
 
-void UFluidInteractionComponent::CreateAutoCollider()
+void UKawaiiFluidInteractionComponent::CreateAutoCollider()
 {
 	AActor* Owner = GetOwner();
 	if (!Owner)
@@ -186,7 +186,7 @@ void UFluidInteractionComponent::CreateAutoCollider()
 	}
 }
 
-void UFluidInteractionComponent::RegisterWithSimulator()
+void UKawaiiFluidInteractionComponent::RegisterWithSimulator()
 {
 	if (TargetSubsystem)
 	{
@@ -198,7 +198,7 @@ void UFluidInteractionComponent::RegisterWithSimulator()
 	}
 }
 
-void UFluidInteractionComponent::UnregisterFromSimulator()
+void UKawaiiFluidInteractionComponent::UnregisterFromSimulator()
 {
 	if (TargetSubsystem)
 	{
@@ -210,7 +210,7 @@ void UFluidInteractionComponent::UnregisterFromSimulator()
 	}
 }
 
-void UFluidInteractionComponent::DetachAllFluid()
+void UKawaiiFluidInteractionComponent::DetachAllFluid()
 {
 	AActor* Owner = GetOwner();
 
@@ -239,7 +239,7 @@ void UFluidInteractionComponent::DetachAllFluid()
 
 }
 
-void UFluidInteractionComponent::PushFluid(FVector Direction, float Force)
+void UKawaiiFluidInteractionComponent::PushFluid(FVector Direction, float Force)
 {
 	AActor* Owner = GetOwner();
 	if (!Owner) return;
@@ -283,7 +283,7 @@ void UFluidInteractionComponent::PushFluid(FVector Direction, float Force)
 // GPU Collision Feedback Implementation (Particle -> Player Interaction)
 //=============================================================================
 
-void UFluidInteractionComponent::ProcessCollisionFeedback(float DeltaTime)
+void UKawaiiFluidInteractionComponent::ProcessCollisionFeedback(float DeltaTime)
 {
 	AActor* Owner = GetOwner();
 	const int32 MyOwnerID = Owner ? Owner->GetUniqueID() : 0;
@@ -295,7 +295,7 @@ void UFluidInteractionComponent::ProcessCollisionFeedback(float DeltaTime)
 		CurrentFluidForce = SmoothedForce;
 		CurrentContactCount = 0;
 		CurrentAveragePressure = 0.0f;
-		// 서서히 감쇠 (급격한 변화 방지)
+		// Gradual decay (prevents sudden changes)
 		EstimatedBuoyancyCenterOffset = FMath::VInterpTo(
 			EstimatedBuoyancyCenterOffset, FVector::ZeroVector, DeltaTime, 2.0f);
 		return;
@@ -321,7 +321,7 @@ void UFluidInteractionComponent::ProcessCollisionFeedback(float DeltaTime)
 		CurrentFluidForce = SmoothedForce;
 		CurrentContactCount = 0;
 		CurrentAveragePressure = 0.0f;
-		// 서서히 감쇠 (급격한 변화 방지)
+		// Gradual decay (prevents sudden changes)
 		EstimatedBuoyancyCenterOffset = FMath::VInterpTo(
 			EstimatedBuoyancyCenterOffset, FVector::ZeroVector, DeltaTime, 2.0f);
 		return;
@@ -363,11 +363,11 @@ void UFluidInteractionComponent::ProcessCollisionFeedback(float DeltaTime)
 		int32 FeedbackCount = 0;
 		GPUSimulator->GetAllCollisionFeedback(AllFeedback, FeedbackCount);
 
-		// Debug: 피드백 수신 확인 + ColliderOwnerID 샘플
+		// Debug: Verify feedback reception + ColliderOwnerID sample
 		static int32 FeedbackDebugCounter = 0;
 		if (++FeedbackDebugCounter % 60 == 0)
 		{
-			// 첫 5개 피드백의 ColliderOwnerID 확인
+			// Check ColliderOwnerID of first 5 feedback entries
 			FString OwnerIDSample;
 			for (int32 i = 0; i < FMath::Min(5, FeedbackCount); ++i)
 			{
@@ -596,7 +596,7 @@ void UFluidInteractionComponent::ProcessCollisionFeedback(float DeltaTime)
 	UpdateFluidTagEvents();
 }
 
-void UFluidInteractionComponent::UpdateFluidTagEvents()
+void UKawaiiFluidInteractionComponent::UpdateFluidTagEvents()
 {
 	// Check tags colliding with enough particles in current frame
 	TSet<FName> CurrentlyColliding;
@@ -639,7 +639,7 @@ void UFluidInteractionComponent::UpdateFluidTagEvents()
 	}
 }
 
-void UFluidInteractionComponent::CheckBoneImpacts()
+void UKawaiiFluidInteractionComponent::CheckBoneImpacts()
 {
 	// Skip check if MonitoredBones is empty
 	if (MonitoredBones.Num() == 0)
@@ -727,7 +727,7 @@ void UFluidInteractionComponent::CheckBoneImpacts()
 	}
 }
 
-void UFluidInteractionComponent::ApplyFluidForceToCharacterMovement(float ForceScale)
+void UKawaiiFluidInteractionComponent::ApplyFluidForceToCharacterMovement(float ForceScale)
 {
 	AActor* Owner = GetOwner();
 	if (!Owner)
@@ -749,13 +749,13 @@ void UFluidInteractionComponent::ApplyFluidForceToCharacterMovement(float ForceS
 	}
 }
 
-bool UFluidInteractionComponent::IsCollidingWithFluidTag(FName FluidTag) const
+bool UKawaiiFluidInteractionComponent::IsCollidingWithFluidTag(FName FluidTag) const
 {
 	const bool* bIsColliding = PreviousFluidTagStates.Find(FluidTag);
 	return bIsColliding && *bIsColliding;
 }
 
-float UFluidInteractionComponent::GetFluidImpactSpeed() const
+float UKawaiiFluidInteractionComponent::GetFluidImpactSpeed() const
 {
 	if (!TargetSubsystem)
 	{
@@ -789,7 +789,7 @@ float UFluidInteractionComponent::GetFluidImpactSpeed() const
 	return (TotalFeedbackCount > 0) ? (TotalSpeed / TotalFeedbackCount) : 0.0f;
 }
 
-float UFluidInteractionComponent::GetFluidImpactForceMagnitude() const
+float UKawaiiFluidInteractionComponent::GetFluidImpactForceMagnitude() const
 {
 	if (!TargetSubsystem)
 	{
@@ -826,7 +826,7 @@ float UFluidInteractionComponent::GetFluidImpactForceMagnitude() const
 	return TotalForceMagnitude;
 }
 
-FVector UFluidInteractionComponent::GetFluidImpactDirection() const
+FVector UKawaiiFluidInteractionComponent::GetFluidImpactDirection() const
 {
 	if (!TargetSubsystem)
 	{
@@ -864,7 +864,7 @@ FVector UFluidInteractionComponent::GetFluidImpactDirection() const
 	return FVector::ZeroVector;
 }
 
-float UFluidInteractionComponent::GetFluidImpactSpeedForBone(FName BoneName) const
+float UKawaiiFluidInteractionComponent::GetFluidImpactSpeedForBone(FName BoneName) const
 {
 	if (!TargetSubsystem)
 	{
@@ -923,7 +923,7 @@ float UFluidInteractionComponent::GetFluidImpactSpeedForBone(FName BoneName) con
 	return (TotalFeedbackCount > 0) ? (TotalSpeed / TotalFeedbackCount) : 0.0f;
 }
 
-float UFluidInteractionComponent::GetFluidImpactForceMagnitudeForBone(FName BoneName) const
+float UKawaiiFluidInteractionComponent::GetFluidImpactForceMagnitudeForBone(FName BoneName) const
 {
 	if (!TargetSubsystem)
 	{
@@ -983,7 +983,7 @@ float UFluidInteractionComponent::GetFluidImpactForceMagnitudeForBone(FName Bone
 	return TotalForceMagnitude;
 }
 
-FVector UFluidInteractionComponent::GetFluidImpactDirectionForBone(FName BoneName) const
+FVector UKawaiiFluidInteractionComponent::GetFluidImpactDirectionForBone(FName BoneName) const
 {
 	if (!TargetSubsystem)
 	{
@@ -1051,7 +1051,7 @@ FVector UFluidInteractionComponent::GetFluidImpactDirectionForBone(FName BoneNam
 	return FVector::ZeroVector;
 }
 
-void UFluidInteractionComponent::EnableGPUCollisionFeedbackIfNeeded()
+void UKawaiiFluidInteractionComponent::EnableGPUCollisionFeedbackIfNeeded()
 {
 	// Skip if already enabled
 	if (bGPUFeedbackEnabled)
@@ -1084,7 +1084,7 @@ for (UKawaiiFluidSimulationModule* Module : TargetSubsystem->GetAllModules())
 // Per-Bone Force Implementation
 //=============================================================================
 
-void UFluidInteractionComponent::InitializeBoneNameCache()
+void UKawaiiFluidInteractionComponent::InitializeBoneNameCache()
 {
 	if (bBoneNameCacheInitialized)
 	{
@@ -1115,7 +1115,7 @@ void UFluidInteractionComponent::InitializeBoneNameCache()
 	bBoneNameCacheInitialized = true;
 }
 
-void UFluidInteractionComponent::ProcessPerBoneForces(float DeltaTime, const TArray<FGPUCollisionFeedback>& AllFeedback, int32 FeedbackCount, float ParticleRadius)
+void UKawaiiFluidInteractionComponent::ProcessPerBoneForces(float DeltaTime, const TArray<FGPUCollisionFeedback>& AllFeedback, int32 FeedbackCount, float ParticleRadius)
 {
 	AActor* Owner = GetOwner();
 	const int32 MyOwnerID = Owner ? Owner->GetUniqueID() : 0;
@@ -1323,13 +1323,13 @@ void UFluidInteractionComponent::ProcessPerBoneForces(float DeltaTime, const TAr
 	}
 }
 
-FVector UFluidInteractionComponent::GetFluidForceForBone(int32 BoneIndex) const
+FVector UKawaiiFluidInteractionComponent::GetFluidForceForBone(int32 BoneIndex) const
 {
 	const FVector* Force = CurrentPerBoneForces.Find(BoneIndex);
 	return Force ? *Force : FVector::ZeroVector;
 }
 
-FVector UFluidInteractionComponent::GetFluidForceForBoneByName(FName BoneName) const
+FVector UKawaiiFluidInteractionComponent::GetFluidForceForBoneByName(FName BoneName) const
 {
 	AActor* Owner = GetOwner();
 	if (!Owner)
@@ -1352,7 +1352,7 @@ FVector UFluidInteractionComponent::GetFluidForceForBoneByName(FName BoneName) c
 	return GetFluidForceForBone(BoneIndex);
 }
 
-void UFluidInteractionComponent::GetActiveBoneIndices(TArray<int32>& OutBoneIndices) const
+void UKawaiiFluidInteractionComponent::GetActiveBoneIndices(TArray<int32>& OutBoneIndices) const
 {
 	OutBoneIndices.Empty(CurrentPerBoneForces.Num());
 	for (const auto& Pair : CurrentPerBoneForces)
@@ -1364,7 +1364,7 @@ void UFluidInteractionComponent::GetActiveBoneIndices(TArray<int32>& OutBoneIndi
 	}
 }
 
-bool UFluidInteractionComponent::GetStrongestBoneForce(int32& OutBoneIndex, FVector& OutForce) const
+bool UKawaiiFluidInteractionComponent::GetStrongestBoneForce(int32& OutBoneIndex, FVector& OutForce) const
 {
 	OutBoneIndex = -1;
 	OutForce = FVector::ZeroVector;
@@ -1388,7 +1388,7 @@ bool UFluidInteractionComponent::GetStrongestBoneForce(int32& OutBoneIndex, FVec
 // Bone Collision Events Implementation (for Niagara Spawning)
 //=============================================================================
 
-void UFluidInteractionComponent::ProcessBoneCollisionEvents(float DeltaTime, const TArray<FGPUCollisionFeedback>& AllFeedback, int32 FeedbackCount)
+void UKawaiiFluidInteractionComponent::ProcessBoneCollisionEvents(float DeltaTime, const TArray<FGPUCollisionFeedback>& AllFeedback, int32 FeedbackCount)
 {
 	AActor* Owner = GetOwner();
 	const int32 MyOwnerID = Owner ? Owner->GetUniqueID() : 0;
@@ -1552,13 +1552,13 @@ void UFluidInteractionComponent::ProcessBoneCollisionEvents(float DeltaTime, con
 	}
 }
 
-int32 UFluidInteractionComponent::GetBoneContactCount(int32 BoneIndex) const
+int32 UKawaiiFluidInteractionComponent::GetBoneContactCount(int32 BoneIndex) const
 {
 	const int32* Count = CurrentBoneContactCounts.Find(BoneIndex);
 	return Count ? *Count : 0;
 }
 
-void UFluidInteractionComponent::GetBonesWithContacts(TArray<int32>& OutBoneIndices) const
+void UKawaiiFluidInteractionComponent::GetBonesWithContacts(TArray<int32>& OutBoneIndices) const
 {
 	OutBoneIndices.Empty(CurrentBoneContactCounts.Num());
 	for (const auto& Pair : CurrentBoneContactCounts)
@@ -1570,7 +1570,7 @@ void UFluidInteractionComponent::GetBonesWithContacts(TArray<int32>& OutBoneIndi
 	}
 }
 
-FName UFluidInteractionComponent::GetBoneNameFromIndex(int32 BoneIndex) const
+FName UKawaiiFluidInteractionComponent::GetBoneNameFromIndex(int32 BoneIndex) const
 {
 	// Check cache first
 	const FName* CachedName = BoneIndexToNameCache.Find(BoneIndex);
@@ -1601,7 +1601,7 @@ FName UFluidInteractionComponent::GetBoneNameFromIndex(int32 BoneIndex) const
 	return NAME_None;
 }
 
-USkeletalMeshComponent* UFluidInteractionComponent::GetOwnerSkeletalMesh() const
+USkeletalMeshComponent* UKawaiiFluidInteractionComponent::GetOwnerSkeletalMesh() const
 {
 	AActor* Owner = GetOwner();
 	if (!Owner)
@@ -1612,7 +1612,7 @@ USkeletalMeshComponent* UFluidInteractionComponent::GetOwnerSkeletalMesh() const
 	return Owner->FindComponentByClass<USkeletalMeshComponent>();
 }
 
-bool UFluidInteractionComponent::GetMostContactedBone(int32& OutBoneIndex, int32& OutContactCount) const
+bool UKawaiiFluidInteractionComponent::GetMostContactedBone(int32& OutBoneIndex, int32& OutContactCount) const
 {
 	OutBoneIndex = -1;
 	OutContactCount = 0;
@@ -1633,7 +1633,7 @@ bool UFluidInteractionComponent::GetMostContactedBone(int32& OutBoneIndex, int32
 // Boundary Particles Implementation (Flex-style Adhesion)
 //=============================================================================
 
-void UFluidInteractionComponent::SampleTriangleSurface(const FVector& V0, const FVector& V1, const FVector& V2,
+void UKawaiiFluidInteractionComponent::SampleTriangleSurface(const FVector& V0, const FVector& V1, const FVector& V2,
                                                         float Spacing, TArray<FVector>& OutPoints)
 {
 	// Triangle edge lengths
@@ -1684,7 +1684,7 @@ void UFluidInteractionComponent::SampleTriangleSurface(const FVector& V0, const 
 	}
 }
 
-void UFluidInteractionComponent::GenerateBoundaryParticles()
+void UKawaiiFluidInteractionComponent::GenerateBoundaryParticles()
 {
 	AActor* Owner = GetOwner();
 	if (!Owner)
@@ -1796,7 +1796,7 @@ void UFluidInteractionComponent::GenerateBoundaryParticles()
 	}
 }
 
-void UFluidInteractionComponent::UpdateBoundaryParticlePositions()
+void UKawaiiFluidInteractionComponent::UpdateBoundaryParticlePositions()
 {
 	AActor* Owner = GetOwner();
 	if (!Owner || BoundaryParticlePositions.Num() == 0)
@@ -1859,7 +1859,7 @@ void UFluidInteractionComponent::UpdateBoundaryParticlePositions()
 	}
 }
 
-void UFluidInteractionComponent::DrawDebugBoundaryParticles()
+void UKawaiiFluidInteractionComponent::DrawDebugBoundaryParticles()
 {
 	UWorld* World = GetWorld();
 	if (!World || BoundaryParticlePositions.Num() == 0)
@@ -1906,7 +1906,7 @@ void UFluidInteractionComponent::DrawDebugBoundaryParticles()
 	}
 }
 
-void UFluidInteractionComponent::RegenerateBoundaryParticles()
+void UKawaiiFluidInteractionComponent::RegenerateBoundaryParticles()
 {
 	bBoundaryParticlesInitialized = false;
 	bIsSkeletalMesh = false;
@@ -1923,7 +1923,7 @@ void UFluidInteractionComponent::RegenerateBoundaryParticles()
 	}
 }
 
-void UFluidInteractionComponent::CollectGPUBoundaryParticles(FGPUBoundaryParticles& OutBoundaryParticles) const
+void UKawaiiFluidInteractionComponent::CollectGPUBoundaryParticles(FGPUBoundaryParticles& OutBoundaryParticles) const
 {
 	if (!bBoundaryParticlesInitialized || BoundaryParticlePositions.Num() == 0)
 	{
@@ -1951,7 +1951,7 @@ void UFluidInteractionComponent::CollectGPUBoundaryParticles(FGPUBoundaryParticl
 	}
 }
 
-void UFluidInteractionComponent::CollectLocalBoundaryParticles(TArray<FGPUBoundaryParticleLocal>& OutLocalParticles, float Psi, float Friction) const
+void UKawaiiFluidInteractionComponent::CollectLocalBoundaryParticles(TArray<FGPUBoundaryParticleLocal>& OutLocalParticles, float Psi, float Friction) const
 {
 	if (!bBoundaryParticlesInitialized || BoundaryParticleLocalPositions.Num() == 0)
 	{
@@ -1973,7 +1973,7 @@ void UFluidInteractionComponent::CollectLocalBoundaryParticles(TArray<FGPUBounda
 	}
 }
 
-void UFluidInteractionComponent::CollectBoneTransformsForBoundary(TArray<FMatrix>& OutBoneTransforms, FMatrix& OutComponentTransform) const
+void UKawaiiFluidInteractionComponent::CollectBoneTransformsForBoundary(TArray<FMatrix>& OutBoneTransforms, FMatrix& OutComponentTransform) const
 {
 	AActor* Owner = GetOwner();
 	if (!Owner)
@@ -2024,7 +2024,7 @@ void UFluidInteractionComponent::CollectBoneTransformsForBoundary(TArray<FMatrix
 // Surface Sampling based on Physics Asset / Simple Collision
 //=============================================================================
 
-void UFluidInteractionComponent::SampleSphereSurface(const FKSphereElem& Sphere, int32 BoneIndex, const FTransform& LocalTransform)
+void UKawaiiFluidInteractionComponent::SampleSphereSurface(const FKSphereElem& Sphere, int32 BoneIndex, const FTransform& LocalTransform)
 {
 	float Radius = Sphere.Radius;
 	FVector Center = Sphere.Center;
@@ -2065,7 +2065,7 @@ void UFluidInteractionComponent::SampleSphereSurface(const FKSphereElem& Sphere,
 	}
 }
 
-void UFluidInteractionComponent::SampleHemisphere(const FTransform& Transform, float Radius, float ZOffset,
+void UKawaiiFluidInteractionComponent::SampleHemisphere(const FTransform& Transform, float Radius, float ZOffset,
                                                    int32 ZDirection, int32 BoneIndex, int32 NumSamples)
 {
 	if (NumSamples <= 0) return;
@@ -2107,7 +2107,7 @@ void UFluidInteractionComponent::SampleHemisphere(const FTransform& Transform, f
 	}
 }
 
-void UFluidInteractionComponent::SampleCapsuleSurface(const FKSphylElem& Capsule, int32 BoneIndex)
+void UKawaiiFluidInteractionComponent::SampleCapsuleSurface(const FKSphylElem& Capsule, int32 BoneIndex)
 {
 	float Radius = Capsule.Radius;
 	float HalfLength = Capsule.Length * 0.5f;
@@ -2165,7 +2165,7 @@ void UFluidInteractionComponent::SampleCapsuleSurface(const FKSphylElem& Capsule
 	SampleHemisphere(CapsuleTransform, Radius, -HalfLength, -1, BoneIndex, HalfSphereSamples);
 }
 
-void UFluidInteractionComponent::SampleBoxSurface(const FKBoxElem& Box, int32 BoneIndex)
+void UKawaiiFluidInteractionComponent::SampleBoxSurface(const FKBoxElem& Box, int32 BoneIndex)
 {
 	FVector HalfExtent(Box.X * 0.5f, Box.Y * 0.5f, Box.Z * 0.5f);
 	FTransform BoxTransform = Box.GetTransform();
@@ -2217,7 +2217,7 @@ void UFluidInteractionComponent::SampleBoxSurface(const FKBoxElem& Box, int32 Bo
 	}
 }
 
-void UFluidInteractionComponent::SampleConvexSurface(const FKConvexElem& Convex, int32 BoneIndex)
+void UKawaiiFluidInteractionComponent::SampleConvexSurface(const FKConvexElem& Convex, int32 BoneIndex)
 {
 	// Get convex hull vertex data
 	const TArray<FVector>& Vertices = Convex.VertexData;
@@ -2322,7 +2322,7 @@ void UFluidInteractionComponent::SampleConvexSurface(const FKConvexElem& Convex,
 	}
 }
 
-void UFluidInteractionComponent::SampleAggGeomSurfaces(const FKAggregateGeom& AggGeom, int32 BoneIndex)
+void UKawaiiFluidInteractionComponent::SampleAggGeomSurfaces(const FKAggregateGeom& AggGeom, int32 BoneIndex)
 {
 	// Sphere colliders
 	for (const FKSphereElem& Sphere : AggGeom.SphereElems)
@@ -2353,7 +2353,7 @@ void UFluidInteractionComponent::SampleAggGeomSurfaces(const FKAggregateGeom& Ag
 // Auto Physics Forces Implementation (Buoyancy/Drag for StaticMesh)
 //=============================================================================
 
-UPrimitiveComponent* UFluidInteractionComponent::FindPhysicsBody() const
+UPrimitiveComponent* UKawaiiFluidInteractionComponent::FindPhysicsBody() const
 {
 	AActor* Owner = GetOwner();
 	if (!Owner)
@@ -2392,72 +2392,72 @@ UPrimitiveComponent* UFluidInteractionComponent::FindPhysicsBody() const
 	return nullptr;
 }
 
-float UFluidInteractionComponent::CalculateSubmergedVolumeFromContacts(int32 ContactCount, float ParticleRadius) const
+float UKawaiiFluidInteractionComponent::CalculateSubmergedVolumeFromContacts(int32 ContactCount, float ParticleRadius) const
 {
 	if (ContactCount <= 0 || ParticleRadius <= 0.0f)
 	{
 		return 0.0f;
 	}
 
-	// 유체 입자 부피 계산 (cm³)
+	// Calculate fluid particle volume (cm³)
 	// V_particle = (4/3) * PI * r³
-	const float ParticleRadiusCm = ParticleRadius;  // 이미 cm 단위
+	const float ParticleRadiusCm = ParticleRadius;  // Already in cm units
 	const float ParticleVolume = (4.0f / 3.0f) * PI * FMath::Pow(ParticleRadiusCm, 3.0f);
 
-	// Random sphere packing density (약 64%)
-	// 입자들이 빈틈없이 채워지지 않으므로 packing factor 적용
+	// Random sphere packing density (~64%)
+	// Particles do not pack perfectly, so apply packing factor
 	const float PackingFactor = 0.64f;
 
-	// 침수 부피 추정
-	// 접촉 입자 수 × 입자 부피 × 패킹 팩터
+	// Estimate submerged volume
+	// Contact particle count × particle volume × packing factor
 	const float SubmergedVolume = static_cast<float>(ContactCount) * ParticleVolume * PackingFactor;
 
 	return SubmergedVolume;
 }
 
-FVector UFluidInteractionComponent::CalculateBuoyancyForce(float SubmergedVolume, float FluidDensity, const FVector& Gravity) const
+FVector UKawaiiFluidInteractionComponent::CalculateBuoyancyForce(float SubmergedVolume, float FluidDensity, const FVector& Gravity) const
 {
 	if (SubmergedVolume <= 0.0f || FluidDensity <= 0.0f)
 	{
 		return FVector::ZeroVector;
 	}
 
-	// 단위 변환
+	// Unit conversion
 	// SubmergedVolume: cm³
 	// FluidDensity: kg/m³
 	// Gravity: cm/s²
-	// 결과: Force in N (then converted to UE units)
+	// Result: Force in N (then converted to UE units)
 
 	// cm³ → m³
 	const float SubmergedVolumeM3 = SubmergedVolume * 1e-6f;  // 1 cm³ = 1e-6 m³
 
-	// 부력 공식: F = ρ_fluid × V_submerged × g
+	// Buoyancy formula: F = ρ_fluid × V_submerged × g
 	// F (N) = (kg/m³) × (m³) × (m/s²)
 
-	// Gravity는 cm/s² 단위이므로 m/s²로 변환
+	// Gravity is in cm/s² units, convert to m/s²
 	const float GravityMagnitude = Gravity.Size() * 0.01f;  // cm/s² → m/s²
 
-	// 부력 크기 (N)
+	// Buoyancy magnitude (N)
 	const float BuoyancyMagnitude = FluidDensity * SubmergedVolumeM3 * GravityMagnitude;
 
-	// 부력 방향: 중력 반대 방향 (위쪽)
+	// Buoyancy direction: opposite to gravity (upward)
 	const FVector BuoyancyDirection = -Gravity.GetSafeNormal();
 
-	// N → UE force units (cm 기반이므로 100 곱함)
+	// N → UE force units (cm-based, so multiply by 100)
 	// F_UE = F_N × 100 (N·m → N·cm scale)
 	const float ForceInUE = BuoyancyMagnitude * 100.0f;
 
 	return BuoyancyDirection * ForceInUE * BuoyancyMultiplier;
 }
 
-float UFluidInteractionComponent::GetCurrentFluidDensity() const
+float UKawaiiFluidInteractionComponent::GetCurrentFluidDensity() const
 {
 	if (!TargetSubsystem)
 	{
 		return 1000.0f;  // Default: water density (kg/m³)
 	}
 
-	// 첫 번째 GPU 모듈의 Preset에서 밀도 가져오기
+	// Get density from the first GPU module's Preset
 	for (UKawaiiFluidSimulationModule* Module : TargetSubsystem->GetAllModules())
 	{
 		if (Module)
@@ -2473,7 +2473,7 @@ float UFluidInteractionComponent::GetCurrentFluidDensity() const
 	return 1000.0f;
 }
 
-float UFluidInteractionComponent::GetCurrentParticleRadius() const
+float UKawaiiFluidInteractionComponent::GetCurrentParticleRadius() const
 {
 	if (!TargetSubsystem)
 	{
@@ -2491,61 +2491,61 @@ float UFluidInteractionComponent::GetCurrentParticleRadius() const
 	return 5.0f;
 }
 
-FVector UFluidInteractionComponent::GetCurrentGravity() const
+FVector UKawaiiFluidInteractionComponent::GetCurrentGravity() const
 {
 	UWorld* World = GetWorld();
 	if (World)
 	{
-		// UE 기본 중력: -980 cm/s² (Z축 아래 방향)
+		// UE default gravity: -980 cm/s² (downward along Z-axis)
 		return FVector(0.0f, 0.0f, World->GetGravityZ());
 	}
 
 	return FVector(0.0f, 0.0f, -980.0f);
 }
 
-void UFluidInteractionComponent::ApplyAutoPhysicsForces(float DeltaTime)
+void UKawaiiFluidInteractionComponent::ApplyAutoPhysicsForces(float DeltaTime)
 {
-	// 물리 시뮬레이션 중인 컴포넌트 찾기
+	// Find physics-simulating component
 	UPrimitiveComponent* PhysicsBody = FindPhysicsBody();
 	if (!PhysicsBody)
 	{
-		// 물리 바디가 없으면 부력/항력 초기화
+		// No physics body, reset buoyancy/drag
 		CurrentBuoyancyForce = FVector::ZeroVector;
 		EstimatedSubmergedVolume = 0.0f;
 		PreviousPhysicsVelocity = FVector::ZeroVector;
 		return;
 	}
 
-	// 유체와 접촉 중이 아니면 부력 없음
+	// No buoyancy if not in contact with fluid
 	if (CurrentContactCount <= 0)
 	{
 		CurrentBuoyancyForce = FVector::ZeroVector;
 		EstimatedSubmergedVolume = 0.0f;
-		PreviousPhysicsVelocity = PhysicsBody->GetPhysicsLinearVelocity();  // 속도는 유지
+		PreviousPhysicsVelocity = PhysicsBody->GetPhysicsLinearVelocity();  // Keep velocity
 		return;
 	}
 
-	// 물리 파라미터 수집
+	// Collect physics parameters
 	const float ParticleRadius = GetCurrentParticleRadius();
 	const float FluidDensity = GetCurrentFluidDensity();
 	const FVector Gravity = GetCurrentGravity();
 
 	//========================================
-	// 1. 부력 계산 및 적용
+	// 1. Calculate and apply buoyancy
 	//========================================
 	if (bApplyBuoyancy)
 	{
-		// 침수 부피 계산
+		// Calculate submerged volume
 		float SubmergedVolume = 0.0f;
 
 		if (SubmergedVolumeMethod == ESubmergedVolumeMethod::ContactBased)
 		{
-			// 접촉 기반: 입자 접촉 수로 부피 추정
+			// Contact-based: estimate volume from particle contact count
 			SubmergedVolume = CalculateSubmergedVolumeFromContacts(CurrentContactCount, ParticleRadius);
 		}
 		else // FixedRatio
 		{
-			// 고정 비율: 바운딩 박스의 일정 비율
+			// Fixed ratio: fixed percentage of bounding box
 			FBoxSphereBounds Bounds = PhysicsBody->Bounds;
 			FVector BoxExtent = Bounds.BoxExtent;  // Half-extent
 			float BoundingVolume = BoxExtent.X * BoxExtent.Y * BoxExtent.Z * 8.0f;  // Full box volume
@@ -2554,22 +2554,22 @@ void UFluidInteractionComponent::ApplyAutoPhysicsForces(float DeltaTime)
 
 		EstimatedSubmergedVolume = SubmergedVolume;
 
-		// 부력 계산
+		// Calculate buoyancy
 		FVector BuoyancyForce = CalculateBuoyancyForce(SubmergedVolume, FluidDensity, Gravity);
 
-		// 댐핑 적용 (수직 속도에 비례한 저항)
-		// 위로 움직이면 → 아래로 힘 (부력 감소)
-		// 아래로 움직이면 → 위로 힘 (낙하 감속)
+		// Apply damping (resistance proportional to vertical velocity)
+		// Moving up → force down (reduces buoyancy)
+		// Moving down → force up (decelerates falling)
 		if (BuoyancyDamping > 0.0f)
 		{
 			FVector Velocity = PhysicsBody->GetPhysicsLinearVelocity();
 			FVector UpDirection = -Gravity.GetSafeNormal();
 			float VerticalVelocity = FVector::DotProduct(Velocity, UpDirection);
 
-			// 질량 기반 댐핑 (무거운 물체도 같은 감쇠율)
+			// Mass-based damping (same decay rate for heavy objects)
 			float Mass = PhysicsBody->GetMass();
 
-			// 댐핑 힘: 속도 × 질량 × 계수 (모멘텀에 비례)
+			// Damping force: velocity × mass × coefficient (proportional to momentum)
 			FVector DampingForce = -UpDirection * VerticalVelocity * Mass * BuoyancyDamping;
 			BuoyancyForce += DampingForce;
 		}
@@ -2577,95 +2577,96 @@ void UFluidInteractionComponent::ApplyAutoPhysicsForces(float DeltaTime)
 		CurrentBuoyancyForce = BuoyancyForce;
 
 		//========================================
-		// 정석 방식: 부력과 회전 보정 분리
+		// Standard approach: separate buoyancy and rotation correction
 		//========================================
 		if (!BuoyancyForce.IsNearlyZero())
 		{
-			// 1. 부력: 물체 중심에 적용 (토크 발생 안 함)
-			//    → 순수하게 위로 뜨는 힘만 적용
+			// 1. Buoyancy: apply at object center (no torque generated)
+			//    → Only apply pure upward floating force
 			PhysicsBody->AddForce(BuoyancyForce);
 
-			// 2. 회전 보정: 목표 자세(수평)와 현재 자세의 차이로 복원 토크 계산
-			//    → 파티클 분포와 무관하게 항상 수평으로 복원
-			//    → 가장 짧은 축(얇은 방향)이 위로 향하도록 (평평하게 눕힘)
+			// 2. Rotation correction: compute restoring torque from difference between
+			//    target orientation (horizontal) and current orientation
+			//    → Always restore to horizontal regardless of particle distribution
+			//    → Shortest axis (thin direction) should point up (lie flat)
 
-			// 로컬 바운딩 박스에서 가장 짧은 축 찾기
+			// Find shortest axis from local bounding box
 			FVector LocalExtent = FVector::OneVector;
 
-			// StaticMeshComponent에서 로컬 바운딩 박스 가져오기 (스케일 적용)
+			// Get local bounding box from StaticMeshComponent (with scale applied)
 			if (UStaticMeshComponent* SMC = Cast<UStaticMeshComponent>(PhysicsBody))
 			{
 				if (UStaticMesh* Mesh = SMC->GetStaticMesh())
 				{
 					FBox LocalBox = Mesh->GetBoundingBox();
 					FVector Scale = SMC->GetComponentScale();
-					LocalExtent = LocalBox.GetExtent() * Scale;  // 스케일 적용
+					LocalExtent = LocalBox.GetExtent() * Scale;  // Apply scale
 				}
 			}
 
-			// Unreal 로컬 축 → 월드 공간 변환
-			// GetForwardVector() = 로컬 X (Forward)
-			// GetRightVector() = 로컬 Y (Right)
-			// GetUpVector() = 로컬 Z (Up)
-			FVector AxisX = PhysicsBody->GetForwardVector();  // 로컬 X
-			FVector AxisY = PhysicsBody->GetRightVector();    // 로컬 Y
-			FVector AxisZ = PhysicsBody->GetUpVector();       // 로컬 Z
+			// Unreal local axes → world space conversion
+			// GetForwardVector() = local X (Forward)
+			// GetRightVector() = local Y (Right)
+			// GetUpVector() = local Z (Up)
+			FVector AxisX = PhysicsBody->GetForwardVector();  // Local X
+			FVector AxisY = PhysicsBody->GetRightVector();    // Local Y
+			FVector AxisZ = PhysicsBody->GetUpVector();       // Local Z
 
-			// 가장 짧은 축 찾기 (평평한 물체의 "얇은" 방향)
+			// Find shortest axis (the "thin" direction of flat objects)
 			FVector ShortestAxis;
 			float MinExtent = FMath::Min3(LocalExtent.X, LocalExtent.Y, LocalExtent.Z);
 
 			if (FMath::IsNearlyEqual(MinExtent, LocalExtent.X, 0.1f))
 			{
-				ShortestAxis = AxisX;  // X가 가장 짧으면 Forward 방향
+				ShortestAxis = AxisX;  // X is shortest → Forward direction
 			}
 			else if (FMath::IsNearlyEqual(MinExtent, LocalExtent.Y, 0.1f))
 			{
-				ShortestAxis = AxisY;  // Y가 가장 짧으면 Right 방향
+				ShortestAxis = AxisY;  // Y is shortest → Right direction
 			}
 			else
 			{
-				ShortestAxis = AxisZ;  // Z가 가장 짧으면 Up 방향
+				ShortestAxis = AxisZ;  // Z is shortest → Up direction
 			}
 
-			// 가장 짧은 축이 위로 향하도록 (또는 아래로 - 둘 다 안정)
+			// Shortest axis should point up (or down - both are stable)
 			FVector TargetUp = FVector::UpVector;
 			if (FVector::DotProduct(ShortestAxis, FVector::UpVector) < 0)
 			{
-				ShortestAxis = -ShortestAxis;  // 위쪽을 향하도록 뒤집기
+				ShortestAxis = -ShortestAxis;  // Flip to point upward
 			}
 			FVector CurrentUp = ShortestAxis;
 
-			// 현재 Up과 목표 Up 사이의 회전축과 각도 계산
+			// Compute rotation axis and angle between current Up and target Up
 			FVector RotationAxis = FVector::CrossProduct(CurrentUp, TargetUp);
 			float CrossMagnitude = RotationAxis.Size();
 
 			if (CrossMagnitude > KINDA_SMALL_NUMBER)
 			{
-				RotationAxis /= CrossMagnitude;  // 정규화
+				RotationAxis /= CrossMagnitude;  // Normalize
 
-				// 각도 계산 (0 ~ PI)
+				// Compute angle (0 ~ PI)
 				float DotProduct = FVector::DotProduct(CurrentUp, TargetUp);
 				DotProduct = FMath::Clamp(DotProduct, -1.0f, 1.0f);
 				float RotationAngle = FMath::Acos(DotProduct);  // radians
 
-				// 복원 토크: 스프링처럼 각도에 비례
-				// 물체 질량과 크기에 따라 스케일링
+				// Restoring torque: proportional to angle like a spring
+				// Scaled by object mass and size
 				float Mass = PhysicsBody->GetMass();
-				const float RotationSpringConstant = 500.0f;  // 복원력 강도 (10배 증가)
+				const float RotationSpringConstant = 500.0f;  // Restoring strength (10x increase)
 				FVector RestoringTorque = RotationAxis * RotationAngle * Mass * RotationSpringConstant;
 
-				// 3. 각속도 댐핑: 회전 속도에 비례하는 저항
-				//    → 오버슈팅 방지, 부드러운 수렴
+				// 3. Angular velocity damping: resistance proportional to rotation speed
+				//    → Prevents overshooting, smooth convergence
 				FVector AngularVelocity = PhysicsBody->GetPhysicsAngularVelocityInRadians();
-				const float RotationDampingConstant = 100.0f;  // 댐핑 강도 (조절 가능)
+				const float RotationDampingConstant = 100.0f;  // Damping strength (adjustable)
 				FVector DampingTorque = -AngularVelocity * Mass * RotationDampingConstant;
 
-				// 최종 토크 적용
+				// Apply final torque
 				FVector TotalTorque = RestoringTorque + DampingTorque;
 				PhysicsBody->AddTorqueInRadians(TotalTorque);
 
-				// Debug 로그
+				// Debug log
 				static int32 ForceDebugCounter = 0;
 				if (++ForceDebugCounter % 60 == 0)
 				{
@@ -2689,31 +2690,31 @@ void UFluidInteractionComponent::ApplyAutoPhysicsForces(float DeltaTime)
 	}
 
 	//========================================
-	// 2. 항력 계산 및 적용
+	// 2. Calculate and apply drag
 	//========================================
 	if (bApplyDrag && !CurrentFluidForce.IsNearlyZero())
 	{
-		// CurrentFluidForce는 이미 ProcessCollisionFeedback에서 계산됨
-		// PhysicsDragMultiplier로 스케일링하여 적용
+		// CurrentFluidForce is already computed in ProcessCollisionFeedback
+		// Apply with PhysicsDragMultiplier scaling
 		FVector DragForce = CurrentFluidForce * PhysicsDragMultiplier;
 
 		PhysicsBody->AddForce(DragForce);
 	}
 
 	//========================================
-	// 3. Added Mass Effect (가속 억제)
-	// 물체가 가속할 때 주변 유체도 가속해야 하므로
-	// 유효 질량이 증가하는 효과를 시뮬레이션
+	// 3. Added Mass Effect (acceleration suppression)
+	// When object accelerates, surrounding fluid must also accelerate,
+	// simulating the effect of increased effective mass
 	//========================================
 	if (AddedMassCoefficient > 0.0f && DeltaTime > SMALL_NUMBER)
 	{
 		FVector CurrentVelocity = PhysicsBody->GetPhysicsLinearVelocity();
 
-		// 가속도 계산
+		// Calculate acceleration
 		FVector Acceleration = (CurrentVelocity - PreviousPhysicsVelocity) / DeltaTime;
 
-		// 가속도 크기 제한 (첫 프레임 스파이크 방지)
-		// 최대 2g (약 2000 cm/s²) 정도로 제한
+		// Limit acceleration magnitude (prevents first frame spike)
+		// Max ~2g (about 2000 cm/s²)
 		const float MaxAcceleration = 2000.0f;  // cm/s²
 		float AccelMagnitude = Acceleration.Size();
 		if (AccelMagnitude > MaxAcceleration)
@@ -2721,18 +2722,18 @@ void UFluidInteractionComponent::ApplyAutoPhysicsForces(float DeltaTime)
 			Acceleration = Acceleration.GetSafeNormal() * MaxAcceleration;
 		}
 
-		// 부가 질량 계산 (kg)
+		// Calculate added mass (kg)
 		// SubmergedVolume: cm³ → m³ (×1e-6)
 		// FluidDensity: kg/m³
 		// AddedMass = ρ × V × C_m (kg)
 		float SubmergedVolumeM3 = EstimatedSubmergedVolume * 1e-6f;
 		float AddedMass = FluidDensity * SubmergedVolumeM3 * AddedMassCoefficient;
 
-		// 가속에 저항하는 힘 적용 (F = -m × a)
-		// 물체가 가속하려 하면 부가 질량만큼 반대 방향으로 힘이 작용
+		// Apply force resisting acceleration (F = -m × a)
+		// When object tries to accelerate, added mass creates opposing force
 		FVector AddedMassForce = -Acceleration * AddedMass;
 
-		// 힘 크기도 부력의 2배 이하로 제한 (안전장치)
+		// Limit force magnitude to 2x buoyancy (safety measure)
 		float MaxForce = CurrentBuoyancyForce.Size() * 2.0f + 1000.0f;
 		float ForceMagnitude = AddedMassForce.Size();
 		if (ForceMagnitude > MaxForce)
@@ -2745,36 +2746,36 @@ void UFluidInteractionComponent::ApplyAutoPhysicsForces(float DeltaTime)
 			PhysicsBody->AddForce(AddedMassForce);
 		}
 
-		// 다음 프레임용 저장
+		// Save for next frame
 		PreviousPhysicsVelocity = CurrentVelocity;
 	}
 
 	//========================================
-	// 4. 유체 내 댐핑 (선형 + 각속도)
-	// 상대 속도 기반 항력 및 회전 감쇠
+	// 4. Fluid damping (linear + angular velocity)
+	// Relative velocity-based drag and rotation decay
 	//========================================
 
-	// 침수 비율 계산 (0~1, 부분 침수 시 댐핑도 비례)
-	// EstimatedSubmergedVolume 기반으로 대략적인 침수율 추정
-	float SubmersionRatio = FMath::Clamp(EstimatedSubmergedVolume / 10000.0f, 0.0f, 1.0f);  // 10000 cm³ = 완전 침수 기준
+	// Calculate submersion ratio (0~1, damping scales with partial submersion)
+	// Rough estimate based on EstimatedSubmergedVolume
+	float SubmersionRatio = FMath::Clamp(EstimatedSubmergedVolume / 10000.0f, 0.0f, 1.0f);  // 10000 cm³ = fully submerged reference
 
-	// 4-1. 각속도 댐핑 (회전 감쇠)
+	// 4-1. Angular velocity damping (rotation decay)
 	if (FluidAngularDamping > 0.0f && SubmersionRatio > 0.0f)
 	{
 		FVector AngularVelocity = PhysicsBody->GetPhysicsAngularVelocityInRadians();
 
-		// 각속도에 비례한 반대 토크 적용
-		// T = -c × ω (선형 비례로 변경 - 더 안정적)
+		// Apply opposing torque proportional to angular velocity
+		// T = -c × ω (linear proportion - more stable)
 		float AngularSpeed = AngularVelocity.Size();
 		if (AngularSpeed > 0.01f)
 		{
-			// 물체 질량 기반으로 토크 스케일링
+			// Scale torque based on object mass
 			float Mass = PhysicsBody->GetMass();
 
-			// 토크 = -ω × 질량 × 계수 × 침수율
+			// Torque = -ω × mass × coefficient × submersion ratio
 			FVector AngularDampingTorque = -AngularVelocity * Mass * FluidAngularDamping * SubmersionRatio * 100.0f;
 
-			// 디버그 로그 (3초마다)
+			// Debug log (every 3 seconds)
 			static float DebugTimer = 0.0f;
 			DebugTimer += DeltaTime;
 			if (DebugTimer > 3.0f)
@@ -2788,25 +2789,25 @@ void UFluidInteractionComponent::ApplyAutoPhysicsForces(float DeltaTime)
 		}
 	}
 
-	// 4-2. 선형 댐핑 (상대 속도 기반 항력)
+	// 4-2. Linear damping (relative velocity-based drag)
 	if (FluidLinearDamping > 0.0f && SubmersionRatio > 0.0f)
 	{
 		FVector ObjectVelocity = PhysicsBody->GetPhysicsLinearVelocity();
 
-		// 유체 평균 속도 (CurrentFluidForce 방향으로 추정, 또는 0)
-		// 정지 유체 가정 시 상대 속도 = 물체 속도
-		FVector FluidVelocity = FVector::ZeroVector;  // TODO: 실제 유체 속도 사용 가능
+		// Average fluid velocity (estimated from CurrentFluidForce direction, or 0)
+		// For stationary fluid assumption, relative velocity = object velocity
+		FVector FluidVelocity = FVector::ZeroVector;  // TODO: Can use actual fluid velocity
 
 		FVector RelativeVelocity = ObjectVelocity - FluidVelocity;
 		float RelativeSpeed = RelativeVelocity.Size();
 
 		if (RelativeSpeed > 1.0f)
 		{
-			// F_drag = -C × v × |v| (속도 제곱에 비례)
+			// F_drag = -C × v × |v| (proportional to velocity squared)
 			FVector LinearDampingForce = -RelativeVelocity.GetSafeNormal() * RelativeSpeed * RelativeSpeed
 			                             * FluidLinearDamping * SubmersionRatio * 0.1f;
 
-			// 최대 힘 제한 (부력의 3배)
+			// Limit max force (3x buoyancy)
 			float MaxDampingForce = CurrentBuoyancyForce.Size() * 3.0f + 500.0f;
 			if (LinearDampingForce.Size() > MaxDampingForce)
 			{

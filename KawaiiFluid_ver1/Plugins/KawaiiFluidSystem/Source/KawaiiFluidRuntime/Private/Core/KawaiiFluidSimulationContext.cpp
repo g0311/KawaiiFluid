@@ -11,7 +11,7 @@
 #include "Physics/StackPressureSolver.h"
 #include "Collision/FluidCollider.h"
 #include "Collision/MeshFluidCollider.h"
-#include "Components/FluidInteractionComponent.h"
+#include "Components/KawaiiFluidInteractionComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Async/Async.h"
@@ -916,7 +916,7 @@ void UKawaiiFluidSimulationContext::SimulateGPU(
 		TRACE_CPUPROFILER_EVENT_SCOPE(SimGPU_BoundarySkinning);
 		int32 TotalBoundaryParticles = 0;
 
-		for (UFluidInteractionComponent* Interaction : Params.InteractionComponents)
+		for (UKawaiiFluidInteractionComponent* Interaction : Params.InteractionComponents)
 		{
 			if (!Interaction) continue;
 
@@ -2315,7 +2315,7 @@ void UKawaiiFluidSimulationContext::ApplyShapeMatchingConstraint(
 
 void UKawaiiFluidSimulationContext::UpdateAttachedParticlePositions(
 	TArray<FFluidParticle>& Particles,
-	const TArray<TObjectPtr<UFluidInteractionComponent>>& InteractionComponents)
+	const TArray<TObjectPtr<UKawaiiFluidInteractionComponent>>& InteractionComponents)
 {
 	if (InteractionComponents.Num() == 0 || Particles.Num() == 0)
 	{
@@ -2335,7 +2335,7 @@ void UKawaiiFluidSimulationContext::UpdateAttachedParticlePositions(
 	}
 
 	// Process per InteractionComponent
-	for (UFluidInteractionComponent* Interaction : InteractionComponents)
+	for (UKawaiiFluidInteractionComponent* Interaction : InteractionComponents)
 	{
 		if (!Interaction)
 		{

@@ -8,7 +8,7 @@
 #include "Core/KawaiiFluidSimulationTypes.h"
 #include "Interfaces/IKawaiiFluidDataProvider.h"
 #include "GPU/GPUFluidSimulator.h"
-#include "Components/FluidInteractionComponent.h"
+#include "Components/KawaiiFluidInteractionComponent.h"
 #include "KawaiiFluidSimulationModule.generated.h"
 
 /** Collision event callback type */
@@ -17,7 +17,7 @@ DECLARE_DELEGATE_OneParam(FOnModuleCollisionEvent, const FKawaiiFluidCollisionEv
 class FSpatialHash;
 class UKawaiiFluidPresetDataAsset;
 class UFluidCollider;
-class UFluidInteractionComponent;
+class UKawaiiFluidInteractionComponent;
 class UKawaiiFluidSimulationContext;
 class UKawaiiFluidVolumeComponent;
 class AKawaiiFluidVolume;
@@ -698,7 +698,7 @@ public:
 	 * @param CPUFeedbackBuffer - Subsystem's CPU collision feedback buffer (filtered by SourceID)
 	 */
 	void ProcessCollisionFeedback(
-		const TMap<int32, UFluidInteractionComponent*>& OwnerIDToIC,
+		const TMap<int32, UKawaiiFluidInteractionComponent*>& OwnerIDToIC,
 		const TArray<FKawaiiFluidCollisionEvent>& CPUFeedbackBuffer);
 
 	//========================================

@@ -14,7 +14,7 @@ AKawaiiFluidEmitter::AKawaiiFluidEmitter()
 	PrimaryActorTick.bCanEverTick = false;  // EmitterComponent handles ticking
 
 	// Create emitter component as root
-	EmitterComponent = CreateDefaultSubobject<UKawaiiFluidEmitterComponent>(TEXT("EmitterComponent"));
+	EmitterComponent = CreateDefaultSubobject<UKawaiiFluidEmitterComponent>(TEXT("KawaiiFluidEmitterComponent"));
 	RootComponent = EmitterComponent;
 
 #if WITH_EDITORONLY_DATA

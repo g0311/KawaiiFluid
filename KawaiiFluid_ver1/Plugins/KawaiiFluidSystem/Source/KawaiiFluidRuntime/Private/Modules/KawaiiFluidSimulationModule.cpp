@@ -3,7 +3,7 @@
 #include "Modules/KawaiiFluidSimulationModule.h"
 #include "Core/SpatialHash.h"
 #include "Collision/FluidCollider.h"
-#include "Components/FluidInteractionComponent.h"
+#include "Components/KawaiiFluidInteractionComponent.h"
 #include "Components/KawaiiFluidComponent.h"
 #include "Components/KawaiiFluidVolumeComponent.h"
 #include "Actors/KawaiiFluidVolume.h"
@@ -597,7 +597,7 @@ FKawaiiFluidSimulationParams UKawaiiFluidSimulationModule::BuildSimulationParams
 }
 
 void UKawaiiFluidSimulationModule::ProcessCollisionFeedback(
-	const TMap<int32, UFluidInteractionComponent*>& OwnerIDToIC,
+	const TMap<int32, UKawaiiFluidInteractionComponent*>& OwnerIDToIC,
 	const TArray<FKawaiiFluidCollisionEvent>& CPUFeedbackBuffer)
 {
 	// Skip if no callback or collision events disabled
@@ -662,9 +662,9 @@ void UKawaiiFluidSimulationModule::ProcessCollisionFeedback(
 			Event.SourceComponent = OwnerComponent;
 
 			// IC lookup (O(1))
-			if (const UFluidInteractionComponent* const* FoundIC = OwnerIDToIC.Find(Feedback.ColliderOwnerID))
+			if (const UKawaiiFluidInteractionComponent* const* FoundIC = OwnerIDToIC.Find(Feedback.ColliderOwnerID))
 			{
-				Event.HitInteractionComponent = const_cast<UFluidInteractionComponent*>(*FoundIC);
+				Event.HitInteractionComponent = const_cast<UKawaiiFluidInteractionComponent*>(*FoundIC);
 				Event.HitActor = (*FoundIC)->GetOwner();
 			}
 
@@ -708,9 +708,9 @@ void UKawaiiFluidSimulationModule::ProcessCollisionFeedback(
 		// IC lookup (O(1)) - CPU buffer may not have IC
 		if (!Event.HitInteractionComponent && Event.ColliderOwnerID >= 0)
 		{
-			if (const UFluidInteractionComponent* const* FoundIC = OwnerIDToIC.Find(Event.ColliderOwnerID))
+			if (const UKawaiiFluidInteractionComponent* const* FoundIC = OwnerIDToIC.Find(Event.ColliderOwnerID))
 			{
-				Event.HitInteractionComponent = const_cast<UFluidInteractionComponent*>(*FoundIC);
+				Event.HitInteractionComponent = const_cast<UKawaiiFluidInteractionComponent*>(*FoundIC);
 				if (!Event.HitActor)
 				{
 					Event.HitActor = (*FoundIC)->GetOwner();

@@ -25,15 +25,15 @@
 AKawaiiFluidVolume::AKawaiiFluidVolume()
 {
 	// Create the volume component as root
-	VolumeComponent = CreateDefaultSubobject<UKawaiiFluidVolumeComponent>(TEXT("VolumeComponent"));
+	VolumeComponent = CreateDefaultSubobject<UKawaiiFluidVolumeComponent>(TEXT("KawaiiFluidVolumeComponent"));
 	RootComponent = VolumeComponent;
 
 	// Create simulation module (like UKawaiiFluidComponent pattern)
 	// This ensures SimulationModule exists in editor mode for Brush functionality
-	SimulationModule = CreateDefaultSubobject<UKawaiiFluidSimulationModule>(TEXT("SimulationModule"));
+	SimulationModule = CreateDefaultSubobject<UKawaiiFluidSimulationModule>(TEXT("KawaiiFluidSimulationModule"));
 
 	// Create the rendering module
-	RenderingModule = CreateDefaultSubobject<UKawaiiFluidRenderingModule>(TEXT("RenderingModule"));
+	RenderingModule = CreateDefaultSubobject<UKawaiiFluidRenderingModule>(TEXT("KawaiiFluidRenderingModule"));
 
 	// Enable ticking for simulation
 	PrimaryActorTick.bCanEverTick = true;

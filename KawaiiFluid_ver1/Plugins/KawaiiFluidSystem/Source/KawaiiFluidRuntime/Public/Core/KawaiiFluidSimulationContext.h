@@ -287,7 +287,7 @@ protected:
 	/** Update attached particle positions (bone tracking) */
 	virtual void UpdateAttachedParticlePositions(
 		TArray<FFluidParticle>& Particles,
-		const TArray<TObjectPtr<UFluidInteractionComponent>>& InteractionComponents
+		const TArray<TObjectPtr<UKawaiiFluidInteractionComponent>>& InteractionComponents
 	);
 
 	/** Cache collider shapes (once per frame) */

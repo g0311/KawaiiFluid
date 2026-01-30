@@ -8,8 +8,8 @@
 UKawaiiFluidRenderingModule::UKawaiiFluidRenderingModule()
 {
 	// Create renderer instances as default subobjects (Instanced pattern)
-	ISMRenderer = CreateDefaultSubobject<UKawaiiFluidISMRenderer>(TEXT("ISMRenderer"));
-	MetaballRenderer = CreateDefaultSubobject<UKawaiiFluidMetaballRenderer>(TEXT("MetaballRenderer"));
+	ISMRenderer = CreateDefaultSubobject<UKawaiiFluidISMRenderer>(TEXT("KawaiiFluidISMRenderer"));
+	MetaballRenderer = CreateDefaultSubobject<UKawaiiFluidMetaballRenderer>(TEXT("KawaiiFluidMetaballRenderer"));
 }
 
 void UKawaiiFluidRenderingModule::PostDuplicate(bool bDuplicateForPIE)

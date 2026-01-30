@@ -11,7 +11,7 @@
 #include "Modules/KawaiiFluidRenderingModule.h"
 #include "Rendering/KawaiiFluidMetaballRenderer.h"
 #include "Rendering/KawaiiFluidRenderResource.h"
-#include "Components/FluidInteractionComponent.h"
+#include "Components/KawaiiFluidInteractionComponent.h"
 #include "Collision/FluidCollider.h"
 #include "GPU/GPUFluidSimulator.h"
 #include "Engine/Level.h"
@@ -148,9 +148,9 @@ void UKawaiiFluidSimulatorSubsystem::HandlePostActorTick(UWorld* World, ELevelTi
 		// Collision Feedback Processing (GPU + CPU)
 		//========================================
 		// Build OwnerID → InteractionComponent map (once, for O(1) lookup)
-		TMap<int32, UFluidInteractionComponent*> OwnerIDToIC;
+		TMap<int32, UKawaiiFluidInteractionComponent*> OwnerIDToIC;
 		OwnerIDToIC.Reserve(GlobalInteractionComponents.Num());
-		for (UFluidInteractionComponent* IC : GlobalInteractionComponents)
+		for (UKawaiiFluidInteractionComponent* IC : GlobalInteractionComponents)
 		{
 			if (IC && IC->GetOwner())
 			{
@@ -402,7 +402,7 @@ void UKawaiiFluidSimulatorSubsystem::UnregisterGlobalCollider(UFluidCollider* Co
 // Global Interaction Components
 //========================================
 
-void UKawaiiFluidSimulatorSubsystem::RegisterGlobalInteractionComponent(UFluidInteractionComponent* Component)
+void UKawaiiFluidSimulatorSubsystem::RegisterGlobalInteractionComponent(UKawaiiFluidInteractionComponent* Component)
 {
 	if (Component && !GlobalInteractionComponents.Contains(Component))
 	{
@@ -410,7 +410,7 @@ void UKawaiiFluidSimulatorSubsystem::RegisterGlobalInteractionComponent(UFluidIn
 	}
 }
 
-void UKawaiiFluidSimulatorSubsystem::UnregisterGlobalInteractionComponent(UFluidInteractionComponent* Component)
+void UKawaiiFluidSimulatorSubsystem::UnregisterGlobalInteractionComponent(UKawaiiFluidInteractionComponent* Component)
 {
 	GlobalInteractionComponents.Remove(Component);
 }

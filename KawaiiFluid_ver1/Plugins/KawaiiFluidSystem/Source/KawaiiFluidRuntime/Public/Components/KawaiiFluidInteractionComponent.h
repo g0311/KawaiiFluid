@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
-#include "FluidInteractionComponent.generated.h"
+#include "KawaiiFluidInteractionComponent.generated.h"
 
 class UKawaiiFluidSimulatorSubsystem;
 class UFluidCollider;
@@ -65,13 +65,13 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FOnBoneFluidImpact, FName, BoneNam
  * Fluid interaction component.
  * Attach to characters/objects to enable fluid interaction.
  */
-UCLASS(ClassGroup=(KawaiiFluid), meta=(BlueprintSpawnableComponent))
-class KAWAIIFLUIDRUNTIME_API UFluidInteractionComponent : public UActorComponent
+UCLASS(ClassGroup=(KawaiiFluid), meta=(BlueprintSpawnableComponent, DisplayName="Kawaii Fluid Interaction"))
+class KAWAIIFLUIDRUNTIME_API UKawaiiFluidInteractionComponent : public UActorComponent
 {
 	GENERATED_BODY()
 
 public:
-	UFluidInteractionComponent();
+	UKawaiiFluidInteractionComponent();
 
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 

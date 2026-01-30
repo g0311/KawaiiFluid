@@ -193,11 +193,11 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 * Overall lighting scale applied to diffuse + ambient.
 	 * Use this to compensate for HDR scene lighting.
 	 * Lower values make the fluid appear darker regardless of scene light intensity.
-	 * 1.0 = no scaling (raw HDR), 0.1~0.3 = typical for bright outdoor scenes.
+	 * 1.0 = no scaling (use with PreExposure), 0.1~0.3 = manual HDR compensation.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Lighting",
 		meta = (ClampMin = "0.01", ClampMax = "1.0"))
-	float LightingScale = 0.2f;
+	float LightingScale = 1.0f;
 
 	//========================================
 	// Absorption (Beer's Law)
