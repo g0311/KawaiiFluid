@@ -152,8 +152,15 @@ void KawaiiScreenSpaceShading::RenderPostProcessShading(
 
 	// Lighting scale parameters
 	PassParameters->ThicknessSensitivity = RenderParams.ThicknessSensitivity;
-	PassParameters->RefractionScale = RenderParams.RefractionScale;
 	PassParameters->FresnelReflectionBlend = RenderParams.FresnelReflectionBlend;
+
+	// Refraction parameters
+	PassParameters->bEnableRefraction = RenderParams.bEnableRefraction ? 1 : 0;
+	PassParameters->RefractionScale = RenderParams.RefractionScale;
+
+	// Caustic parameters
+	PassParameters->bEnableCaustics = RenderParams.bEnableCaustics ? 1 : 0;
+	PassParameters->CausticIntensity = RenderParams.CausticIntensity;
 
 	// Reflection Cubemap
 	if (RenderParams.ReflectionCubemap && RenderParams.ReflectionCubemap->GetResource())

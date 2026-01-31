@@ -72,8 +72,19 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
     // Lighting Scale Parameters
     // ------------------------------------------------------
     SHADER_PARAMETER(float, ThicknessSensitivity)  // How much thickness affects transparency (0 = uniform, 1 = thickness-dependent)
-    SHADER_PARAMETER(float, RefractionScale)
     SHADER_PARAMETER(float, FresnelReflectionBlend)
+
+    // ------------------------------------------------------
+    // Refraction
+    // ------------------------------------------------------
+    SHADER_PARAMETER(int, bEnableRefraction)  // 1 = enabled, 0 = disabled
+    SHADER_PARAMETER(float, RefractionScale)
+
+    // ------------------------------------------------------
+    // Caustics
+    // ------------------------------------------------------
+    SHADER_PARAMETER(int, bEnableCaustics)    // 1 = enabled, 0 = disabled
+    SHADER_PARAMETER(float, CausticIntensity) // Brightness multiplier for caustic patterns
 
     // ------------------------------------------------------
     // Reflection Cubemap

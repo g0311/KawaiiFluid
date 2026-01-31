@@ -110,23 +110,14 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	float ThicknessSensitivity = 0.5f;
 
 	//========================================
-	// Material
+	// Specular
 	//========================================
-
-	/**
-	 * Index of Refraction (IOR).
-	 * Controls how much light bends when passing through the fluid.
-	 * Also affects Fresnel reflection intensity at glancing angles.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Material",
-		meta = (ClampMin = "1.0", ClampMax = "2.0"))
-	float RefractiveIndex = 1.33f;
 
 	/**
 	 * Multiplier for edge reflection (Fresnel effect).
 	 * Higher values make edges more reflective.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Material",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Specular",
 		meta = (ClampMin = "0.0", ClampMax = "5.0"))
 	float FresnelStrength = 1.0f;
 
@@ -134,7 +125,7 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 * Intensity of specular highlights from light sources.
 	 * 0 = no highlights, higher = brighter highlights.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Material",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Specular",
 		meta = (ClampMin = "0.0", ClampMax = "2.0"))
 	float SpecularStrength = 1.0f;
 
@@ -142,7 +133,7 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	 * Sharpness of specular highlights.
 	 * Lower = sharp/glossy, higher = soft/matte.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Material",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Specular",
 		meta = (ClampMin = "0.01", ClampMax = "1.0"))
 	float SpecularRoughness = 0.2f;
 
@@ -186,11 +177,51 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	//========================================
 
 	/**
+	 * Enable background distortion through the fluid surface.
+	 * Disabling skips refraction UV offset calculation.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Refraction")
+	bool bEnableRefraction = true;
+
+	/**
+	 * Index of Refraction (IOR).
+	 * Controls how much light bends when passing through the fluid.
+	 * Also affects Fresnel reflection intensity at glancing angles.
+	 * Water = 1.33, Glass = 1.5, Diamond = 2.4
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Refraction",
+		meta = (EditCondition = "bEnableRefraction", ClampMin = "1.0", ClampMax = "2.0"))
+	float RefractiveIndex = 1.33f;
+
+	/**
 	 * Refraction offset scale. 0 = no refraction, higher = stronger distortion.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Refraction",
-		meta = (ClampMin = "0.0", ClampMax = "0.2"))
+		meta = (EditCondition = "bEnableRefraction", ClampMin = "0.0", ClampMax = "0.2"))
 	float RefractionScale = 0.05f;
+
+	//========================================
+	// Caustics
+	//========================================
+
+	/**
+	 * Enable caustic light patterns on refracted background.
+	 * Caustics simulate light focusing/spreading through curved fluid surfaces.
+	 * Requires Refraction to be enabled.
+	 * Disabling improves performance by skipping Jacobian calculations.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Caustics",
+		meta = (EditCondition = "bEnableRefraction"))
+	bool bEnableCaustics = true;
+
+	/**
+	 * Caustic brightness intensity multiplier.
+	 * Higher values create more pronounced light/dark patterns.
+	 * 0 = no visible caustics, 1.5 = default, 3.0 = very strong.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Caustics",
+		meta = (EditCondition = "bEnableRefraction && bEnableCaustics", ClampMin = "0.0", ClampMax = "5.0"))
+	float CausticIntensity = 1.5f;
 
 	//========================================
 	// Depth & Smoothing
@@ -389,7 +420,11 @@ FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
 	Hash = HashCombine(Hash, GetTypeHash(Params.AmbientIntensity));
 	Hash = HashCombine(Hash, GetTypeHash(Params.LightingScale));
 	Hash = HashCombine(Hash, GetTypeHash(Params.ThicknessSensitivity));
+	Hash = HashCombine(Hash, GetTypeHash(Params.bEnableRefraction));
 	Hash = HashCombine(Hash, GetTypeHash(Params.RefractionScale));
+	// Caustic parameters
+	Hash = HashCombine(Hash, GetTypeHash(Params.bEnableCaustics));
+	Hash = HashCombine(Hash, GetTypeHash(Params.CausticIntensity));
 	Hash = HashCombine(Hash, GetTypeHash(Params.FresnelReflectionBlend));
 	// Reflection Cubemap parameters
 	Hash = HashCombine(Hash, GetTypeHash(Params.ReflectionCubemap.Get()));
@@ -436,7 +471,11 @@ FORCEINLINE bool operator==(const FFluidRenderingParameters& A, const FFluidRend
 		FMath::IsNearlyEqual(A.AmbientIntensity, B.AmbientIntensity, 0.001f) &&
 		FMath::IsNearlyEqual(A.LightingScale, B.LightingScale, 0.001f) &&
 		FMath::IsNearlyEqual(A.ThicknessSensitivity, B.ThicknessSensitivity, 0.001f) &&
+		A.bEnableRefraction == B.bEnableRefraction &&
 		FMath::IsNearlyEqual(A.RefractionScale, B.RefractionScale, 0.001f) &&
+		// Caustic parameters
+		A.bEnableCaustics == B.bEnableCaustics &&
+		FMath::IsNearlyEqual(A.CausticIntensity, B.CausticIntensity, 0.001f) &&
 		FMath::IsNearlyEqual(A.FresnelReflectionBlend, B.FresnelReflectionBlend, 0.001f) &&
 		// Reflection Cubemap parameters
 		A.ReflectionCubemap == B.ReflectionCubemap &&

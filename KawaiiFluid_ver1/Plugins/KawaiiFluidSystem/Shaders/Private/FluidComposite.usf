@@ -49,8 +49,15 @@ float4 LightColors[FLUID_MAX_LIGHTS];
 
 // Lighting Scale Parameters
 float ThicknessSensitivity;          // How much thickness affects transparency (0 = uniform, 1 = thickness-dependent)
-float RefractionScale;
 float FresnelReflectionBlend;
+
+// Refraction
+int bEnableRefraction;               // 1 = enabled, 0 = disabled
+float RefractionScale;
+
+// Caustics
+int bEnableCaustics;                 // 1 = enabled, 0 = disabled
+float CausticIntensity;              // Brightness multiplier for caustic patterns
 
 // Reflection Cubemap
 TextureCube ReflectionCubemap;
@@ -266,7 +273,7 @@ static float g_SSRDebugDepthPenetration = 0;
 /**
  * Calculate refracted ray hit position on floor plane using Snell's law.
  */
-float2 CalculateRefractedFloorHit(float3 SurfacePos, float3 Normal, float3 ViewDir, float FloorY, float IOR)
+float2 CalculateRefractedFloorHit(float3 SurfacePos, float3 Normal, float3 ViewDir, float FloorZ, float IOR)
 {
 	// Snell's law: n1 * sin(theta1) = n2 * sin(theta2)
 	float eta = 1.0 / IOR;
@@ -277,26 +284,26 @@ float2 CalculateRefractedFloorHit(float3 SurfacePos, float3 Normal, float3 ViewD
 	// Total internal reflection check
 	if (Sin2ThetaT > 1.0)
 	{
-		return SurfacePos.xz;
+		return SurfacePos.xy;
 	}
 
 	float CosThetaT = sqrt(1.0 - Sin2ThetaT);
 	float3 RefractDir = eta * (-ViewDir) + (eta * CosThetaI - CosThetaT) * Normal;
 	RefractDir = normalize(RefractDir);
 
-	if (abs(RefractDir.y) < 0.001)
+	if (abs(RefractDir.z) < 0.001)
 	{
-		return SurfacePos.xz;
+		return SurfacePos.xy;
 	}
 
-	float t = (FloorY - SurfacePos.y) / RefractDir.y;
+	float t = (FloorZ - SurfacePos.z) / RefractDir.z;
 	if (t < 0.0)
 	{
-		return SurfacePos.xz;
+		return SurfacePos.xy;
 	}
 
 	float3 HitPos = SurfacePos + t * RefractDir;
-	return HitPos.xz;
+	return HitPos.xy;
 }
 
 /**
@@ -324,7 +331,7 @@ float CalculateCausticJacobian(
 
 	float3 FloorViewPos = ReconstructViewPosition(ScreenUV, FloorDepth);
 	float3 FloorWorldPos = mul(FloorViewPos, ViewToWorld);
-	float FloorY = FloorWorldPos.y;
+	float FloorZ = FloorWorldPos.z;
 
 	// 8-direction sampling
 	const float Diag = 0.707;
@@ -363,7 +370,7 @@ float CalculateCausticJacobian(
 		return 1.0;
 	}
 
-	float2 HitCenter = CalculateRefractedFloorHit(CenterWorldPos, CenterNormal, ViewDir, FloorY, IOR);
+	float2 HitCenter = CalculateRefractedFloorHit(CenterWorldPos, CenterNormal, ViewDir, FloorZ, IOR);
 	float2 Hits[8];
 	float2 OrigPos[8];
 
@@ -372,7 +379,7 @@ float CalculateCausticJacobian(
 		if (Depths[k] < BACKGROUND_DEPTH_THRESH)
 		{
 			float3 WorldPos = mul(ReconstructViewPosition(SampleUVs[k], Depths[k]), ViewToWorld);
-			Hits[k] = CalculateRefractedFloorHit(WorldPos, Normals[k], ViewDir, FloorY, IOR);
+			Hits[k] = CalculateRefractedFloorHit(WorldPos, Normals[k], ViewDir, FloorZ, IOR);
 			OrigPos[k] = WorldPos.xz;
 		}
 		else
@@ -829,50 +836,60 @@ void MainPS(
 	// 1. Sample scene color (background) - use SceneUV for correct texture mapping
 	float3 SceneColor = SceneColorTexture.Sample(InputSampler, SceneUV).rgb;
 
-	// 2. Sample refracted background color (with Refraction Mask)
-	// ========================================================================
-	// Refraction Mask: Reduce refraction at thin/edge areas to prevent excessive distortion
-	// - ThicknessMask: Weaker refraction in thin areas
-	// - EdgeMask: Weaker refraction at edges (where Normal.z is small)
-	// ========================================================================
-	float ThicknessMask = saturate(Thickness * 0.1);  // Thickness-based (small when thin)
-	float EdgeMask = saturate(abs(Normal.z) * 2.0);   // Edge-based (small at edges)
-	float RefractionMask = ThicknessMask * EdgeMask;
+	// 2. Sample refracted background color
+	float3 RefractedBackground;
+	float RefractedSceneDepth = SceneLinearDepth;
+	float RefractionValidity = 0.0;
 
-	// Calculate refraction offset (with thickness/edge mask)
-	float2 RefractOffset = Normal.xy * RefractiveIndex * RefractionScale * RefractionMask;
-	float2 RefractedUV = UV + RefractOffset;
-	RefractedUV = saturate(RefractedUV);
+	if (bEnableRefraction)
+	{
+		// Refraction Mask: Reduce refraction at thin/edge areas to prevent excessive distortion
+		// - ThicknessMask: Weaker refraction in thin areas
+		// - EdgeMask: Weaker refraction at edges (where Normal.z is small)
+		float ThicknessMask = saturate(Thickness * 0.1);
+		float EdgeMask = saturate(abs(Normal.z) * 2.0);
+		float RefractionMask = ThicknessMask * EdgeMask;
 
-	// Apply SceneUVScale to refracted UV for scene texture sampling
-	float2 RefractedSceneUV = RefractedUV * SceneUVScale;
+		// Calculate refraction offset (with thickness/edge mask)
+		float2 RefractOffset = Normal.xy * RefractiveIndex * RefractionScale * RefractionMask;
+		float2 RefractedUV = UV + RefractOffset;
+		RefractedUV = saturate(RefractedUV);
 
-	// Check depth at refracted UV position
-	float RefractedSceneDepth = ConvertFromDeviceZ(SceneDepthTexture.SampleLevel(InputSampler, RefractedSceneUV, 0).r);
+		// Apply SceneUVScale to refracted UV for scene texture sampling
+		float2 RefractedSceneUV = RefractedUV * SceneUVScale;
 
-	// Soft refraction validity check:
-	// 1. Refracted position must be behind fluid (not sampling objects in front of fluid)
-	// 2. Refracted position should not suddenly show much closer objects than original UV
-	// 3. Fade out refraction near screen edges (avoid sampling clamped edge pixels)
-	// Using soft transitions to avoid hard edge artifacts
-	float DepthMargin = 20.0;
-	float BehindFluidFactor = saturate((RefractedSceneDepth - FluidDepth + DepthMargin) / DepthMargin);
-	float NotPullingForwardFactor = saturate((RefractedSceneDepth - SceneLinearDepth + DepthMargin) / DepthMargin);
+		// Check depth at refracted UV position
+		RefractedSceneDepth = ConvertFromDeviceZ(SceneDepthTexture.SampleLevel(InputSampler, RefractedSceneUV, 0).r);
 
-	// Screen edge fade: reduce refraction when refracted UV approaches screen boundary
-	float2 EdgeDist = min(RefractedUV, 1.0 - RefractedUV);
-	float ScreenEdgeFade = saturate(min(EdgeDist.x, EdgeDist.y) / 0.05);  // Fade over 5% of screen edge
+		// Soft refraction validity check:
+		// 1. Refracted position must be behind fluid (not sampling objects in front of fluid)
+		// 2. Refracted position should not suddenly show much closer objects than original UV
+		// 3. Fade out refraction near screen edges (avoid sampling clamped edge pixels)
+		float DepthMargin = 20.0;
+		float BehindFluidFactor = saturate((RefractedSceneDepth - FluidDepth + DepthMargin) / DepthMargin);
+		float NotPullingForwardFactor = saturate((RefractedSceneDepth - SceneLinearDepth + DepthMargin) / DepthMargin);
 
-	float RefractionValidity = BehindFluidFactor * NotPullingForwardFactor * ScreenEdgeFade;
+		// Screen edge fade: reduce refraction when refracted UV approaches screen boundary
+		float2 EdgeDist = min(RefractedUV, 1.0 - RefractedUV);
+		float ScreenEdgeFade = saturate(min(EdgeDist.x, EdgeDist.y) / 0.05);
 
-	// Soft blend between original UV and refracted UV, then apply SceneUVScale
-	float2 FinalRefractUV = lerp(UV, RefractedUV, RefractionValidity);
-	float2 FinalRefractSceneUV = FinalRefractUV * SceneUVScale;
+		RefractionValidity = BehindFluidFactor * NotPullingForwardFactor * ScreenEdgeFade;
 
-	float3 RefractedBackground = SceneColorTexture.Sample(InputSampler, FinalRefractSceneUV).rgb;
+		// Soft blend between original UV and refracted UV, then apply SceneUVScale
+		float2 FinalRefractUV = lerp(UV, RefractedUV, RefractionValidity);
+		float2 FinalRefractSceneUV = FinalRefractUV * SceneUVScale;
+
+		RefractedBackground = SceneColorTexture.Sample(InputSampler, FinalRefractSceneUV).rgb;
+	}
+	else
+	{
+		// No refraction - use original scene color
+		RefractedBackground = SceneColor;
+	}
 
 	// 2.5. Caustics (Jacobian method - ray convergence = bright, divergence = dark)
 	float CausticBrightness = 1.0;
+	if (bEnableCaustics)
 	{
 		float Pattern = CausticPattern(
 			UV,
@@ -883,8 +900,8 @@ void MainPS(
 			RefractiveIndex
 		);
 
-		// Convert pattern to brightness multiplier
-		CausticBrightness = 1.0 + Pattern * 1.5;
+		// Convert pattern to brightness multiplier (CausticIntensity controls strength)
+		CausticBrightness = 1.0 + Pattern * CausticIntensity;
 
 		// Fade based on fluid properties
 		float DepthFade = saturate(1.0 - FluidDepth * 0.0003);
