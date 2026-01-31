@@ -11,10 +11,9 @@
 #include "GPU/GPUFluidSimulator.h"
 #include "Engine/World.h"
 
-// Pipeline architecture (Pipeline handles ShadingMode internally)
+// Pipeline architecture
 #include "Rendering/Pipeline/IKawaiiMetaballRenderingPipeline.h"
 #include "Rendering/Pipeline/KawaiiMetaballScreenSpacePipeline.h"
-#include "Rendering/Pipeline/KawaiiRayMarchingPipeline.h"
 
 UKawaiiFluidMetaballRenderer::UKawaiiFluidMetaballRenderer()
 {
@@ -90,7 +89,6 @@ void UKawaiiFluidMetaballRenderer::ApplySettings(const FKawaiiFluidMetaballRende
 	}
 
 	// Map settings to LocalParameters
-	LocalParameters.PipelineType = Settings.PipelineType;
 	LocalParameters.FluidColor = Settings.FluidColor;
 	LocalParameters.FresnelStrength = Settings.FresnelStrength;
 	LocalParameters.RefractiveIndex = Settings.RefractiveIndex;
@@ -206,22 +204,6 @@ void UKawaiiFluidMetaballRenderer::SetSimulationContext(UKawaiiFluidSimulationCo
 {
 	CachedSimulationContext = InContext;
 
-	// When SimulationContext is set, update GPUSimulator's Z-Order extraction flag
-	// This handles the case where Pipeline was set before SimulationContext
-	if (InContext)
-	{
-		if (FKawaiiFluidRenderResource* RenderResource = GetFluidRenderResource())
-		{
-			if (FGPUFluidSimulator* GPUSimulator = RenderResource->GetGPUSimulator())
-			{
-				const FFluidRenderingParameters& Params = GetLocalParameters();
-				const bool bNeedZOrderBuffers = (Params.PipelineType == EMetaballPipelineType::RayMarching);
-				GPUSimulator->SetExtractZOrderBuffersForRayMarching(bNeedZOrderBuffers);
-				UE_LOG(LogTemp, Log, TEXT("MetaballRenderer: SetSimulationContext - SetExtractZOrderBuffersForRayMarching(%d)"), bNeedZOrderBuffers ? 1 : 0);
-			}
-		}
-	}
-
 	UE_LOG(LogTemp, Log, TEXT("MetaballRenderer: %s SimulationContext"),
 		InContext ? TEXT("Set") : TEXT("Cleared"));
 }
@@ -233,45 +215,12 @@ bool UKawaiiFluidMetaballRenderer::IsRenderingActive() const
 
 void UKawaiiFluidMetaballRenderer::UpdatePipeline()
 {
-	const FFluidRenderingParameters& Params = GetLocalParameters();
-
-	// Check if Pipeline needs to be recreated
-	bool bPipelineChanged = !Pipeline || CachedPipelineType != Params.PipelineType;
-
-	// Create/recreate Pipeline if needed
-	// Note: Pipeline now handles ShadingMode internally via switch statements
-	if (bPipelineChanged)
+	// Create Pipeline if needed
+	if (!Pipeline)
 	{
-		switch (Params.PipelineType)
-		{
-		case EMetaballPipelineType::ScreenSpace:
-			Pipeline = MakeShared<FKawaiiMetaballScreenSpacePipeline>();
-			UE_LOG(LogTemp, Log, TEXT("MetaballRenderer: Created ScreenSpace Pipeline"));
-			break;
-
-		case EMetaballPipelineType::RayMarching:
-			Pipeline = MakeShared<FKawaiiRayMarchingPipeline>();
-			UE_LOG(LogTemp, Log, TEXT("MetaballRenderer: Created RayMarching Pipeline"));
-			break;
-		}
-
-		CachedPipelineType = Params.PipelineType;
-
-		// Update GPUSimulator flag for Z-Order buffer extraction
-		// Only Ray Marching pipeline needs CellStart/CellEnd buffers extracted
-		if (FKawaiiFluidRenderResource* RenderResource = GetFluidRenderResource())
-		{
-			if (FGPUFluidSimulator* GPUSimulator = RenderResource->GetGPUSimulator())
-			{
-				const bool bNeedZOrderBuffers = (Params.PipelineType == EMetaballPipelineType::RayMarching);
-				GPUSimulator->SetExtractZOrderBuffersForRayMarching(bNeedZOrderBuffers);
-				UE_LOG(LogTemp, Log, TEXT("MetaballRenderer: SetExtractZOrderBuffersForRayMarching(%d)"), bNeedZOrderBuffers ? 1 : 0);
-			}
-		}
+		Pipeline = MakeShared<FKawaiiMetaballScreenSpacePipeline>();
+		UE_LOG(LogTemp, Log, TEXT("MetaballRenderer: Created ScreenSpace Pipeline"));
 	}
-
-	const TCHAR* PipelineName = (Params.PipelineType == EMetaballPipelineType::RayMarching) ? TEXT("RayMarching") : TEXT("ScreenSpace");
-	UE_LOG(LogTemp, Log, TEXT("MetaballRenderer: Pipeline=%s, Shading=PostProcess"), PipelineName);
 }
 
 void UKawaiiFluidMetaballRenderer::SetPreset(UKawaiiFluidPresetDataAsset* InPreset)
@@ -280,11 +229,8 @@ void UKawaiiFluidMetaballRenderer::SetPreset(UKawaiiFluidPresetDataAsset* InPres
 
 	if (CachedPreset)
 	{
-		// Update Pipeline based on Preset's PipelineType
+		// Ensure Pipeline is created
 		UpdatePipeline();
-
-		const TCHAR* PipelineName = (CachedPreset->RenderingParameters.PipelineType == EMetaballPipelineType::RayMarching)
-			? TEXT("RayMarching") : TEXT("ScreenSpace");
-		UE_LOG(LogTemp, Log, TEXT("MetaballRenderer: SetPreset - PipelineType=%s"), PipelineName);
+		UE_LOG(LogTemp, Log, TEXT("MetaballRenderer: SetPreset - Pipeline=ScreenSpace"));
 	}
 }

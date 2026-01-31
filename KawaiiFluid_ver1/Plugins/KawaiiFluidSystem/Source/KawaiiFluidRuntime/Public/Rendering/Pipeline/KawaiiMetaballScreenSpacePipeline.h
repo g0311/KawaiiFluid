@@ -48,11 +48,6 @@ public:
 		FRDGTextureRef SceneColorTexture,
 		FScreenPassRenderTarget Output) override;
 
-	virtual EMetaballPipelineType GetPipelineType() const override
-	{
-		return EMetaballPipelineType::ScreenSpace;
-	}
-
 	virtual const FMetaballIntermediateTextures* GetCachedIntermediateTextures() const override
 	{
 		return CachedIntermediateTextures.IsValid() ? &CachedIntermediateTextures : nullptr;

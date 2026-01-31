@@ -145,7 +145,7 @@ void FKawaiiFluidRenderResource::ResizeBuffer(FRHICommandListBase& RHICmdList, i
 	//========================================
 	FRDGBufferDesc RenderParticleBufferDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(FKawaiiRenderParticle), NewCapacity);
 	RenderParticleBufferDesc.Usage |= EBufferUsageFlags::UnorderedAccess;
-	FRDGBufferRef RenderParticleRDGBuffer = GraphBuilder.CreateBuffer(RenderParticleBufferDesc, TEXT("RenderParticlesSDF"));
+	FRDGBufferRef RenderParticleRDGBuffer = GraphBuilder.CreateBuffer(RenderParticleBufferDesc, TEXT("RenderParticles"));
 
 	FRDGBufferUAVRef RenderParticleUAV = GraphBuilder.CreateUAV(RenderParticleRDGBuffer);
 	AddClearUAVPass(GraphBuilder, RenderParticleUAV, 0u);

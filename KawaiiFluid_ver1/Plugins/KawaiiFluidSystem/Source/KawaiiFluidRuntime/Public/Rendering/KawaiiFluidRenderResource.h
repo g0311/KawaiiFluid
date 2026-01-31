@@ -76,10 +76,10 @@ public:
 
 	//========================================
 	// SoA (Structure of Arrays) buffer access
-	// - Memory bandwidth optimization: 32B/particle → 12B/particle (for SDF)
+	// - Memory bandwidth optimization: 32B/particle → 12B/particle
 	//========================================
 
-	/** Position-only SoA buffer (float3 * N, 12B each) - SDF hotpath */
+	/** Position-only SoA buffer (float3 * N, 12B each) */
 	TRefCountPtr<FRDGPooledBuffer> GetPooledPositionBuffer() const
 	{
 		return PooledPositionBuffer;
@@ -158,7 +158,7 @@ public:
 	bool IsAnisotropyEnabled() const;
 
 	//========================================
-	// Bounds data (for SDF volume)
+	// Bounds data
 	//========================================
 
 	/**
@@ -179,7 +179,7 @@ public:
 	 */
 	void SetRenderParticleBuffer(TRefCountPtr<FRDGPooledBuffer> InBuffer);
 
-	/** Get FKawaiiRenderParticle buffer (for SDF iteration) */
+	/** Get FKawaiiRenderParticle buffer */
 	TRefCountPtr<FRDGPooledBuffer> GetPooledRenderParticleBuffer() const { return PooledRenderParticleBuffer; }
 
 	/** Get Bounds buffer pointer (for QueueBufferExtraction) */
@@ -195,7 +195,7 @@ public:
 	TRefCountPtr<FRDGPooledBuffer>* GetPooledVelocityBufferPtr() { return &PooledVelocityBuffer; }
 
 	//========================================
-	// Z-Order buffer access (for Ray Marching volume building)
+	// Z-Order buffer access
 	//========================================
 
 	/**
@@ -237,16 +237,16 @@ private:
 	// SoA (Structure of Arrays) buffers
 	//========================================
 
-	/** Position-only buffer (float3 * N, 12B each) - SDF hotpath */
+	/** Position-only buffer (float3 * N, 12B each) */
 	TRefCountPtr<FRDGPooledBuffer> PooledPositionBuffer;
 
 	/** Velocity-only buffer (float3 * N, 12B each) - for motion blur */
 	TRefCountPtr<FRDGPooledBuffer> PooledVelocityBuffer;
 
-	/** Bounds buffer (float3 * 2: Min, Max) - SDF volume range */
+	/** Bounds buffer (float3 * 2: Min, Max) */
 	TRefCountPtr<FRDGPooledBuffer> PooledBoundsBuffer;
 
-	/** FKawaiiRenderParticle buffer (for SDF iteration) */
+	/** FKawaiiRenderParticle buffer */
 	TRefCountPtr<FRDGPooledBuffer> PooledRenderParticleBuffer;
 
 	/** Current particle count stored in buffer */

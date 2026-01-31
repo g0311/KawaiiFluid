@@ -725,9 +725,9 @@ public:
 //=============================================================================
 // Extract Render Data SoA Compute Shader
 // Phase 2: Extract to SoA buffers for memory bandwidth optimization
-// - Position buffer: 12B per particle (SDF hot path)
+// - Position buffer: 12B per particle
 // - Velocity buffer: 12B per particle (motion blur)
-// Total: 24B vs 32B (AoS) = 25% reduction, SDF uses only Position = 62% reduction
+// Total: 24B vs 32B (AoS) = 25% reduction
 //=============================================================================
 
 class FExtractRenderDataSoACS : public FGlobalShader

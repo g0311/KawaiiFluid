@@ -42,12 +42,6 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidMetaballRendererSettings
 	// Rendering
 	//========================================
 
-	/** Pipeline type - how the fluid surface is computed */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering",
-		meta = (EditCondition = "bEnabled", DisplayName = "Pipeline Type"))
-	EMetaballPipelineType PipelineType = EMetaballPipelineType::ScreenSpace;
-
-
 	/** Use simulation particle radius for rendering (if true, ignores ParticleRenderRadius) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering", meta = (EditCondition = "bEnabled"))
 	bool bUseSimulationRadius = false;
@@ -305,11 +299,8 @@ private:
 	// Pipeline Architecture
 	//========================================
 
-	/** Rendering pipeline (ScreenSpace) - handles ShadingMode internally */
+	/** Rendering pipeline */
 	TSharedPtr<IKawaiiMetaballRenderingPipeline> Pipeline;
-
-	/** Cached pipeline type (to detect changes) */
-	EMetaballPipelineType CachedPipelineType = EMetaballPipelineType::ScreenSpace;
 
 	//========================================
 	// Preset Reference

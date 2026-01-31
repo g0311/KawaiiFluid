@@ -42,7 +42,7 @@ public:
 
 	/**
 	 * PrePostProcess - called after Lighting, before PostProcessing
-	 * All fluid rendering (ScreenSpace, RayMarching) happens here
+	 * All fluid rendering happens here
 	 * Both GBuffer and SceneColor are at internal resolution here
 	 */
 	virtual void PrePostProcessPass_RenderThread(

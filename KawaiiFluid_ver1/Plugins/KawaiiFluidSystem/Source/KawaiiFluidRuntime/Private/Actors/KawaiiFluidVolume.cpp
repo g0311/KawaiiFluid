@@ -891,7 +891,7 @@ void AKawaiiFluidVolume::InitializeRendering()
 	UKawaiiFluidPresetDataAsset* Preset = VolumeComponent->GetPreset();
 
 	// Initialize RenderingModule with SimulationModule as data provider
-	// Rendering parameters (PipelineType, etc.) are taken from Preset->RenderingParameters
+	// Rendering parameters are taken from Preset->RenderingParameters
 	RenderingModule->Initialize(World, VolumeComponent, SimulationModule, Preset);
 
 	// Configure ISMRenderer based on initial DebugDrawMode (like KawaiiFluidComponent)
@@ -920,14 +920,12 @@ void AKawaiiFluidVolume::InitializeRendering()
 			const bool bEnableMetaball = bIsActorVisible && !bISMMode && !bPointDebugMode;
 			MetaballRenderer->SetEnabled(bEnableMetaball);
 
-			// UpdatePipeline() creates the correct pipeline based on preset's PipelineType
-			// GetLocalParameters() returns Preset->RenderingParameters
+			// Creates the ScreenSpace pipeline
 			MetaballRenderer->UpdatePipeline();
 
-			UE_LOG(LogTemp, Log, TEXT("AKawaiiFluidVolume [%s]: MetaballRenderer configured (Enabled: %s, Pipeline: %d)"),
+			UE_LOG(LogTemp, Log, TEXT("AKawaiiFluidVolume [%s]: MetaballRenderer configured (Enabled: %s, Pipeline: ScreenSpace)"),
 				*GetName(),
-				bEnableMetaball ? TEXT("true") : TEXT("false"),
-				static_cast<int32>(Preset->RenderingParameters.PipelineType));
+				bEnableMetaball ? TEXT("true") : TEXT("false"));
 	}
 
 	// Connect MetaballRenderer to SimulationContext

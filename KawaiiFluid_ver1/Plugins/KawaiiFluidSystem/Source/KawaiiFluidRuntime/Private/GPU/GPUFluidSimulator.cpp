@@ -1858,22 +1858,6 @@ void FGPUFluidSimulator::ExtractPersistentBuffers(
 		if (SpatialData.CellCountsBuffer) GraphBuilder.QueueBufferExtraction(SpatialData.CellCountsBuffer, &PersistentCellCountsBuffer, ERHIAccess::UAVCompute);
 		if (SpatialData.ParticleIndicesBuffer) GraphBuilder.QueueBufferExtraction(SpatialData.ParticleIndicesBuffer, &PersistentParticleIndicesBuffer, ERHIAccess::UAVCompute);
 	}
-	else
-	{
-		// Extract Z-Order CellStart/CellEnd buffers ONLY when Ray Marching pipeline needs them
-		// This avoids unnecessary GPU memory copies for SSFR pipeline
-		if (bExtractZOrderBuffersForRayMarching)
-		{
-			if (SpatialData.CellStartBuffer)
-			{
-				GraphBuilder.QueueBufferExtraction(SpatialData.CellStartBuffer, &PersistentCellStartBuffer, ERHIAccess::SRVCompute);
-			}
-			if (SpatialData.CellEndBuffer)
-			{
-				GraphBuilder.QueueBufferExtraction(SpatialData.CellEndBuffer, &PersistentCellEndBuffer, ERHIAccess::SRVCompute);
-			}
-		}
-	}
 
 	// =====================================================
 	// Extract Neighbor Cache for Cohesion Force Double Buffering

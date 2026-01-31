@@ -18,7 +18,6 @@ class UKawaiiFluidMetaballRenderer;
  *
  * A Pipeline handles surface computation (how the fluid surface is determined):
  * - ScreenSpace: Depth -> Smoothing -> Normal -> Thickness passes
- * - RayMarching: 3D Density Volume with SDF
  *
  * Each Pipeline provides two execution points:
  * - PrepareRender(): Generate intermediate data (depth, normals, thickness, etc.)
@@ -31,14 +30,11 @@ class IKawaiiMetaballRenderingPipeline
 public:
 	virtual ~IKawaiiMetaballRenderingPipeline() = default;
 
-
-
 	/**
 	 * Prepare data for rendering (called at PrePostProcess timing)
 	 * Generates intermediate textures/buffers needed by ExecuteRender.
 	 *
 	 * - ScreenSpace: Depth, Normal, Thickness textures
-	 * - RayMarching: 3D Density Volume with SDF
 	 *
 	 * @param GraphBuilder     RDG builder for pass registration
 	 * @param View             Scene view for rendering
@@ -77,9 +73,6 @@ public:
 		FRDGTextureRef SceneDepthTexture,
 		FRDGTextureRef SceneColorTexture,
 		FScreenPassRenderTarget Output) = 0;
-
-	/** Get the pipeline type */
-	virtual EMetaballPipelineType GetPipelineType() const = 0;
 
 	/**
 	 * Get cached intermediate textures for shadow history storage.
