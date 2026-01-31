@@ -171,13 +171,14 @@ struct FGPUFluidSimulationParams
 	float SurfaceTensionActivationRatio;        // 0~1, distance ratio where ST activates
 	float SurfaceTensionFalloffRatio;           // 0~1, distance ratio where ST starts fading
 	int32 SurfaceTensionSurfaceThreshold;       // Surface particles get stronger ST
+	float SurfaceTensionVelocityDamping;        // 0~1, reduces velocity from ST correction (0=full velocity, 1=no velocity)
+	float SurfaceTensionTolerance;              // cm, dead zone around activation distance (prevents oscillation)
 
 	// Position-Based Cohesion (NVIDIA Flex style)
 	// Pulls particles together to maintain rest distance, creating gooey/stringy fluid
 	float CohesionStrengthNV;                   // 0~1, from Physics|Material Cohesion (renamed to avoid conflict)
 	float CohesionActivationRatio;              // 0~1, distance ratio where cohesion activates
 	float CohesionFalloffRatio;                 // 0~1, distance ratio where cohesion starts fading
-	int32 CohesionSurfaceThreshold;             // Surface particles get stronger cohesion
 
 	// Surface Tension / Cohesion max correction
 	float MaxSurfaceTensionCorrectionPerIteration;  // cm, max position correction per iteration
@@ -241,11 +242,12 @@ struct FGPUFluidSimulationParams
 		, SurfaceTensionActivationRatio(0.4f)
 		, SurfaceTensionFalloffRatio(0.7f)
 		, SurfaceTensionSurfaceThreshold(15)
+		, SurfaceTensionVelocityDamping(0.7f)
+		, SurfaceTensionTolerance(1.0f)
 		// Position-Based Cohesion (NVIDIA Flex style)
 		, CohesionStrengthNV(0.0f)
 		, CohesionActivationRatio(0.5f)
 		, CohesionFalloffRatio(0.8f)
-		, CohesionSurfaceThreshold(15)
 		// Surface Tension / Cohesion
 		, MaxSurfaceTensionCorrectionPerIteration(5.0f)
 	{

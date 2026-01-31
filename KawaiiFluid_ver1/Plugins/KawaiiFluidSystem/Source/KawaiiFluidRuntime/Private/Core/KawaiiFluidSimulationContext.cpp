@@ -561,13 +561,14 @@ FGPUFluidSimulationParams UKawaiiFluidSimulationContext::BuildGPUSimParams(
 	GPUParams.SurfaceTensionActivationRatio = Preset->SurfaceTensionActivationRatio;
 	GPUParams.SurfaceTensionFalloffRatio = Preset->SurfaceTensionFalloffRatio;
 	GPUParams.SurfaceTensionSurfaceThreshold = Preset->SurfaceTensionSurfaceThreshold;
+	GPUParams.SurfaceTensionVelocityDamping = Preset->SurfaceTensionVelocityDamping;
+	GPUParams.SurfaceTensionTolerance = Preset->SurfaceTensionTolerance;
 
 	// Position-Based Cohesion (NVIDIA Flex style)
 	// Uses Cohesion from Material for strength, pulls particles to rest distance
 	GPUParams.CohesionStrengthNV = Preset->Cohesion;  // From Physics|Material
 	GPUParams.CohesionActivationRatio = Preset->CohesionActivationRatio;
 	GPUParams.CohesionFalloffRatio = Preset->CohesionFalloffRatio;
-	GPUParams.CohesionSurfaceThreshold = Preset->CohesionSurfaceThreshold;
 
 	// Surface Tension / Cohesion max correction
 	GPUParams.MaxSurfaceTensionCorrectionPerIteration = Preset->MaxSurfaceTensionCorrectionPerIteration;

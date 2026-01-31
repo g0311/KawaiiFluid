@@ -440,6 +440,28 @@ public:
 		meta = (ClampMin = "0.0", ClampMax = "50.0", EditCondition = "bEnablePositionBasedSurfaceTension"))
 	float MaxSurfaceTensionCorrectionPerIteration = 5.0f;
 
+	/**
+	 * Surface Tension velocity damping (under-relaxation)
+	 * Controls how much of the ST correction becomes velocity.
+	 * 0.0 = full velocity (original, oscillates), 1.0 = no velocity (stable but slow)
+	 * 0.5~0.8 = good balance between responsiveness and stability
+	 * Higher values = more stable rest state, less responsive to disturbance
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|SurfaceTension",
+		meta = (ClampMin = "0.0", ClampMax = "1.0", EditCondition = "bEnablePositionBasedSurfaceTension"))
+	float SurfaceTensionVelocityDamping = 0.7f;
+
+	/**
+	 * Dead zone tolerance around activation distance (cm)
+	 * Particles within this distance of ActivationDistance won't receive correction.
+	 * This prevents oscillation at equilibrium by allowing particles to settle.
+	 * Higher values = larger dead zone, easier to stabilize but less precise shape
+	 * Typical: 0.5 ~ 2.0 cm (1~2% of SmoothingRadius)
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|SurfaceTension",
+		meta = (ClampMin = "0.0", ClampMax = "5.0", EditCondition = "bEnablePositionBasedSurfaceTension"))
+	float SurfaceTensionTolerance = 1.0f;
+
 	//========================================
 	// Physics | Simulation | Cohesion (Position-Based, NVIDIA Flex style)
 	//========================================
@@ -464,16 +486,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|Cohesion",
 		meta = (ClampMin = "0.2", ClampMax = "1.0"))
 	float CohesionFalloffRatio = 0.8f;
-
-	/**
-	 * Surface particles neighbor threshold for cohesion
-	 * Particles with fewer neighbors (surface particles) get stronger cohesion.
-	 * Creates gooey/stringy fluid behavior where streams stay connected.
-	 * 0 = uniform cohesion strength for all particles
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|Cohesion",
-		meta = (ClampMin = "0", ClampMax = "30"))
-	int32 CohesionSurfaceThreshold = 15;
 
 	//========================================
 	// Utility Functions

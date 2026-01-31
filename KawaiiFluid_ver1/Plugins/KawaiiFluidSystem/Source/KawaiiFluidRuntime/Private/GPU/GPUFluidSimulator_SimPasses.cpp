@@ -62,11 +62,6 @@ void FGPUFluidSimulator::AddPredictPositionsPass(
 	                                       PrevNeighborCountsBuffer.IsValid() &&
 	                                       PrevNeighborBufferParticleCount > 0;
 
-	// Akinci Force-based vs Position-Based Surface Tension
-	// When bEnablePositionBasedSurfaceTension = 0 (default): Use Akinci 2013 force-based in PredictPositions
-	// When bEnablePositionBasedSurfaceTension = 1: Skip force-based, use Position-Based in SolveDensityPressure
-	PassParameters->bUsePositionBasedCohesion = Params.bEnablePositionBasedSurfaceTension;
-
 	if (bCanUsePrevNeighborCache)
 	{
 		// Register previous frame's persistent neighbor cache buffers
@@ -235,14 +230,14 @@ void FGPUFluidSimulator::AddSolveDensityPressurePass(
 	PassParameters->SurfaceTensionActivationDistance = Params.SmoothingRadius * Params.SurfaceTensionActivationRatio;
 	PassParameters->SurfaceTensionFalloffDistance = Params.SmoothingRadius * Params.SurfaceTensionFalloffRatio;
 	PassParameters->SurfaceTensionSurfaceThreshold = Params.SurfaceTensionSurfaceThreshold;
+	PassParameters->SurfaceTensionVelocityDamping = Params.SurfaceTensionVelocityDamping;
+	PassParameters->SurfaceTensionTolerance = Params.SurfaceTensionTolerance;
 
 	// Position-Based Cohesion (NVIDIA Flex style)
 	// Pulls particles together to maintain rest distance
-	PassParameters->bUsePositionBasedCohesion = 1;  // Always enabled
 	PassParameters->CohesionStrength = Params.CohesionStrengthNV;
 	PassParameters->CohesionActivationDistance = Params.SmoothingRadius * Params.CohesionActivationRatio;
 	PassParameters->CohesionFalloffDistance = Params.SmoothingRadius * Params.CohesionFalloffRatio;
-	PassParameters->CohesionSurfaceThreshold = Params.CohesionSurfaceThreshold;
 
 	// Surface Tension / Cohesion max correction
 	PassParameters->MaxCohesionCorrection = Params.MaxSurfaceTensionCorrectionPerIteration;

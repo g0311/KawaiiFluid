@@ -116,8 +116,6 @@ public:
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, PrevNeighborCounts)
 		SHADER_PARAMETER(int32, bUsePrevNeighborCache)   // 0 = skip forces (first frame)
 		SHADER_PARAMETER(int32, PrevParticleCount)       // Safety: bounds check
-		// Position-Based Cohesion flag (when enabled, skip Force-based cohesion)
-		SHADER_PARAMETER(int32, bUsePositionBasedCohesion)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 256;
@@ -316,13 +314,13 @@ public:
 		SHADER_PARAMETER(float, SurfaceTensionActivationDistance)   // cm (h * ratio)
 		SHADER_PARAMETER(float, SurfaceTensionFalloffDistance)      // cm (h * ratio)
 		SHADER_PARAMETER(int32, SurfaceTensionSurfaceThreshold)
+		SHADER_PARAMETER(float, SurfaceTensionVelocityDamping)   // 0~1, under-relaxation for stability
+		SHADER_PARAMETER(float, SurfaceTensionTolerance)         // cm, dead zone around activation (prevents oscillation)
 		// Position-Based Cohesion (NVIDIA Flex style)
 		// Creates gooey/stringy fluid by maintaining rest distance between particles
-		SHADER_PARAMETER(int32, bUsePositionBasedCohesion)          // 1: Enable Cohesion
 		SHADER_PARAMETER(float, CohesionStrength)                   // Cohesion strength (0~1)
 		SHADER_PARAMETER(float, CohesionActivationDistance)         // cm (h * ratio, typically 0.5h)
 		SHADER_PARAMETER(float, CohesionFalloffDistance)            // cm (h * ratio, typically 0.8h)
-		SHADER_PARAMETER(int32, CohesionSurfaceThreshold)           // Neighbor count for surface detection
 		// Shared for Surface Tension and Cohesion
 		SHADER_PARAMETER(float, MaxCohesionCorrection)              // cm per iteration
 	END_SHADER_PARAMETER_STRUCT()
