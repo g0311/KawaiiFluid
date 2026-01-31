@@ -98,7 +98,7 @@ public:
 	// Debug Methods (Delegate to VolumeComponent)
 	//========================================
 
-	/** Set debug draw mode (None, ISM, DebugDraw) */
+	/** Set debug draw mode */
 	UFUNCTION(BlueprintCallable, Category = "Debug")
 	void SetDebugDrawMode(EKawaiiFluidDebugDrawMode Mode);
 
@@ -106,19 +106,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Debug")
 	EKawaiiFluidDebugDrawMode GetDebugDrawMode() const;
 
-	/** Set debug visualization type (for DebugDraw mode) */
-	UFUNCTION(BlueprintCallable, Category = "Debug")
-	void SetDebugVisualization(EFluidDebugVisualization Mode);
-
-	/** Get current debug visualization type */
-	UFUNCTION(BlueprintPure, Category = "Debug")
-	EFluidDebugVisualization GetDebugVisualization() const;
-
-	/** Enable debug drawing with specified visualization type */
-	UFUNCTION(BlueprintCallable, Category = "Debug")
-	void EnableDebugDraw(EFluidDebugVisualization Mode, float PointSize = 8.0f);
-
-	/** Disable debug drawing */
+	/** Disable debug drawing (sets mode to None) */
 	UFUNCTION(BlueprintCallable, Category = "Debug")
 	void DisableDebugDraw();
 
@@ -296,9 +284,6 @@ private:
 
 	/** Cached ISM debug color (for change detection) */
 	FLinearColor CachedISMDebugColor = FLinearColor(0.2f, 0.5f, 1.0f, 0.8f);
-
-	/** Cached ISM max render particles (for change detection) */
-	int32 CachedISMMaxRenderParticles = 100000;
 
 #if WITH_EDITOR
 	/** Initialize rendering for editor mode (ISM only for brush visualization) */

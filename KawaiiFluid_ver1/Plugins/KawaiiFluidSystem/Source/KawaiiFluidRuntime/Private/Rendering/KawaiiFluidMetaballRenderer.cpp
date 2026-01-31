@@ -90,7 +90,6 @@ void UKawaiiFluidMetaballRenderer::ApplySettings(const FKawaiiFluidMetaballRende
 	}
 
 	// Map settings to LocalParameters
-	LocalParameters.bEnableRendering = Settings.bEnabled;
 	LocalParameters.PipelineType = Settings.PipelineType;
 	LocalParameters.FluidColor = Settings.FluidColor;
 	LocalParameters.FresnelStrength = Settings.FresnelStrength;

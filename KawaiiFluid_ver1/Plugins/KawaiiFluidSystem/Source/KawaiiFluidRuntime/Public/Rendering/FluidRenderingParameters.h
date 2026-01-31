@@ -97,10 +97,6 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	// General
 	//========================================
 
-	/** Enable rendering */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|General")
-	bool bEnableRendering = true;
-
 	/** Pipeline type (how surface is computed) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|General")
 	EMetaballPipelineType PipelineType = EMetaballPipelineType::ScreenSpace;
@@ -656,8 +652,7 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 // Hash function for batching (TMap key)
 FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
 {
-	uint32 Hash = GetTypeHash(Params.bEnableRendering);
-	Hash = HashCombine(Hash, GetTypeHash(static_cast<uint8>(Params.PipelineType)));
+	uint32 Hash = GetTypeHash(static_cast<uint8>(Params.PipelineType));
 	Hash = HashCombine(Hash, GetTypeHash(Params.FluidColor.ToString()));
 	Hash = HashCombine(Hash, GetTypeHash(Params.FresnelStrength));
 	Hash = HashCombine(Hash, GetTypeHash(Params.RefractiveIndex));
@@ -726,8 +721,7 @@ FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
 // Equality operator for TMap key usage
 FORCEINLINE bool operator==(const FFluidRenderingParameters& A, const FFluidRenderingParameters& B)
 {
-	return A.bEnableRendering == B.bEnableRendering &&
-		A.PipelineType == B.PipelineType &&
+	return A.PipelineType == B.PipelineType &&
 		A.FluidColor.Equals(B.FluidColor, 0.001f) &&
 		FMath::IsNearlyEqual(A.FresnelStrength, B.FresnelStrength, 0.001f) &&
 		FMath::IsNearlyEqual(A.RefractiveIndex, B.RefractiveIndex, 0.001f) &&

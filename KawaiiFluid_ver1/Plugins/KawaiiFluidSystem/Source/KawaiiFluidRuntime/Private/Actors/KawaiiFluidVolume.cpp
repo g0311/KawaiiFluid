@@ -115,11 +115,10 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 	// Process pending spawn requests from emitters
 	ProcessPendingSpawnRequests();
 
-	// Set readback request for ISM/DebugDraw modes (required for GPU->CPU data transfer)
+	// Set readback request for ISM/Point debug modes (required for GPU->CPU data transfer)
 	// Without this, ISM renderer won't get updated particle data
 	{
-		const bool bNeedReadback = (VolumeComponent->DebugDrawMode == EKawaiiFluidDebugDrawMode::DebugDraw) ||
-		                           (VolumeComponent->DebugDrawMode == EKawaiiFluidDebugDrawMode::ISM)
+		const bool bNeedReadback = RequiresGPUReadback(VolumeComponent->DebugDrawMode)
 #if WITH_EDITORONLY_DATA
 		                           || VolumeComponent->bBrushModeActive
 #endif
@@ -208,7 +207,7 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 
 		const EKawaiiFluidDebugDrawMode CurrentMode = VolumeComponent->DebugDrawMode;
 		const bool bISMMode = (CurrentMode == EKawaiiFluidDebugDrawMode::ISM);
-		const bool bDebugDrawMode = (CurrentMode == EKawaiiFluidDebugDrawMode::DebugDraw);
+		const bool bPointDebugMode = IsPointDebugMode(CurrentMode);
 
 		// Sync ISM state based on DebugDrawMode (same logic for editor and runtime)
 		if (ISMRenderer)
@@ -218,7 +217,7 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 
 			if (bModeChanged)
 			{
-				ISMRenderer->bEnabled = bISMMode;
+				ISMRenderer->SetEnabled(bISMMode);
 				CachedDebugDrawMode = CurrentMode;
 			}
 
@@ -227,32 +226,29 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 				ISMRenderer->SetFluidColor(VolumeComponent->ISMDebugColor);
 				CachedISMDebugColor = VolumeComponent->ISMDebugColor;
 			}
-
-			// Update MaxRenderParticles if changed at runtime
-			if (CachedISMMaxRenderParticles != VolumeComponent->ISMMaxRenderParticles)
-			{
-				ISMRenderer->SetMaxRenderParticles(VolumeComponent->ISMMaxRenderParticles);
-				CachedISMMaxRenderParticles = VolumeComponent->ISMMaxRenderParticles;
-			}
 		}
 
-		// Metaball is enabled when rendering is enabled AND not in ISM/DebugDraw mode
+		// Check both Actor Hidden In Game and Component Visible for proper UE visibility behavior
+		const bool bIsActorVisible = !IsHidden() && GetRootComponent() && GetRootComponent()->IsVisible();
+
+		// Metaball is enabled when Actor is visible AND not in ISM/DebugDraw mode
 		// Same logic for editor and runtime - respects user's DebugDrawMode setting
 		if (MetaballRenderer)
 		{
-			MetaballRenderer->SetEnabled(VolumeComponent->bEnableRendering && !bISMMode && !bDebugDrawMode);
+			MetaballRenderer->SetEnabled(bIsActorVisible && !bISMMode && !bPointDebugMode);
 		}
 
-		// UpdateRenderers must be called when rendering is enabled OR ISM debug mode is active
-		if (VolumeComponent->bEnableRendering || bISMMode)
+		// UpdateRenderers must be called when Actor is visible OR ISM debug mode is active
+		if (bIsActorVisible || bISMMode)
 		{
 			RenderingModule->UpdateRenderers();
 		}
 	}
 
 	// Debug visualization (read from VolumeComponent)
-	// Only render if bEnableRendering is true
-	if (VolumeComponent->bEnableRendering && VolumeComponent->DebugDrawMode == EKawaiiFluidDebugDrawMode::DebugDraw)
+	// Only render if Actor is visible and Point debug mode is active
+	const bool bIsActorVisibleForDebug = !IsHidden() && GetRootComponent() && GetRootComponent()->IsVisible();
+	if (bIsActorVisibleForDebug && IsPointDebugMode(VolumeComponent->DebugDrawMode))
 	{
 		DrawDebugParticles();
 	}
@@ -338,7 +334,7 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 				}
 			}
 			const bool bNeedVFX = VolumeComponent->SplashVFX != nullptr;
-			const bool bNeedDebug = VolumeComponent->DebugDrawMode == EKawaiiFluidDebugDrawMode::DebugDraw;
+			const bool bNeedDebug = IsPointDebugMode(VolumeComponent->DebugDrawMode);
 			const bool bNeedReadback = bNeedShadow || bNeedVFX || bNeedDebug;
 			
 			// Only enable readback when actually needed (avoids GPU barrier overhead)
@@ -746,27 +742,6 @@ EKawaiiFluidDebugDrawMode AKawaiiFluidVolume::GetDebugDrawMode() const
 	return VolumeComponent ? VolumeComponent->GetDebugDrawMode() : EKawaiiFluidDebugDrawMode::None;
 }
 
-void AKawaiiFluidVolume::SetDebugVisualization(EFluidDebugVisualization Mode)
-{
-	if (VolumeComponent)
-	{
-		VolumeComponent->SetDebugVisualization(Mode);
-	}
-}
-
-EFluidDebugVisualization AKawaiiFluidVolume::GetDebugVisualization() const
-{
-	return VolumeComponent ? VolumeComponent->GetDebugVisualization() : EFluidDebugVisualization::None;
-}
-
-void AKawaiiFluidVolume::EnableDebugDraw(EFluidDebugVisualization Mode, float PointSize)
-{
-	if (VolumeComponent)
-	{
-		VolumeComponent->EnableDebugDraw(Mode, PointSize);
-	}
-}
-
 void AKawaiiFluidVolume::DisableDebugDraw()
 {
 	if (VolumeComponent)
@@ -901,7 +876,7 @@ void AKawaiiFluidVolume::CleanupSimulation()
 
 void AKawaiiFluidVolume::InitializeRendering()
 {
-	if (!VolumeComponent || !VolumeComponent->bEnableRendering || !RenderingModule || !SimulationModule)
+	if (!VolumeComponent || !RenderingModule || !SimulationModule)
 	{
 		return;
 	}
@@ -924,12 +899,11 @@ void AKawaiiFluidVolume::InitializeRendering()
 	{
 		const bool bISMMode = (VolumeComponent->DebugDrawMode == EKawaiiFluidDebugDrawMode::ISM);
 		ISMRenderer->SetEnabled(bISMMode);
-		ISMRenderer->SetMaxRenderParticles(VolumeComponent->ISMMaxRenderParticles);
 		if (bISMMode)
 		{
 			ISMRenderer->SetFluidColor(VolumeComponent->ISMDebugColor);
 		}
-		UE_LOG(LogTemp, Log, TEXT("AKawaiiFluidVolume [%s]: ISMRenderer %s (MaxRenderParticles: %d)"), *GetName(), bISMMode ? TEXT("enabled") : TEXT("disabled"), VolumeComponent->ISMMaxRenderParticles);
+		UE_LOG(LogTemp, Log, TEXT("AKawaiiFluidVolume [%s]: ISMRenderer %s"), *GetName(), bISMMode ? TEXT("enabled") : TEXT("disabled"));
 	}
 
 	// Configure MetaballRenderer based on preset's RenderingParameters
@@ -937,12 +911,13 @@ void AKawaiiFluidVolume::InitializeRendering()
 	if (UKawaiiFluidMetaballRenderer* MetaballRenderer = RenderingModule->GetMetaballRenderer())
 	{
 		const bool bISMMode = (VolumeComponent->DebugDrawMode == EKawaiiFluidDebugDrawMode::ISM);
-		const bool bDebugDrawMode = (VolumeComponent->DebugDrawMode == EKawaiiFluidDebugDrawMode::DebugDraw);
-		
+		const bool bPointDebugMode = IsPointDebugMode(VolumeComponent->DebugDrawMode);
+
 		if (Preset)
 		{
 			// Disable Metaball if ISM or DebugDraw mode is active
-			const bool bEnableMetaball = Preset->RenderingParameters.bEnableRendering && !bISMMode && !bDebugDrawMode;
+			const bool bIsActorVisible = !IsHidden() && GetRootComponent() && GetRootComponent()->IsVisible();
+			const bool bEnableMetaball = bIsActorVisible && !bISMMode && !bPointDebugMode;
 			MetaballRenderer->SetEnabled(bEnableMetaball);
 
 			// UpdatePipeline() creates the correct pipeline based on preset's PipelineType
@@ -1010,24 +985,24 @@ void AKawaiiFluidVolume::InitializeEditorRendering()
 	// Respect the user's setting - don't force ISM
 	const EKawaiiFluidDebugDrawMode CurrentMode = VolumeComponent->DebugDrawMode;
 	const bool bISMMode = (CurrentMode == EKawaiiFluidDebugDrawMode::ISM);
-	const bool bDebugDrawMode = (CurrentMode == EKawaiiFluidDebugDrawMode::DebugDraw);
+	const bool bPointDebugMode = IsPointDebugMode(CurrentMode);
 
 	if (UKawaiiFluidISMRenderer* ISMRenderer = RenderingModule->GetISMRenderer())
 	{
 		ISMRenderer->SetEnabled(bISMMode);
-		ISMRenderer->SetMaxRenderParticles(VolumeComponent->ISMMaxRenderParticles);
 		if (bISMMode)
 		{
 			ISMRenderer->SetFluidColor(VolumeComponent->ISMDebugColor);
 		}
-		UE_LOG(LogTemp, Log, TEXT("AKawaiiFluidVolume [%s]: Editor ISMRenderer %s"), 
+		UE_LOG(LogTemp, Log, TEXT("AKawaiiFluidVolume [%s]: Editor ISMRenderer %s"),
 			*GetName(), bISMMode ? TEXT("enabled") : TEXT("disabled"));
 	}
 
-	// Metaball is enabled when rendering is enabled AND not in ISM/DebugDraw mode
+	// Metaball is enabled when Actor is visible AND not in ISM/DebugDraw mode
 	if (UKawaiiFluidMetaballRenderer* MetaballRenderer = RenderingModule->GetMetaballRenderer())
 	{
-		const bool bEnableMetaball = VolumeComponent->bEnableRendering && !bISMMode && !bDebugDrawMode;
+		const bool bIsActorVisible = !IsHidden() && GetRootComponent() && GetRootComponent()->IsVisible();
+		const bool bEnableMetaball = bIsActorVisible && !bISMMode && !bPointDebugMode;
 		MetaballRenderer->SetEnabled(bEnableMetaball);
 		
 		if (bEnableMetaball && Preset)
@@ -1112,8 +1087,12 @@ void AKawaiiFluidVolume::DrawDebugParticles()
 		return;
 	}
 
-	// Get debug point size from VolumeComponent
-	const float DebugPointSize = VolumeComponent->DebugPointSize;
+	// Get particle size from Preset's ParticleRadius (simulation radius for accurate debug visualization)
+	float DebugPointSize = 5.0f;  // Default fallback
+	if (UKawaiiFluidPresetDataAsset* Preset = VolumeComponent->GetPreset())
+	{
+		DebugPointSize = Preset->ParticleRadius;
+	}
 
 	if (SimulationModule->IsGPUSimulationActive())
 	{
@@ -1559,13 +1538,13 @@ FColor AKawaiiFluidVolume::ComputeDebugDrawColor(int32 ParticleIndex, int32 Tota
 		return FColor::White;
 	}
 
-	const EFluidDebugVisualization VisualizationType = VolumeComponent->DebugVisualizationType;
+	const EKawaiiFluidDebugDrawMode DrawMode = VolumeComponent->DebugDrawMode;
 	const UKawaiiFluidPresetDataAsset* Preset = VolumeComponent->GetPreset();
 
-	switch (VisualizationType)
+	switch (DrawMode)
 	{
-	case EFluidDebugVisualization::ZOrderArrayIndex:
-	case EFluidDebugVisualization::ArrayIndex:  // Legacy fallthrough
+	case EKawaiiFluidDebugDrawMode::Point_ZOrderArrayIndex:
+	case EKawaiiFluidDebugDrawMode::DebugDraw:  // Legacy fallthrough (default to ZOrderArrayIndex)
 		{
 			// Rainbow gradient based on array index
 			// If Z-Order sorted correctly, spatially close particles should have similar colors
@@ -1573,13 +1552,15 @@ FColor AKawaiiFluidVolume::ComputeDebugDrawColor(int32 ParticleIndex, int32 Tota
 			return FLinearColor::MakeFromHSV8(static_cast<uint8>(T * 255.0f), 255, 255).ToFColor(true);
 		}
 
-	case EFluidDebugVisualization::ZOrderMortonCode:
-	case EFluidDebugVisualization::MortonCode:  // Legacy fallthrough
+	case EKawaiiFluidDebugDrawMode::Point_ZOrderMortonCode:
 		{
 			// Compute Morton code from position
 			FVector Range = DebugDrawBoundsMax - DebugDrawBoundsMin;
 			float MaxRange = FMath::Max3(Range.X, Range.Y, Range.Z);
-			if (MaxRange < KINDA_SMALL_NUMBER) MaxRange = 1.0f;
+			if (MaxRange < KINDA_SMALL_NUMBER)
+			{
+				MaxRange = 1.0f;
+			}
 
 			FVector NormPos = (InPosition - DebugDrawBoundsMin) / MaxRange;
 			NormPos.X = FMath::Clamp(NormPos.X, 0.0, 1.0);
@@ -1591,7 +1572,7 @@ FColor AKawaiiFluidVolume::ComputeDebugDrawColor(int32 ParticleIndex, int32 Tota
 			return FLinearColor::MakeFromHSV8(static_cast<uint8>(Hue * 255.0f), 255, 255).ToFColor(true);
 		}
 
-	case EFluidDebugVisualization::PositionX:
+	case EKawaiiFluidDebugDrawMode::Point_PositionX:
 		{
 			const FVector Range = DebugDrawBoundsMax - DebugDrawBoundsMin;
 			const float Normalized = (Range.X > KINDA_SMALL_NUMBER) ?
@@ -1599,7 +1580,7 @@ FColor AKawaiiFluidVolume::ComputeDebugDrawColor(int32 ParticleIndex, int32 Tota
 			return FColor(static_cast<uint8>(FMath::Clamp(Normalized, 0.0f, 1.0f) * 255), 50, 50);
 		}
 
-	case EFluidDebugVisualization::PositionY:
+	case EKawaiiFluidDebugDrawMode::Point_PositionY:
 		{
 			const FVector Range = DebugDrawBoundsMax - DebugDrawBoundsMin;
 			const float Normalized = (Range.Y > KINDA_SMALL_NUMBER) ?
@@ -1607,7 +1588,7 @@ FColor AKawaiiFluidVolume::ComputeDebugDrawColor(int32 ParticleIndex, int32 Tota
 			return FColor(50, static_cast<uint8>(FMath::Clamp(Normalized, 0.0f, 1.0f) * 255), 50);
 		}
 
-	case EFluidDebugVisualization::PositionZ:
+	case EKawaiiFluidDebugDrawMode::Point_PositionZ:
 		{
 			const FVector Range = DebugDrawBoundsMax - DebugDrawBoundsMin;
 			const float Normalized = (Range.Z > KINDA_SMALL_NUMBER) ?
@@ -1615,7 +1596,7 @@ FColor AKawaiiFluidVolume::ComputeDebugDrawColor(int32 ParticleIndex, int32 Tota
 			return FColor(50, 50, static_cast<uint8>(FMath::Clamp(Normalized, 0.0f, 1.0f) * 255));
 		}
 
-	case EFluidDebugVisualization::Density:
+	case EKawaiiFluidDebugDrawMode::Point_Density:
 		{
 			// Blue (low) to Red (high) based on density
 			const float RestDensity = Preset ? Preset->Density : 1000.0f;
@@ -1623,7 +1604,7 @@ FColor AKawaiiFluidVolume::ComputeDebugDrawColor(int32 ParticleIndex, int32 Tota
 			return FLinearColor::LerpUsingHSV(FLinearColor::Blue, FLinearColor::Red, NormalizedDensity).ToFColor(true);
 		}
 
-	case EFluidDebugVisualization::IsAttached:
+	case EKawaiiFluidDebugDrawMode::Point_IsAttached:
 		{
 			// Green = near boundary, Blue = free particle
 			// This visualizes NEAR_BOUNDARY flag which is dynamically set by GPU BoundaryAdhesion pass

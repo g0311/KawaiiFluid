@@ -164,10 +164,6 @@ public:
 	// Rendering Configuration
 	//========================================
 
-	/** Enable rendering for this volume */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume|Rendering")
-	bool bEnableRendering = true;
-
 	/** Enable shadow casting via instanced spheres */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume|Rendering")
 	bool bEnableShadow = false;
@@ -211,34 +207,18 @@ public:
 	int32 IsolationNeighborThreshold = 2;
 
 	//========================================
-	// Debug Particle Visualization
+	// Debug Draw Mode
 	//========================================
 
-	/** Debug visualization mode (None, ISM Sphere, or Debug Point) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume|Debug|Particles")
+	/** Debug draw mode for particle visualization.
+	 *  Uses simulation ParticleRadius for accurate size representation. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume|Debug|Draw Mode")
 	EKawaiiFluidDebugDrawMode DebugDrawMode = EKawaiiFluidDebugDrawMode::None;
 
 	/** Debug particle color (ISM mode only) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume|Debug|Particles",
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume|Debug|Draw Mode",
 	          meta = (EditCondition = "DebugDrawMode == EKawaiiFluidDebugDrawMode::ISM", EditConditionHides))
 	FLinearColor ISMDebugColor = FLinearColor(0.2f, 0.5f, 1.0f, 0.8f);
-
-	/** Maximum particles to render in ISM mode (performance limit) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume|Debug|Particles",
-	          meta = (EditCondition = "DebugDrawMode == EKawaiiFluidDebugDrawMode::ISM", EditConditionHides,
-	                  ClampMin = "1000", ClampMax = "500000"))
-	int32 ISMMaxRenderParticles = 100000;
-
-	/** Debug visualization type (DebugDraw mode only) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume|Debug|Particles",
-	          meta = (EditCondition = "DebugDrawMode == EKawaiiFluidDebugDrawMode::DebugDraw", EditConditionHides))
-	EFluidDebugVisualization DebugVisualizationType = EFluidDebugVisualization::ZOrderArrayIndex;
-
-	/** Debug point size (DebugDraw mode only) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Volume|Debug|Particles",
-	          meta = (EditCondition = "DebugDrawMode == EKawaiiFluidDebugDrawMode::DebugDraw", EditConditionHides,
-	                  ClampMin = "1.0", ClampMax = "50.0"))
-	float DebugPointSize = 8.0f;
 
 	//========================================
 	// Static Boundary Debug Visualization
@@ -427,25 +407,13 @@ public:
 	// Debug Methods
 	//========================================
 
-	/** Set debug draw mode (None, ISM, DebugDraw) */
+	/** Set debug draw mode */
 	UFUNCTION(BlueprintCallable, Category = "Fluid Volume|Debug")
 	void SetDebugDrawMode(EKawaiiFluidDebugDrawMode Mode);
 
 	/** Get current debug draw mode */
 	UFUNCTION(BlueprintPure, Category = "Fluid Volume|Debug")
 	EKawaiiFluidDebugDrawMode GetDebugDrawMode() const { return DebugDrawMode; }
-
-	/** Set debug visualization type (for DebugDraw mode) */
-	UFUNCTION(BlueprintCallable, Category = "Fluid Volume|Debug")
-	void SetDebugVisualization(EFluidDebugVisualization Mode);
-
-	/** Get current debug visualization type */
-	UFUNCTION(BlueprintPure, Category = "Fluid Volume|Debug")
-	EFluidDebugVisualization GetDebugVisualization() const { return DebugVisualizationType; }
-
-	/** Enable debug drawing with specified visualization type */
-	UFUNCTION(BlueprintCallable, Category = "Fluid Volume|Debug")
-	void EnableDebugDraw(EFluidDebugVisualization Mode, float PointSize = 8.0f);
 
 	/** Disable debug drawing */
 	UFUNCTION(BlueprintCallable, Category = "Fluid Volume|Debug")

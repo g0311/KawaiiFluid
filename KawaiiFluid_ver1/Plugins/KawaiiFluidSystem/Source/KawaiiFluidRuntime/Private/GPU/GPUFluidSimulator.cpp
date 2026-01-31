@@ -3147,7 +3147,7 @@ void FGPUFluidSimulator::ProcessColliderContactCountReadback(FRHICommandListImme
 }
 
 //=============================================================================
-// Anisotropy Readback (Async GPU→CPU for Ellipsoid HISM Shadows)
+// Anisotropy Readback (Async GPU→CPU for Ellipsoid ISM Shadows)
 //=============================================================================
 
 /**
@@ -3203,7 +3203,7 @@ void FGPUFluidSimulator::ReleaseAnisotropyReadbackObjects()
 }
 
 /**
- * @brief Get shadow positions for HISM shadow instances (non-blocking).
+ * @brief Get shadow positions for ISM shadow instances (non-blocking).
  * @param OutPositions Output array of particle positions (FVector).
  * @return true if valid positions were retrieved.
  */
@@ -3815,7 +3815,7 @@ void FGPUFluidSimulator::ProcessStatsReadback(FRHICommandListImmediate& RHICmdLi
 }
 
 /**
- * @brief Get shadow data with anisotropy for ellipsoid HISM shadows.
+ * @brief Get shadow data with anisotropy for ellipsoid ISM shadows.
  * @param OutPositions Output array of particle positions.
  * @param OutVelocities Output array of particle velocities.
  * @param OutAnisotropyAxis1 Output array of first ellipsoid axis (xyz=dir, w=scale).

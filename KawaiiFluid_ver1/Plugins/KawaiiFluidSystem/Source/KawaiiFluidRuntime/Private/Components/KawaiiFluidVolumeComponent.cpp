@@ -91,19 +91,10 @@ void UKawaiiFluidVolumeComponent::TickComponent(float DeltaTime, ELevelTick Tick
 	// Update bounds if component moved
 	RecalculateBounds();
 
-	// Update UBoxComponent visibility based on settings
-	UWorld* World = GetWorld();
-	if (World)
+	// Update wireframe color based on selection
+	if (AActor* Owner = GetOwner())
 	{
-		const bool bIsEditor = !World->IsGameWorld();
-		const bool bShouldBeVisible = (bIsEditor && bShowBoundsInEditor) || (!bIsEditor && bShowBoundsAtRuntime);
-
-		SetHiddenInGame(!bShowBoundsAtRuntime);
-		SetVisibility(bShouldBeVisible);
-
-		// Update wireframe color based on selection
-		AActor* Owner = GetOwner();
-		ShapeColor = (Owner && Owner->IsSelected()) ? FColor::Yellow : BoundsColor;
+		ShapeColor = Owner->IsSelected() ? FColor::Yellow : BoundsColor;
 	}
 
 	// Draw additional debug visualization (Z-Order space, info text)
@@ -497,22 +488,6 @@ float UKawaiiFluidVolumeComponent::GetWallFriction() const
 void UKawaiiFluidVolumeComponent::SetDebugDrawMode(EKawaiiFluidDebugDrawMode Mode)
 {
 	DebugDrawMode = Mode;
-}
-
-void UKawaiiFluidVolumeComponent::SetDebugVisualization(EFluidDebugVisualization Mode)
-{
-	DebugVisualizationType = Mode;
-	if (Mode != EFluidDebugVisualization::None)
-	{
-		DebugDrawMode = EKawaiiFluidDebugDrawMode::DebugDraw;
-	}
-}
-
-void UKawaiiFluidVolumeComponent::EnableDebugDraw(EFluidDebugVisualization Mode, float PointSize)
-{
-	DebugDrawMode = EKawaiiFluidDebugDrawMode::DebugDraw;
-	DebugVisualizationType = Mode;
-	DebugPointSize = PointSize;
 }
 
 void UKawaiiFluidVolumeComponent::DisableDebugDraw()

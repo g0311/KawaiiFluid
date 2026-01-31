@@ -6,7 +6,7 @@
 #include "KawaiiFluidRenderingTypes.generated.h"
 
 /**
- * Shadow mesh quality levels for HISM shadow casting.
+ * Shadow mesh quality levels for ISM shadow casting.
  * Controls the polygon count of instanced spheres used for fluid shadows.
  */
 UENUM(BlueprintType)
@@ -23,56 +23,54 @@ enum class EFluidShadowMeshQuality : uint8
 };
 
 /**
- * Debug draw mode for particle visualization
- * Controls the rendering method for debug visualization.
+ * Debug draw mode for particle visualization.
+ * Controls both rendering method and coloring scheme.
+ * All debug modes use simulation ParticleRadius for accurate size representation.
  */
 UENUM(BlueprintType)
 enum class EKawaiiFluidDebugDrawMode : uint8
 {
-	None        UMETA(DisplayName = "None", ToolTip = "No debug visualization"),
-	ISM         UMETA(DisplayName = "ISM Sphere", ToolTip = "Render particles as instanced spheres (disables Metaball)"),
-	DebugDraw   UMETA(DisplayName = "Debug Point", ToolTip = "Draw particles as debug points (no GPU cost)"),
+	/** No debug visualization (normal Metaball rendering) */
+	None UMETA(DisplayName = "None"),
+
+	//--- ISM (Instanced Static Mesh) ---
+
+	/** Render particles as instanced spheres with solid color */
+	ISM UMETA(DisplayName = "ISM Sphere"),
+
+	//--- Debug Point (DrawDebugPoint) ---
+
+	/** Debug points colored by array index (Z-Order verification) */
+	Point_ZOrderArrayIndex UMETA(DisplayName = "Z-Order Array Index"),
+	/** Debug points colored by Morton code (Z-Order verification) */
+	Point_ZOrderMortonCode UMETA(DisplayName = "Z-Order Morton Code"),
+	/** Debug points colored by X position (Red gradient) */
+	Point_PositionX UMETA(DisplayName = "Position X"),
+	/** Debug points colored by Y position (Green gradient) */
+	Point_PositionY UMETA(DisplayName = "Position Y"),
+	/** Debug points colored by Z position (Blue gradient) */
+	Point_PositionZ UMETA(DisplayName = "Position Z"),
+	/** Debug points colored by density value */
+	Point_Density UMETA(DisplayName = "Density"),
+	/** Debug points colored by attachment status (boundary debug) */
+	Point_IsAttached UMETA(DisplayName = "Is Attached (Boundary)"),
+
+	//--- Legacy (for backwards compatibility) ---
+	DebugDraw UMETA(DisplayName = "Debug Point (Legacy)", Hidden),
 };
 
-/**
- * Debug visualization modes for fluid particles
- * Determines the coloring scheme for debug particles.
- */
-UENUM(BlueprintType)
-enum class EFluidDebugVisualization : uint8
+/** Helper to check if mode is a Point debug mode */
+FORCEINLINE bool IsPointDebugMode(EKawaiiFluidDebugDrawMode Mode)
 {
-	/** Normal rendering (no debug) */
-	None			UMETA(DisplayName = "None"),
+	return Mode >= EKawaiiFluidDebugDrawMode::Point_ZOrderArrayIndex &&
+	       Mode <= EKawaiiFluidDebugDrawMode::Point_IsAttached;
+}
 
-	//--- Z-Order Sorting Verification ---
-	// Use these modes to verify Z-Order (Morton code) sorting is working correctly.
-	// If sorting works, spatially close particles will have similar array indices.
-
-	/** [Z-Order] Color by array index - spatially close particles should have similar colors if sorted */
-	ZOrderArrayIndex	UMETA(DisplayName = "Z-Order: Array Index"),
-	/** [Z-Order] Color by Morton code computed from position */
-	ZOrderMortonCode	UMETA(DisplayName = "Z-Order: Morton Code"),
-
-	//--- General Debug Visualization ---
-
-	/** Color by X position (Red gradient) */
-	PositionX		UMETA(DisplayName = "Position X"),
-	/** Color by Y position (Green gradient) */
-	PositionY		UMETA(DisplayName = "Position Y"),
-	/** Color by Z position (Blue gradient) */
-	PositionZ		UMETA(DisplayName = "Position Z"),
-	/** Color by density value */
-	Density			UMETA(DisplayName = "Density"),
-
-	//--- Boundary Debug ---
-
-	/** Color by IS_ATTACHED flag (Green = attached, Blue = free) */
-	IsAttached		UMETA(DisplayName = "Is Attached (Boundary)"),
-
-	//--- Legacy (deprecated, use ZOrderArrayIndex/ZOrderMortonCode instead) ---
-	ArrayIndex		UMETA(DisplayName = "Array Index (Legacy)", Hidden),
-	MortonCode		UMETA(DisplayName = "Morton Code (Legacy)", Hidden),
-};
+/** Helper to check if mode requires GPU readback */
+FORCEINLINE bool RequiresGPUReadback(EKawaiiFluidDebugDrawMode Mode)
+{
+	return Mode == EKawaiiFluidDebugDrawMode::ISM || IsPointDebugMode(Mode);
+}
 
 /**
  * Splash VFX condition mode

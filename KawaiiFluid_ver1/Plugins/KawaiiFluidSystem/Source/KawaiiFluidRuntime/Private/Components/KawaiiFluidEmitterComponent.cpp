@@ -9,6 +9,8 @@
 #include "Data/KawaiiFluidPresetDataAsset.h"
 #include "DrawDebugHelpers.h"
 #include "Components/ArrowComponent.h"
+#include "Components/BillboardComponent.h"
+#include "Engine/Texture2D.h"
 #include "Engine/World.h"
 
 UKawaiiFluidEmitterComponent::UKawaiiFluidEmitterComponent()
@@ -16,18 +18,82 @@ UKawaiiFluidEmitterComponent::UKawaiiFluidEmitterComponent()
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = true;
 	bTickInEditor = true;  // Enable tick in editor for wireframe visualization
+}
+
+void UKawaiiFluidEmitterComponent::OnRegister()
+{
+	Super::OnRegister();
 
 #if WITH_EDITORONLY_DATA
-	// Create velocity arrow for editor visualization (like DirectionalLight or Decal)
-	VelocityArrow = CreateEditorOnlyDefaultSubobject<UArrowComponent>(TEXT("VelocityArrow"));
-	if (VelocityArrow)
+
+	// Check if we need to create BillboardComponent
+	const bool bNeedBillboard = !BillboardComponent ||
+		(BillboardComponent->GetOwner() != GetOwner()) ||
+		(BillboardComponent->GetAttachParent() != this);
+
+	if (bNeedBillboard && GetWorld() && !GetWorld()->IsGameWorld())
 	{
-		VelocityArrow->SetupAttachment(this);
-		VelocityArrow->SetArrowColor(FLinearColor(0.0f, 0.5f, 1.0f)); // Cyan blue
-		VelocityArrow->bIsScreenSizeScaled = true;
-		VelocityArrow->SetVisibility(false); // Initially hidden, will be updated based on mode
+		// Clear stale reference (may point to original component after copy)
+		BillboardComponent = nullptr;
+
+		BillboardComponent = NewObject<UBillboardComponent>(GetOwner(), NAME_None, RF_Transactional);
+		if (BillboardComponent)
+		{
+			BillboardComponent->SetupAttachment(this);
+			BillboardComponent->bIsScreenSizeScaled = true;
+			BillboardComponent->SetRelativeScale3D(FVector(0.3f));
+
+			// Load custom emitter icon texture
+			static UTexture2D* CachedIcon = LoadObject<UTexture2D>(
+				nullptr, TEXT("/KawaiiFluidSystem/Textures/T_KawaiiFluidEmitter_Icon"));
+			if (CachedIcon)
+			{
+				BillboardComponent->SetSprite(CachedIcon);
+			}
+
+			BillboardComponent->RegisterComponent();
+		}
+	}
+
+	// Same logic for VelocityArrow
+	const bool bNeedArrow = !VelocityArrow ||
+		(VelocityArrow->GetOwner() != GetOwner()) ||
+		(VelocityArrow->GetAttachParent() != this);
+
+	if (bNeedArrow && GetWorld() && !GetWorld()->IsGameWorld())
+	{
+		VelocityArrow = nullptr;
+
+		VelocityArrow = NewObject<UArrowComponent>(GetOwner(), NAME_None, RF_Transactional);
+		if (VelocityArrow)
+		{
+			VelocityArrow->SetupAttachment(this);
+			VelocityArrow->SetArrowColor(FLinearColor(0.0f, 0.5f, 1.0f)); // Cyan blue
+			VelocityArrow->bIsScreenSizeScaled = true;
+			VelocityArrow->SetVisibility(false); // Initially hidden
+			VelocityArrow->RegisterComponent();
+		}
 	}
 #endif
+}
+
+void UKawaiiFluidEmitterComponent::OnUnregister()
+{
+#if WITH_EDITORONLY_DATA
+	if (BillboardComponent)
+	{
+		BillboardComponent->DestroyComponent();
+		BillboardComponent = nullptr;
+	}
+
+	if (VelocityArrow)
+	{
+		VelocityArrow->DestroyComponent();
+		VelocityArrow = nullptr;
+	}
+#endif
+
+	Super::OnUnregister();
 }
 
 void UKawaiiFluidEmitterComponent::BeginPlay()
@@ -110,10 +176,11 @@ void UKawaiiFluidEmitterComponent::TickComponent(float DeltaTime, ELevelTick Tic
 		GetFluidStatsCollector().SetReadbackRequested(true);
 	}
 
-	// Wireframe visualization (editor only, when selected)
+	// Wireframe visualization (editor only, when selected and not hidden via eye icon)
 #if WITH_EDITOR
 	const bool bIsSelected = IsOwnerSelected();
-	if (bShowSpawnVolumeWireframe && !bIsGameWorld && bIsSelected)
+	const bool bIsHiddenInEditor = GetOwner() && GetOwner()->IsTemporarilyHiddenInEditor();
+	if (bShowSpawnVolumeWireframe && !bIsGameWorld && bIsSelected && !bIsHiddenInEditor)
 	{
 		DrawSpawnVolumeVisualization();
 	}

@@ -36,9 +36,8 @@ void UKawaiiFluidISMRenderer::Initialize(UWorld* InWorld, USceneComponent* InOwn
 
 	InitializeISM();
 
-	UE_LOG(LogTemp, Log, TEXT("KawaiiFluidISMRenderer: Initialized (Mesh: %s, MaxParticles: %d)"),
-		ISMComponent && ISMComponent->GetStaticMesh() ? *ISMComponent->GetStaticMesh()->GetName() : TEXT("None"),
-		MaxRenderParticles);
+	UE_LOG(LogTemp, Log, TEXT("KawaiiFluidISMRenderer: Initialized (Mesh: %s)"),
+		ISMComponent && ISMComponent->GetStaticMesh() ? *ISMComponent->GetStaticMesh()->GetName() : TEXT("None"));
 }
 
 void UKawaiiFluidISMRenderer::Cleanup()
@@ -61,10 +60,11 @@ void UKawaiiFluidISMRenderer::SetEnabled(bool bInEnabled)
 {
 	bEnabled = bInEnabled;
 
-	// Clear instances when disabled
+	// Clear instances when disabled and force render state update
 	if (!bEnabled && ISMComponent)
 	{
 		ISMComponent->ClearInstances();
+		ISMComponent->MarkRenderStateDirty();
 	}
 }
 
@@ -149,22 +149,22 @@ void UKawaiiFluidISMRenderer::UpdateRendering(const IKawaiiFluidDataProvider* Da
 			ISMComponent->GetInstanceCount());
 	}
 
-	// Limit number of particles to render
-	int32 NumInstances = FMath::Min(Positions.Num(), MaxRenderParticles);
+	// Use all particles without limit
+	const int32 NumInstances = Positions.Num();
 
 	// Clear existing instances and preallocate memory
 	ISMComponent->ClearInstances();
 	ISMComponent->PreAllocateInstancesMemory(NumInstances);
 
-	// Get ParticleRenderRadius from Preset to match Metaball rendering size
-	float ParticleRenderRadius = 15.0f; // Default fallback
+	// Get ParticleRadius from Preset (simulation radius for accurate debug visualization)
+	float ParticleRadius = 5.0f; // Default fallback
 	if (CachedPreset)
 	{
-		ParticleRenderRadius = CachedPreset->RenderingParameters.ParticleRenderRadius;
+		ParticleRadius = CachedPreset->ParticleRadius;
 	}
 
-	// Scale factor based on ParticleRenderRadius (Default Sphere has 50cm radius)
-	float ScaleFactor = ParticleRenderRadius / 50.0f;
+	// Scale factor based on ParticleRadius (Default Sphere has 50cm radius)
+	float ScaleFactor = ParticleRadius / 50.0f;
 	FVector ScaleVec(ScaleFactor, ScaleFactor, ScaleFactor);
 
 	// Check if velocities available

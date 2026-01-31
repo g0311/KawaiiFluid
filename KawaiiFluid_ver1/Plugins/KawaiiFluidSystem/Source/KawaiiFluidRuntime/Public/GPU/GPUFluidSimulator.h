@@ -1378,7 +1378,7 @@ private:
 	std::atomic<bool> bShadowReadbackEnabled{false};
 
 	//=============================================================================
-	// Anisotropy Readback (Async GPU→CPU for Ellipsoid HISM Shadows)
+	// Anisotropy Readback (Async GPU→CPU for Ellipsoid ISM Shadows)
 	// Uses FRHIGPUBufferReadback for non-blocking readback (2-3 frame latency)
 	//=============================================================================
 
@@ -1433,7 +1433,7 @@ public:
 
 	/**
 	 * Enable or disable shadow position readback
-	 * When enabled, particle positions are asynchronously read back for HISM shadows
+	 * When enabled, particle positions are asynchronously read back for ISM shadows
 	 * @param bEnabled - true to enable async position readback
 	 */
 	void SetShadowReadbackEnabled(bool bEnabled) { bShadowReadbackEnabled.store(bEnabled); }
@@ -1488,7 +1488,7 @@ public:
 	bool HasReadyAnisotropyData() const { return ReadyShadowAnisotropyAxis1.Num() > 0; }
 
 	/**
-	 * Get shadow data with anisotropy (non-blocking, for ellipsoid HISM shadows)
+	 * Get shadow data with anisotropy (non-blocking, for ellipsoid ISM shadows)
 	 * @param OutPositions - Output array of particle positions
 	 * @param OutVelocities - Output array of particle velocities
 	 * @param OutAnisotropyAxis1 - Output array of first ellipsoid axis (xyz=dir, w=scale)

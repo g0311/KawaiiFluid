@@ -9,6 +9,7 @@
 class AKawaiiFluidEmitter;
 class AKawaiiFluidVolume;
 class UKawaiiFluidSimulationModule;
+class UBillboardComponent;
 
 /**
  * Emitter type for KawaiiFluidEmitterComponent
@@ -67,6 +68,8 @@ public:
 	// UActorComponent Interface
 	//========================================
 
+	virtual void OnRegister() override;
+	virtual void OnUnregister() override;
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
@@ -286,6 +289,10 @@ protected:
 	//========================================
 
 #if WITH_EDITORONLY_DATA
+	/** Billboard icon for editor visualization */
+	UPROPERTY(Transient)
+	TObjectPtr<UBillboardComponent> BillboardComponent;
+
 	/** Velocity direction arrow (editor visualization only) */
 	UPROPERTY(Transient)
 	TObjectPtr<class UArrowComponent> VelocityArrow;

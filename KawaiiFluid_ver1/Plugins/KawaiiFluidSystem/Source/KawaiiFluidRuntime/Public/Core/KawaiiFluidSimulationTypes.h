@@ -155,8 +155,6 @@ namespace GridResolutionPresetHelper
 	}
 }
 
-// EFluidDebugVisualization is now defined in KawaiiFluidRenderingTypes.h
-
 /**
  * Fluid type for identifying different fluids in collision events
  */

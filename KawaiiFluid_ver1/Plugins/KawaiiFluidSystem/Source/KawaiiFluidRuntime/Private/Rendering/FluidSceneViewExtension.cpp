@@ -111,7 +111,7 @@ void FFluidSceneViewExtension::PreRenderViewFamily_RenderThread(
 	FSceneViewFamily& InViewFamily)
 {
 	UFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
-	if (!SubsystemPtr || !SubsystemPtr->RenderingParameters.bEnableRendering)
+	if (!SubsystemPtr)
 	{
 		return;
 	}
@@ -295,8 +295,7 @@ void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 				bool bHasAnyModules = SubsystemPtr && SubsystemPtr->GetAllRenderingModules().Num() >
 					0;
 
-				if (!SubsystemPtr || !SubsystemPtr->RenderingParameters.bEnableRendering || !
-					bHasAnyModules)
+				if (!SubsystemPtr || !bHasAnyModules)
 				{
 					return InInputs.ReturnUntouchedSceneColorForPostProcessing(GraphBuilder);
 				}
@@ -323,7 +322,7 @@ void FFluidSceneViewExtension::PrePostProcessPass_RenderThread(
 	}
 
 	UFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
-	if (!SubsystemPtr || !SubsystemPtr->RenderingParameters.bEnableRendering)
+	if (!SubsystemPtr)
 	{
 		return;
 	}
