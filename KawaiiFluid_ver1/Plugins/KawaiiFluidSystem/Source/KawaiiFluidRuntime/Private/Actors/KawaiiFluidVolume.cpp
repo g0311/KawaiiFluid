@@ -228,8 +228,8 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 			}
 		}
 
-		// Check both Actor Hidden In Game and Component Visible for proper UE visibility behavior
-		const bool bIsActorVisible = !IsHidden() && GetRootComponent() && GetRootComponent()->IsVisible();
+		// Check Actor-level visibility only (Component's bHiddenInGame is for wireframe, not fluid rendering)
+		const bool bIsActorVisible = !IsHidden();
 
 		// Metaball is enabled when Actor is visible AND not in ISM/DebugDraw mode
 		// Same logic for editor and runtime - respects user's DebugDrawMode setting
@@ -247,7 +247,7 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 
 	// Debug visualization (read from VolumeComponent)
 	// Only render if Actor is visible and Point debug mode is active
-	const bool bIsActorVisibleForDebug = !IsHidden() && GetRootComponent() && GetRootComponent()->IsVisible();
+	const bool bIsActorVisibleForDebug = !IsHidden();
 	if (bIsActorVisibleForDebug && IsPointDebugMode(VolumeComponent->DebugDrawMode))
 	{
 		DrawDebugParticles();
@@ -916,7 +916,7 @@ void AKawaiiFluidVolume::InitializeRendering()
 		if (Preset)
 		{
 			// Disable Metaball if ISM or DebugDraw mode is active
-			const bool bIsActorVisible = !IsHidden() && GetRootComponent() && GetRootComponent()->IsVisible();
+			const bool bIsActorVisible = !IsHidden();
 			const bool bEnableMetaball = bIsActorVisible && !bISMMode && !bPointDebugMode;
 			MetaballRenderer->SetEnabled(bEnableMetaball);
 
@@ -999,7 +999,7 @@ void AKawaiiFluidVolume::InitializeEditorRendering()
 	// Metaball is enabled when Actor is visible AND not in ISM/DebugDraw mode
 	if (UKawaiiFluidMetaballRenderer* MetaballRenderer = RenderingModule->GetMetaballRenderer())
 	{
-		const bool bIsActorVisible = !IsHidden() && GetRootComponent() && GetRootComponent()->IsVisible();
+		const bool bIsActorVisible = !IsHidden();
 		const bool bEnableMetaball = bIsActorVisible && !bISMMode && !bPointDebugMode;
 		MetaballRenderer->SetEnabled(bEnableMetaball);
 		
