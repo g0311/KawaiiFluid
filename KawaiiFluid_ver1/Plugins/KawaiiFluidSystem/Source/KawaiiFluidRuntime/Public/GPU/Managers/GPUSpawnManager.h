@@ -88,6 +88,14 @@ public:
 	/** Clear all pending spawn requests */
 	void ClearSpawnRequests();
 
+	/**
+	 * Cancel pending spawn requests for a specific SourceID (thread-safe)
+	 * Used when despawning to prevent particles from spawning after despawn
+	 * @param SourceID - Source ID to cancel spawns for
+	 * @return Number of cancelled spawn requests
+	 */
+	int32 CancelPendingSpawnsForSource(int32 SourceID);
+
 	/** Get number of pending spawn requests (thread-safe) */
 	int32 GetPendingSpawnCount() const;
 

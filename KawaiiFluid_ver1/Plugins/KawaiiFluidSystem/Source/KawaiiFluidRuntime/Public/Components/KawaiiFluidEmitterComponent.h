@@ -159,19 +159,25 @@ public:
 	//========================================
 
 	/** Enable distance-based optimization.
-	 *  When enabled, this emitter only spawns when the player is within ActivationDistance.
-	 *  Particles are despawned when player moves outside the distance. */
+	 *  When enabled, this emitter only spawns when the reference actor is within ActivationDistance.
+	 *  Particles are despawned when reference actor moves outside the distance. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter|Optimization")
 	bool bUseDistanceOptimization = false;
 
-	/** Distance from player at which this emitter activates (cm).
+	/** Custom actor to use as distance reference.
+	 *  If not set, defaults to Player Pawn. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter|Optimization",
+		meta = (EditCondition = "bUseDistanceOptimization", EditConditionHides))
+	TObjectPtr<AActor> DistanceReferenceActor;
+
+	/** Distance at which this emitter activates (cm).
 	 *  Only used when bUseDistanceOptimization is true.
 	 *  Hysteresis (10% of this value) is automatically applied to prevent toggling. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter|Optimization",
 		meta = (EditCondition = "bUseDistanceOptimization", EditConditionHides, ClampMin = "100.0"))
 	float ActivationDistance = 2000.0f;
 
-	/** For Fill mode: automatically re-spawn when player re-enters activation distance. */
+	/** For Fill mode: automatically re-spawn when re-entering activation distance. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter|Optimization",
 		meta = (EditCondition = "bUseDistanceOptimization && EmitterMode == EKawaiiFluidEmitterMode::Fill",
 		        EditConditionHides))

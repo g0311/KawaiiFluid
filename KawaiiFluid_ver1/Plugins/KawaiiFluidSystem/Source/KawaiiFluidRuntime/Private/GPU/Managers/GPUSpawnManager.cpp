@@ -159,6 +159,34 @@ int32 FGPUSpawnManager::GetPendingSpawnCount() const
 	return PendingSpawnRequests.Num();
 }
 
+int32 FGPUSpawnManager::CancelPendingSpawnsForSource(int32 SourceID)
+{
+	FScopeLock Lock(&SpawnLock);
+
+	const int32 OriginalCount = PendingSpawnRequests.Num();
+
+	// Remove all pending spawn requests with matching SourceID
+	PendingSpawnRequests.RemoveAll([SourceID](const FGPUSpawnRequest& Request)
+	{
+		return Request.SourceID == SourceID;
+	});
+
+	const int32 RemovedCount = OriginalCount - PendingSpawnRequests.Num();
+
+	if (PendingSpawnRequests.Num() == 0)
+	{
+		bHasPendingSpawnRequests.store(false);
+	}
+
+	if (RemovedCount > 0)
+	{
+		UE_LOG(LogGPUSpawnManager, Log, TEXT("CancelPendingSpawnsForSource: Cancelled %d pending spawns for SourceID=%d"),
+			RemovedCount, SourceID);
+	}
+
+	return RemovedCount;
+}
+
 //=============================================================================
 // ID-Based Despawn API
 //=============================================================================

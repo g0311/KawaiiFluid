@@ -149,7 +149,7 @@ void UKawaiiFluidMetaballRenderer::UpdateRendering(const IKawaiiFluidDataProvide
 	{
 		RenderRadius = GetLocalParameters().ParticleRenderRadius;
 	}
-
+aaa
 	// =====================================================
 	// GPU path: Set simulator reference in RenderResource
 	// Render thread accesses GPU buffers directly through RenderResource

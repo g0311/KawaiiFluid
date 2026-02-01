@@ -142,14 +142,31 @@ void UKawaiiFluidEmitterComponent::BeginPlay()
 	// Distance optimization: Check initial activation state
 	if (bUseDistanceOptimization)
 	{
-		APawn* PlayerPawn = GetPlayerPawn();
-		if (PlayerPawn)
-		{
-			const FVector PlayerLocation = PlayerPawn->GetActorLocation();
-			const FVector EmitterLocation = GetComponentLocation();
-			const float DistanceSq = FVector::DistSquared(PlayerLocation, EmitterLocation);
+		// Get reference location: custom actor if set, otherwise Player Pawn
+		FVector ReferenceLocation;
+		bool bHasReference = false;
 
-			// Initially inactive if player is outside activation distance
+		if (DistanceReferenceActor && IsValid(DistanceReferenceActor))
+		{
+			ReferenceLocation = DistanceReferenceActor->GetActorLocation();
+			bHasReference = true;
+		}
+		else
+		{
+			APawn* PlayerPawn = GetPlayerPawn();
+			if (PlayerPawn)
+			{
+				ReferenceLocation = PlayerPawn->GetActorLocation();
+				bHasReference = true;
+			}
+		}
+
+		if (bHasReference)
+		{
+			const FVector EmitterLocation = GetComponentLocation();
+			const float DistanceSq = FVector::DistSquared(ReferenceLocation, EmitterLocation);
+
+			// Initially inactive if reference is outside activation distance
 			bDistanceActivated = (DistanceSq <= ActivationDistance * ActivationDistance);
 
 			UE_LOG(LogTemp, Log, TEXT("UKawaiiFluidEmitterComponent [%s]: Distance Optimization - Initial state: %s (Distance: %.1f cm, Threshold: %.1f cm)"),
@@ -160,9 +177,9 @@ void UKawaiiFluidEmitterComponent::BeginPlay()
 		}
 		else
 		{
-			// Player pawn not found yet, defer check to tick
+			// Reference not found yet, defer check to tick
 			bDistanceActivated = false;
-			UE_LOG(LogTemp, Log, TEXT("UKawaiiFluidEmitterComponent [%s]: Distance Optimization - Player not found, starting inactive"),
+			UE_LOG(LogTemp, Log, TEXT("UKawaiiFluidEmitterComponent [%s]: Distance Optimization - Reference not found, starting inactive"),
 				*GetName());
 		}
 	}
@@ -1286,15 +1303,24 @@ void UKawaiiFluidEmitterComponent::UpdateDistanceOptimization(float DeltaTime)
 	}
 	DistanceCheckAccumulator = 0.0f;
 
-	APawn* PlayerPawn = GetPlayerPawn();
-	if (!PlayerPawn)
+	// Get reference location: custom actor if set, otherwise Player Pawn
+	FVector ReferenceLocation;
+	if (DistanceReferenceActor && IsValid(DistanceReferenceActor))
 	{
-		return;
+		ReferenceLocation = DistanceReferenceActor->GetActorLocation();
+	}
+	else
+	{
+		APawn* PlayerPawn = GetPlayerPawn();
+		if (!PlayerPawn)
+		{
+			return;
+		}
+		ReferenceLocation = PlayerPawn->GetActorLocation();
 	}
 
-	const FVector PlayerLocation = PlayerPawn->GetActorLocation();
 	const FVector EmitterLocation = GetComponentLocation();
-	const float DistanceSq = FVector::DistSquared(PlayerLocation, EmitterLocation);
+	const float DistanceSq = FVector::DistSquared(ReferenceLocation, EmitterLocation);
 
 	// Hysteresis logic (auto-calculated: 10% of ActivationDistance)
 	const float HysteresisBuffer = GetHysteresisDistance();
@@ -1324,7 +1350,7 @@ void UKawaiiFluidEmitterComponent::OnDistanceActivationChanged(bool bNewState)
 	if (bNewState)
 	{
 		// === ACTIVATING ===
-		UE_LOG(LogTemp, Log, TEXT("UKawaiiFluidEmitterComponent [%s]: Distance Activation - Activating (player entered range)"),
+		UE_LOG(LogTemp, Log, TEXT("UKawaiiFluidEmitterComponent [%s]: Distance Activation - Activating (entered range)"),
 			*GetName());
 
 		if (IsStreamMode())
@@ -1336,7 +1362,13 @@ void UKawaiiFluidEmitterComponent::OnDistanceActivationChanged(bool bNewState)
 		}
 		else if (IsFillMode())
 		{
-			if (bNeedsRespawnOnReentry && bAutoRespawnOnReentry)
+			// Spawn if:
+			// 1. First time entering (never spawned before): bAutoStartSpawning
+			// 2. Re-entering after despawn: bNeedsRespawnOnReentry && bAutoRespawnOnReentry
+			const bool bFirstTimeSpawn = !bAutoSpawnExecuted && bAutoStartSpawning;
+			const bool bRespawn = bNeedsRespawnOnReentry && bAutoRespawnOnReentry;
+
+			if (bFirstTimeSpawn || bRespawn)
 			{
 				bAutoSpawnExecuted = false;
 				SpawnFill();

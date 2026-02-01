@@ -1447,7 +1447,25 @@ int32 UKawaiiFluidSimulationModule::RemoveOldestParticlesForSource(int32 SourceI
 		const TArray<int32>* ParticleIDsPtr = GPUSim->GetParticleIDsBySourceID(SourceID);
 		if (!ParticleIDsPtr || ParticleIDsPtr->Num() == 0)
 		{
+			// Even if no particles exist, cancel pending spawns for despawn-all case
+			if (FGPUSpawnManager* SpawnMgr = GPUSim->GetSpawnManager())
+			{
+				SpawnMgr->CancelPendingSpawnsForSource(SourceID);
+			}
 			return 0;
+		}
+
+		const int32 CurrentParticleCount = ParticleIDsPtr->Num();
+
+		// Check if this is a "despawn all" operation
+		// Cancel pending spawn requests to prevent ghost particles after despawn
+		const bool bIsDespawnAll = (Count >= CurrentParticleCount);
+		if (bIsDespawnAll)
+		{
+			if (FGPUSpawnManager* SpawnMgr = GPUSim->GetSpawnManager())
+			{
+				SpawnMgr->CancelPendingSpawnsForSource(SourceID);
+			}
 		}
 
 		// Use filtered version to skip already requested IDs
@@ -1456,8 +1474,8 @@ int32 UKawaiiFluidSimulationModule::RemoveOldestParticlesForSource(int32 SourceI
 
 		if (ActualRemoved > 0)
 		{
-			UE_LOG(LogTemp, Log, TEXT("RemoveOldestParticlesForSource: SourceID=%d, Requested %d, Actually added %d"),
-				SourceID, Count, ActualRemoved);
+			UE_LOG(LogTemp, Log, TEXT("RemoveOldestParticlesForSource: SourceID=%d, Requested %d, Actually added %d, DespawnAll=%d"),
+				SourceID, Count, ActualRemoved, bIsDespawnAll ? 1 : 0);
 		}
 
 		return ActualRemoved;
