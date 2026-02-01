@@ -2248,7 +2248,7 @@ FRDGBufferRef FGPUFluidSimulator::EnsureBoneDeltaAttachmentBuffer(
 			InitialData[i].PreviousPosition = FVector3f::ZeroVector;
 		}
 
-		// Create buffer with initialized data
+		// Create buffer with initialized data (all set to -1 / zero)
 		// IMPORTANT: Use ERDGInitialDataFlags::None to copy data, NOT NoCopy
 		// NoCopy would cause crash because InitialData goes out of scope before RDG executes
 		FRDGBufferRef NewBuffer = CreateStructuredBuffer(
@@ -2259,6 +2259,27 @@ FRDGBufferRef FGPUFluidSimulator::EnsureBoneDeltaAttachmentBuffer(
 			InitialData.GetData(),
 			RequiredCapacity * sizeof(FGPUBoneDeltaAttachment),
 			ERDGInitialDataFlags::None);
+
+		// Preserve existing data if buffer is being resized
+		if (BoneDeltaAttachmentBuffer.IsValid() && BoneDeltaAttachmentCapacity > 0)
+		{
+			// Register old buffer
+			FRDGBufferRef OldBuffer = GraphBuilder.RegisterExternalBuffer(BoneDeltaAttachmentBuffer, TEXT("OldBoneDeltaAttachment"));
+			
+			// Copy valid data from old buffer to new buffer
+			// CopyCount = min(OldCapacity, NewCapacity) -> Usually OldCapacity since we are growing
+			const int32 CopyCount = FMath::Min(BoneDeltaAttachmentCapacity, RequiredCapacity);
+			
+			AddCopyBufferPass(
+				GraphBuilder,
+				NewBuffer,
+				0, // DstOffset
+				OldBuffer,
+				0, // SrcOffset
+				CopyCount * sizeof(FGPUBoneDeltaAttachment));
+				
+			UE_LOG(LogGPUFluidSimulator, Verbose, TEXT("Preserved %d attachment records during resize"), CopyCount);
+		}
 
 		// Update capacity tracking
 		BoneDeltaAttachmentCapacity = RequiredCapacity;
