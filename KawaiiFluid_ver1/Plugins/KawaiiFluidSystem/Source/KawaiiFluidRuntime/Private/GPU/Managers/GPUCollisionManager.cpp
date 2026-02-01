@@ -119,7 +119,7 @@ void FGPUCollisionManager::UploadCollisionPrimitives(const FGPUCollisionPrimitiv
 
 void FGPUCollisionManager::AddBoundsCollisionPass(
 	FRDGBuilder& GraphBuilder,
-	FRDGBufferUAVRef ParticlesUAV,
+	const FSimulationSpatialData& SpatialData,
 	int32 ParticleCount,
 	const FGPUFluidSimulationParams& Params)
 {
@@ -127,7 +127,11 @@ void FGPUCollisionManager::AddBoundsCollisionPass(
 	TShaderMapRef<FBoundsCollisionCS> ComputeShader(ShaderMap);
 
 	FBoundsCollisionCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FBoundsCollisionCS::FParameters>();
-	PassParameters->Particles = ParticlesUAV;
+	// Bind SOA buffers
+	PassParameters->Positions = GraphBuilder.CreateUAV(SpatialData.SoA_Positions, PF_R32_FLOAT);
+	PassParameters->PredictedPositions = GraphBuilder.CreateUAV(SpatialData.SoA_PredictedPositions, PF_R32_FLOAT);
+	PassParameters->Velocities = GraphBuilder.CreateUAV(SpatialData.SoA_Velocities, PF_R32_FLOAT);
+	PassParameters->Flags = GraphBuilder.CreateUAV(SpatialData.SoA_Flags, PF_R32_UINT);
 	PassParameters->ParticleCount = ParticleCount;
 	PassParameters->ParticleRadius = Params.ParticleRadius;
 
@@ -162,7 +166,7 @@ void FGPUCollisionManager::AddBoundsCollisionPass(
 
 void FGPUCollisionManager::AddPrimitiveCollisionPass(
 	FRDGBuilder& GraphBuilder,
-	FRDGBufferUAVRef ParticlesUAV,
+	const FSimulationSpatialData& SpatialData,
 	int32 ParticleCount,
 	const FGPUFluidSimulationParams& Params)
 {
@@ -434,7 +438,13 @@ void FGPUCollisionManager::AddPrimitiveCollisionPass(
 	FPrimitiveCollisionCS::FParameters* PassParameters =
 		GraphBuilder.AllocParameters<FPrimitiveCollisionCS::FParameters>();
 
-	PassParameters->Particles = ParticlesUAV;
+	// Bind SOA buffers
+	PassParameters->Positions = GraphBuilder.CreateUAV(SpatialData.SoA_Positions, PF_R32_FLOAT);
+	PassParameters->PredictedPositions = GraphBuilder.CreateUAV(SpatialData.SoA_PredictedPositions, PF_R32_FLOAT);
+	PassParameters->Velocities = GraphBuilder.CreateUAV(SpatialData.SoA_Velocities, PF_R32_FLOAT);
+	PassParameters->Densities = GraphBuilder.CreateSRV(SpatialData.SoA_Densities, PF_R32_FLOAT);
+	PassParameters->SourceIDs = GraphBuilder.CreateSRV(SpatialData.SoA_SourceIDs, PF_R32_SINT);
+	PassParameters->Flags = GraphBuilder.CreateUAV(SpatialData.SoA_Flags, PF_R32_UINT);
 	PassParameters->ParticleCount = ParticleCount;
 	PassParameters->ParticleRadius = Params.ParticleRadius;
 	PassParameters->CollisionThreshold = PrimitiveCollisionThreshold;
@@ -820,7 +830,7 @@ void FGPUCollisionManager::UploadHeightmapTexture(const TArray<float>& HeightDat
 
 void FGPUCollisionManager::AddHeightmapCollisionPass(
 	FRDGBuilder& GraphBuilder,
-	FRDGBufferUAVRef ParticlesUAV,
+	const FSimulationSpatialData& SpatialData,
 	int32 ParticleCount,
 	const FGPUFluidSimulationParams& Params)
 {
@@ -838,7 +848,11 @@ void FGPUCollisionManager::AddHeightmapCollisionPass(
 	FRDGTextureSRVRef HeightmapSRV = GraphBuilder.CreateSRV(FRDGTextureSRVDesc(HeightmapTexture));
 
 	FHeightmapCollisionCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FHeightmapCollisionCS::FParameters>();
-	PassParameters->Particles = ParticlesUAV;
+	// Bind SOA buffers
+	PassParameters->Positions = GraphBuilder.CreateUAV(SpatialData.SoA_Positions, PF_R32_FLOAT);
+	PassParameters->PredictedPositions = GraphBuilder.CreateUAV(SpatialData.SoA_PredictedPositions, PF_R32_FLOAT);
+	PassParameters->Velocities = GraphBuilder.CreateUAV(SpatialData.SoA_Velocities, PF_R32_FLOAT);
+	PassParameters->Flags = GraphBuilder.CreateUAV(SpatialData.SoA_Flags, PF_R32_UINT);
 	PassParameters->ParticleCount = ParticleCount;
 	PassParameters->ParticleRadius = HeightmapParams.ParticleRadius > 0 ? HeightmapParams.ParticleRadius : Params.ParticleRadius;
 

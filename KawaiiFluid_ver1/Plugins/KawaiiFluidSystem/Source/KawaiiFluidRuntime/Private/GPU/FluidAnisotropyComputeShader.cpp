@@ -28,7 +28,7 @@ void FFluidAnisotropyPassBuilder::AddAnisotropyPass(
 	FRDGBuilder& GraphBuilder,
 	const FAnisotropyComputeParams& Params)
 {
-	if (Params.ParticleCount <= 0 || !Params.PhysicsParticlesSRV)
+	if (Params.ParticleCount <= 0 || !Params.PositionsSRV || !Params.VelocitiesSRV || !Params.FlagsSRV)
 	{
 		return;
 	}
@@ -190,8 +190,10 @@ void FFluidAnisotropyPassBuilder::AddAnisotropyPass(
 		PrevAxis3SRV = GraphBuilder.CreateSRV(DummyBuffer);
 	}
 
-	// Input buffers
-	PassParameters->InPhysicsParticles = Params.PhysicsParticlesSRV;
+	// Input buffers (SoA)
+	PassParameters->InPositions = Params.PositionsSRV;
+	PassParameters->InVelocities = Params.VelocitiesSRV;
+	PassParameters->InFlags = Params.FlagsSRV;
 	PassParameters->InAttachments = AttachmentsSRV;
 
 	// TODO: Remove legacy hash-based binding - bUseZOrderSorting is always true

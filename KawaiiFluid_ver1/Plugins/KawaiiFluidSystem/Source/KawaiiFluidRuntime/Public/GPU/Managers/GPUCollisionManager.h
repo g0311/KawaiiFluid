@@ -7,6 +7,7 @@
 #include "RenderGraphResources.h"
 #include "RHIResources.h"
 #include "GPU/GPUFluidParticle.h"
+#include "GPU/GPUFluidSpatialData.h"
 #include "GPU/Managers/GPUCollisionFeedbackManager.h"
 
 class FRHICommandListImmediate;
@@ -105,21 +106,21 @@ public:
 	/** Add bounds collision pass (AABB/OBB) */
 	void AddBoundsCollisionPass(
 		FRDGBuilder& GraphBuilder,
-		FRDGBufferUAVRef ParticlesUAV,
+		const FSimulationSpatialData& SpatialData,
 		int32 ParticleCount,
 		const FGPUFluidSimulationParams& Params);
 
 	/** Add primitive collision pass (spheres, capsules, boxes, convexes) */
 	void AddPrimitiveCollisionPass(
 		FRDGBuilder& GraphBuilder,
-		FRDGBufferUAVRef ParticlesUAV,
+		const FSimulationSpatialData& SpatialData,
 		int32 ParticleCount,
 		const FGPUFluidSimulationParams& Params);
 
 	/** Add heightmap collision pass (Landscape terrain) */
 	void AddHeightmapCollisionPass(
 		FRDGBuilder& GraphBuilder,
-		FRDGBufferUAVRef ParticlesUAV,
+		const FSimulationSpatialData& SpatialData,
 		int32 ParticleCount,
 		const FGPUFluidSimulationParams& Params);
 

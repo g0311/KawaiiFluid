@@ -7,6 +7,7 @@
 #include "RenderGraphResources.h"
 #include "RHIResources.h"
 #include "GPU/GPUFluidParticle.h"
+#include "GPU/GPUFluidSpatialData.h"
 
 class FRHICommandListImmediate;
 class FRDGBuilder;
@@ -87,7 +88,7 @@ public:
 	 */
 	void AddAdhesionPass(
 		FRDGBuilder& GraphBuilder,
-		FRDGBufferUAVRef ParticlesUAV,
+		const FSimulationSpatialData& SpatialData,
 		FRDGBufferUAVRef AttachmentUAV,
 		FGPUCollisionManager* CollisionManager,
 		int32 CurrentParticleCount,
@@ -96,7 +97,7 @@ public:
 	/**
 	 * Add update attached positions pass (move attached particles with bones)
 	 * @param GraphBuilder - RDG builder
-	 * @param ParticlesUAV - Particle buffer UAV
+	 * @param SpatialData - Spatial hash data with SOA buffers
 	 * @param AttachmentUAV - Attachment buffer UAV
 	 * @param CollisionManager - Collision manager for bone transforms and primitives
 	 * @param CurrentParticleCount - Current particle count
@@ -104,7 +105,7 @@ public:
 	 */
 	void AddUpdateAttachedPositionsPass(
 		FRDGBuilder& GraphBuilder,
-		FRDGBufferUAVRef ParticlesUAV,
+		const FSimulationSpatialData& SpatialData,
 		FRDGBufferUAVRef AttachmentUAV,
 		FGPUCollisionManager* CollisionManager,
 		int32 CurrentParticleCount,
@@ -113,12 +114,12 @@ public:
 	/**
 	 * Add clear detached flag pass (clear just-detached flag at end of frame)
 	 * @param GraphBuilder - RDG builder
-	 * @param ParticlesUAV - Particle buffer UAV
+	 * @param SpatialData - Spatial hash data with SOA buffers
 	 * @param CurrentParticleCount - Current particle count
 	 */
 	void AddClearDetachedFlagPass(
 		FRDGBuilder& GraphBuilder,
-		FRDGBufferUAVRef ParticlesUAV,
+		const FSimulationSpatialData& SpatialData,
 		int32 CurrentParticleCount);
 
 	/**

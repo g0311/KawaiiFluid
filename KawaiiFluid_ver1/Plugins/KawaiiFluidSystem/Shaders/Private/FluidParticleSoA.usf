@@ -1,0 +1,115 @@
+// Copyright KawaiiFluid Team. All Rights Reserved.
+// Particle SoA (Structure of Arrays) Conversion Shaders
+//
+// Memory bandwidth optimization: Split AoS FGPUFluidParticle into separate
+// field buffers so simulation passes only read/write fields they need.
+
+#include "/Engine/Public/Platform.ush"
+#include "/Engine/Private/Common.ush"
+#include "FluidGPUPhysics.ush"
+
+//=============================================================================
+// Split Pass: AoS → SoA
+// Converts FGPUFluidParticle (64 bytes) into separate field buffers
+//=============================================================================
+
+StructuredBuffer<FGPUFluidParticle> SourceParticles;
+
+RWBuffer<float> OutPositions;              // float3 packed as 3 floats
+RWBuffer<float> OutPredictedPositions;     // float3 packed as 3 floats
+RWBuffer<float> OutVelocities;             // float3 packed as 3 floats
+RWBuffer<float> OutMasses;                 // float
+RWBuffer<float> OutDensities;              // float
+RWBuffer<float> OutLambdas;                // float
+RWBuffer<uint> OutFlags;                   // uint
+RWBuffer<uint> OutNeighborCounts;          // uint
+RWBuffer<int> OutParticleIDs;              // int
+RWBuffer<int> OutSourceIDs;                // int
+
+int SplitParticleCount;
+
+[numthreads(256, 1, 1)]
+void SplitAoSToSoACS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint idx = DispatchThreadId.x;
+	if (idx >= (uint)SplitParticleCount)
+		return;
+
+	FGPUFluidParticle p = SourceParticles[idx];
+
+	// Write to separate field buffers (float3 stored as 3 consecutive floats)
+	uint idx3 = idx * 3;
+	OutPositions[idx3 + 0] = p.Position.x;
+	OutPositions[idx3 + 1] = p.Position.y;
+	OutPositions[idx3 + 2] = p.Position.z;
+
+	OutPredictedPositions[idx3 + 0] = p.PredictedPosition.x;
+	OutPredictedPositions[idx3 + 1] = p.PredictedPosition.y;
+	OutPredictedPositions[idx3 + 2] = p.PredictedPosition.z;
+
+	OutVelocities[idx3 + 0] = p.Velocity.x;
+	OutVelocities[idx3 + 1] = p.Velocity.y;
+	OutVelocities[idx3 + 2] = p.Velocity.z;
+
+	OutMasses[idx] = p.Mass;
+	OutDensities[idx] = p.Density;
+	OutLambdas[idx] = p.Lambda;
+	OutFlags[idx] = p.Flags;
+	OutNeighborCounts[idx] = p.NeighborCount;
+	OutParticleIDs[idx] = p.ParticleID;
+	OutSourceIDs[idx] = p.SourceID;
+}
+
+//=============================================================================
+// Merge Pass: SoA → AoS
+// Converts separate field buffers back into FGPUFluidParticle (64 bytes)
+//=============================================================================
+
+Buffer<float> InPositions;
+Buffer<float> InPredictedPositions;
+Buffer<float> InVelocities;
+Buffer<float> InMasses;
+Buffer<float> InDensities;
+Buffer<float> InLambdas;
+Buffer<uint> InFlags;
+Buffer<uint> InNeighborCounts;
+Buffer<int> InParticleIDs;
+Buffer<int> InSourceIDs;
+
+RWStructuredBuffer<FGPUFluidParticle> TargetParticles;
+
+int MergeParticleCount;
+
+[numthreads(256, 1, 1)]
+void MergeSoAToAoSCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint idx = DispatchThreadId.x;
+	if (idx >= (uint)MergeParticleCount)
+		return;
+
+	// Read from separate field buffers
+	uint idx3 = idx * 3;
+
+	FGPUFluidParticle p;
+	p.Position.x = InPositions[idx3 + 0];
+	p.Position.y = InPositions[idx3 + 1];
+	p.Position.z = InPositions[idx3 + 2];
+
+	p.PredictedPosition.x = InPredictedPositions[idx3 + 0];
+	p.PredictedPosition.y = InPredictedPositions[idx3 + 1];
+	p.PredictedPosition.z = InPredictedPositions[idx3 + 2];
+
+	p.Velocity.x = InVelocities[idx3 + 0];
+	p.Velocity.y = InVelocities[idx3 + 1];
+	p.Velocity.z = InVelocities[idx3 + 2];
+
+	p.Mass = InMasses[idx];
+	p.Density = InDensities[idx];
+	p.Lambda = InLambdas[idx];
+	p.Flags = InFlags[idx];
+	p.NeighborCount = InNeighborCounts[idx];
+	p.ParticleID = InParticleIDs[idx];
+	p.SourceID = InSourceIDs[idx];
+
+	TargetParticles[idx] = p;
+}

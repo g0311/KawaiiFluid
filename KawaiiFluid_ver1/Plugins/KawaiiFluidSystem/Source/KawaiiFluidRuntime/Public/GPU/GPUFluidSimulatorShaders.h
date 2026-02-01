@@ -262,7 +262,15 @@ public:
 	using FPermutationDomain = TShaderPermutationDomain<FGridResolutionDim>;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, Particles)
+		// SoA (Structure of Arrays) Particle Buffers
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Positions)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, PredictedPositions)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Velocities)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Masses)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Densities)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Lambdas)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, Flags)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, NeighborCountsBuffer)
 		// Hash table mode (legacy)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellCounts)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleIndices)
@@ -485,7 +493,11 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FBoundsCollisionCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, Particles)
+		// Particle SOA buffers
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Positions)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, PredictedPositions)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Velocities)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, Flags)
 		SHADER_PARAMETER(int32, ParticleCount)
 		SHADER_PARAMETER(float, ParticleRadius)
 		// OBB parameters
@@ -530,8 +542,11 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FHeightmapCollisionCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		// Particle buffer
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, Particles)
+		// Particle SOA buffers
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Positions)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, PredictedPositions)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Velocities)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, Flags)
 		SHADER_PARAMETER(int32, ParticleCount)
 		SHADER_PARAMETER(float, ParticleRadius)
 
@@ -584,8 +599,13 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FPrimitiveCollisionCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		// Particle buffer
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, Particles)
+		// Particle SOA buffers
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Positions)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, PredictedPositions)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Velocities)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float>, Densities)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<int>, SourceIDs)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, Flags)
 		SHADER_PARAMETER(int32, ParticleCount)
 		SHADER_PARAMETER(float, ParticleRadius)
 		SHADER_PARAMETER(float, CollisionThreshold)
@@ -658,7 +678,10 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FFinalizePositionsCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, Particles)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Positions)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, PredictedPositions)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Velocities)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, Flags)
 		SHADER_PARAMETER(int32, ParticleCount)
 		SHADER_PARAMETER(float, DeltaTime)
 		SHADER_PARAMETER(float, MaxVelocity)      // Safety clamp (high value, e.g., 50000 cm/s)
@@ -1192,8 +1215,11 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FAdhesionCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		// Particle and attachment buffers
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, Particles)
+		// Particle SOA buffers
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Positions)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, PredictedPositions)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Velocities)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, Flags)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUParticleAttachment>, Attachments)
 		SHADER_PARAMETER(int32, ParticleCount)
 		SHADER_PARAMETER(float, ParticleRadius)
@@ -1253,7 +1279,11 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FUpdateAttachedPositionsCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, Particles)
+		// Particle SOA buffers
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Positions)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, PredictedPositions)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Velocities)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, Flags)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUParticleAttachment>, Attachments)
 		SHADER_PARAMETER(int32, ParticleCount)
 
@@ -1310,7 +1340,7 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FClearDetachedFlagCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, Particles)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, Flags)
 		SHADER_PARAMETER(int32, ParticleCount)
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -2488,5 +2518,77 @@ public:
 
 		OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), AxisBits);
 		OutEnvironment.SetDefine(TEXT("MAX_CELLS"), MaxCells);
+	}
+};
+
+//=============================================================================
+// SoA (Structure of Arrays) Conversion Shaders
+//=============================================================================
+
+class FSplitAoSToSoACS : public FGlobalShader
+{
+	DECLARE_GLOBAL_SHADER(FSplitAoSToSoACS);
+	SHADER_USE_PARAMETER_STRUCT(FSplitAoSToSoACS, FGlobalShader);
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUFluidParticle>, SourceParticles)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, OutPositions)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, OutPredictedPositions)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, OutVelocities)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, OutMasses)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, OutDensities)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, OutLambdas)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, OutFlags)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, OutNeighborCounts)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<int>, OutParticleIDs)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<int>, OutSourceIDs)
+		SHADER_PARAMETER(int32, SplitParticleCount)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static constexpr uint32 ThreadGroupSize = 256;
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
+	}
+};
+
+class FMergeSoAToAoSCS : public FGlobalShader
+{
+	DECLARE_GLOBAL_SHADER(FMergeSoAToAoSCS);
+	SHADER_USE_PARAMETER_STRUCT(FMergeSoAToAoSCS, FGlobalShader);
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float>, InPositions)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float>, InPredictedPositions)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float>, InVelocities)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float>, InMasses)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float>, InDensities)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float>, InLambdas)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, InFlags)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, InNeighborCounts)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<int>, InParticleIDs)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<int>, InSourceIDs)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, TargetParticles)
+		SHADER_PARAMETER(int32, MergeParticleCount)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static constexpr uint32 ThreadGroupSize = 256;
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
 	}
 };

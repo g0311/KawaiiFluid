@@ -10,25 +10,6 @@
 // Based on NVIDIA FleX and Yu & Turk 2013
 //-----------------------------------------------------------------------------
 
-// GPU Fluid Particle Structure (must match FGPUFluidParticle in C++)
-// 96 bytes with embedded attachment data
-struct FGPUFluidParticle
-{
-	float3 Position;           // 12 bytes
-	float Mass;                // 4 bytes (total: 16)
-
-	float3 PredictedPosition;  // 12 bytes
-	float Density;             // 4 bytes (total: 32)
-
-	float3 Velocity;           // 12 bytes
-	float Lambda;              // 4 bytes (total: 48)
-
-	int ParticleID;            // 4 bytes
-	int SourceID;              // 4 bytes
-	uint Flags;                // 4 bytes
-	uint NeighborCount;        // 4 bytes (total: 64)
-};
-
 // GPU Particle Attachment Structure (must match FGPUParticleAttachment in C++)
 struct FGPUParticleAttachment
 {
@@ -53,8 +34,10 @@ struct FGPUParticleAttachment
 #define MODE_DENSITY_BASED 1
 #define MODE_HYBRID 2
 
-// Input: GPU Particle buffer (from simulation)
-StructuredBuffer<FGPUFluidParticle> InPhysicsParticles;
+// SoA (Structure of Arrays) Particle Buffers
+Buffer<float> InPositions;               // [ParticleCount * 3] float3 as 3 consecutive floats
+Buffer<float> InVelocities;              // [ParticleCount * 3] float3 as 3 consecutive floats
+Buffer<uint> InFlags;                    // [ParticleCount] uint
 
 // Input: Attachment buffer (for surface normal of attached particles)
 StructuredBuffer<FGPUParticleAttachment> InAttachments;
@@ -494,8 +477,9 @@ void CalculateVelocityBased(
 	out float3 Axis1, out float3 Axis2, out float3 Axis3,
 	out float Scale1, out float Scale2, out float Scale3)
 {
-	FGPUFluidParticle P = InPhysicsParticles[ParticleIndex];
-	CalculateVelocityBasedWithVelocity(P.Velocity, Axis1, Axis2, Axis3, Scale1, Scale2, Scale3);
+	uint idx3 = ParticleIndex * 3;
+	float3 velocity = float3(InVelocities[idx3], InVelocities[idx3 + 1], InVelocities[idx3 + 2]);
+	CalculateVelocityBasedWithVelocity(velocity, Axis1, Axis2, Axis3, Scale1, Scale2, Scale3);
 }
 
 //-----------------------------------------------------------------------------
@@ -523,8 +507,8 @@ void CalculateDensityBased(
 	Scale1 = Scale2 = Scale3 = 1.0f;
 	OutNeighborCount = 0;
 
-	FGPUFluidParticle P = InPhysicsParticles[ParticleIndex];
-	float3 CenterPos = P.Position;
+	uint idx3 = ParticleIndex * 3;
+	float3 CenterPos = float3(InPositions[idx3], InPositions[idx3 + 1], InPositions[idx3 + 2]);
 
 	int3 CenterCell = WorldToCell(CenterPos, CellSize);
 	int CellRadius = (int)ceil(SmoothingRadius / CellSize);
@@ -571,7 +555,8 @@ void CalculateDensityBased(
 							continue;
 						}
 
-						float3 NeighborPos = InPhysicsParticles[NeighborIdx].Position;
+						uint neighborIdx3 = NeighborIdx * 3;
+						float3 NeighborPos = float3(InPositions[neighborIdx3], InPositions[neighborIdx3 + 1], InPositions[neighborIdx3 + 2]);
 						float3 Diff = NeighborPos - CenterPos;
 						float Dist2 = dot(Diff, Diff);
 
@@ -622,7 +607,8 @@ void CalculateDensityBased(
 							continue;
 						}
 
-						float3 NeighborPos = InPhysicsParticles[NeighborIdx].Position;
+						uint neighborIdx3 = NeighborIdx * 3;
+						float3 NeighborPos = float3(InPositions[neighborIdx3], InPositions[neighborIdx3 + 1], InPositions[neighborIdx3 + 2]);
 						float3 Diff = NeighborPos - CenterPos;
 						float Dist2 = dot(Diff, Diff);
 
@@ -907,15 +893,16 @@ void ApplyVelocityStretching(
 	inout float3 Axis1, inout float3 Axis2, inout float3 Axis3,
 	inout float Scale1, inout float Scale2, inout float Scale3)
 {
-	FGPUFluidParticle P = InPhysicsParticles[ParticleIndex];
-	float Speed = length(P.Velocity);
+	uint idx3 = ParticleIndex * 3;
+	float3 velocity = float3(InVelocities[idx3], InVelocities[idx3 + 1], InVelocities[idx3 + 2]);
+	float Speed = length(velocity);
 
 	if (Speed < 0.001f)
 	{
 		return;
 	}
 
-	float3 VelDir = P.Velocity / Speed;
+	float3 VelDir = velocity / Speed;
 
 	// Calculate velocity stretch factor
 	float VelStretch = 1.0f + Speed * VelocityStretchFactor * AnisotropyScale;
@@ -1021,14 +1008,16 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	float Scale1, Scale2, Scale3;
 	int NeighborCount = 0;
 
-	// Read particle data
-	FGPUFluidParticle P = InPhysicsParticles[Idx];
-	bool bIsAttached = (P.Flags & FLAG_IS_ATTACHED) != 0;
+	// Read particle data (SOA)
+	uint idx3 = Idx * 3;
+	uint flags = InFlags[Idx];
+	float3 velocity = float3(InVelocities[idx3], InVelocities[idx3 + 1], InVelocities[idx3 + 2]);
+	bool bIsAttached = (flags & FLAG_IS_ATTACHED) != 0;
 
 	// Get effective velocity for anisotropy calculation
 	// For attached particles: use velocity relative to bone (excludes player movement)
 	// For detached particles: use actual particle velocity
-	float3 EffectiveVelocity = P.Velocity;
+	float3 EffectiveVelocity = velocity;
 	if (bIsAttached)
 	{
 		FGPUParticleAttachment Attachment = InAttachments[Idx];

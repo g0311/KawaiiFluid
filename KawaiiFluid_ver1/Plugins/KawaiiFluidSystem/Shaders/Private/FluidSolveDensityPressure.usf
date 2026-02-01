@@ -18,7 +18,15 @@
 // Shader Parameters
 //=============================================================================
 
-RWStructuredBuffer<FGPUFluidParticle> Particles;
+// SoA (Structure of Arrays) Particle Buffers
+RWBuffer<float> Positions;                     // [ParticleCount * 3] float3 as 3 consecutive floats
+RWBuffer<float> PredictedPositions;            // [ParticleCount * 3] float3 as 3 consecutive floats
+RWBuffer<float> Velocities;                    // [ParticleCount * 3] float3 as 3 consecutive floats
+RWBuffer<float> Masses;                        // [ParticleCount] float
+RWBuffer<float> Densities;                     // [ParticleCount] float
+RWBuffer<float> Lambdas;                       // [ParticleCount] float
+RWBuffer<uint> Flags;                          // [ParticleCount] uint
+RWBuffer<uint> NeighborCountsBuffer;           // [ParticleCount] uint (renamed to avoid collision with local variable)
 
 // Hash table mode (legacy)
 StructuredBuffer<uint> CellCounts;
@@ -178,8 +186,10 @@ uint GetMortonCellIDFromCellCoord(int3 cellCoord)
 		uint maxNeighborIdx = min(cellEnd, (uint)(ParticleCount - 1)); \
 		for (uint neighborIdx = cellStart; neighborIdx <= maxNeighborIdx; ++neighborIdx) \
 		{ \
-			FGPUFluidParticle neighbor = Particles[neighborIdx]; \
-			float3 neighborPos = neighbor.PredictedPosition; \
+			uint neighborIdx3 = neighborIdx * 3; \
+			uint neighborFlags = Flags[neighborIdx]; \
+			if (HasFlag(neighborFlags, GPU_PARTICLE_FLAG_IS_ATTACHED)) continue; \
+			float3 neighborPos = float3(PredictedPositions[neighborIdx3], PredictedPositions[neighborIdx3 + 1], PredictedPositions[neighborIdx3 + 2]); \
 			float3 r_cm = pos - neighborPos; \
 			float r2_cm = dot(r_cm, r_cm); \
 			float r2 = r2_cm * CM_TO_M_SQ; \
@@ -191,7 +201,7 @@ uint GetMortonCellIDFromCellCoord(int3 cellCoord)
 					NeighborList[cacheIdx] = neighborIdx; \
 					cachedCount++; \
 				} \
-				float mass = neighbor.Mass; \
+				float mass = Masses[neighborIdx]; \
 				float w = Poly6Kernel(r2, h2); \
 				density += mass * Poly6Coeff * w; \
 				if (neighborIdx != idx) neighborCount++; \
@@ -203,7 +213,7 @@ uint GetMortonCellIDFromCellCoord(int3 cellCoord)
 				gradC_i += gradW * invRestDensity; \
 				if (neighborIdx != idx && r2 >= SMALL_NUMBER) \
 				{ \
-					float lambda_j_prev = neighbor.Lambda; \
+					float lambda_j_prev = Lambdas[neighborIdx]; \
 					float diff = h2 - r2; \
 					float W_r = diff * diff * diff; \
 					float ratio = W_r * InvW_DeltaQ; \
@@ -234,8 +244,10 @@ uint GetMortonCellIDFromCellCoord(int3 cellCoord)
 	{ \
 		uint neighborIdx = ParticleIndices[startIdx + i]; \
 		if (neighborIdx >= (uint)ParticleCount) continue; \
-		FGPUFluidParticle neighbor = Particles[neighborIdx]; \
-		float3 neighborPos = neighbor.PredictedPosition; \
+		uint neighborIdx3 = neighborIdx * 3; \
+		uint neighborFlags = Flags[neighborIdx]; \
+		if (HasFlag(neighborFlags, GPU_PARTICLE_FLAG_IS_ATTACHED)) continue; \
+		float3 neighborPos = float3(PredictedPositions[neighborIdx3], PredictedPositions[neighborIdx3 + 1], PredictedPositions[neighborIdx3 + 2]); \
 		float3 r_cm = pos - neighborPos; \
 		float r2_cm = dot(r_cm, r_cm); \
 		float r2 = r2_cm * CM_TO_M_SQ; \
@@ -248,7 +260,7 @@ uint GetMortonCellIDFromCellCoord(int3 cellCoord)
 				NeighborList[cacheIdx] = neighborIdx; \
 				cachedCount++; \
 			} \
-			float mass = neighbor.Mass; \
+			float mass = Masses[neighborIdx]; \
 			float w = Poly6Kernel(r2, h2); \
 			density += mass * Poly6Coeff * w; \
 			if (neighborIdx != idx) neighborCount++; \
@@ -260,7 +272,7 @@ uint GetMortonCellIDFromCellCoord(int3 cellCoord)
 			gradC_i += gradW * invRestDensity; \
 			if (neighborIdx != idx && r2 >= SMALL_NUMBER) \
 			{ \
-				float lambda_j_prev = neighbor.Lambda; \
+				float lambda_j_prev = Lambdas[neighborIdx]; \
 				float diff = h2 - r2; \
 				float W_r = diff * diff * diff; \
 				float ratio = W_r * InvW_DeltaQ; \
@@ -289,36 +301,37 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		return;
 	}
 
-	FGPUFluidParticle particle = Particles[idx];
+	// Read SOA buffers
+	uint idx3 = idx * 3;
+	uint flags = Flags[idx];
 
 	// Skip attached particles
-	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+	if (HasFlag(flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
 	{
-		particle.Density = RestDensity;
-		particle.Lambda = 0.0f;
-		Particles[idx] = particle;
+		Densities[idx] = RestDensity;
+		Lambdas[idx] = 0.0f;
 		return;
 	}
 
 	// Skip sleeping particles - they are excluded from constraint solving
 	// This reduces micro-jitter and improves performance (NVIDIA Flex technique)
-	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_SLEEPING))
+	if (HasFlag(flags, GPU_PARTICLE_FLAG_IS_SLEEPING))
 	{
 		// Keep density at rest for sleeping particles
-		particle.Density = RestDensity;
-		particle.Lambda = 0.0f;
+		Densities[idx] = RestDensity;
+		Lambdas[idx] = 0.0f;
 		// Position remains unchanged - sleeping particles don't move
-		Particles[idx] = particle;
 		return;
 	}
 
 	// NEAR_BOUNDARY flag check - used later to skip position corrections
-	bool bIsNearBoundary = HasFlag(particle.Flags, GPU_PARTICLE_FLAG_NEAR_BOUNDARY);
+	bool bIsNearBoundary = HasFlag(flags, GPU_PARTICLE_FLAG_NEAR_BOUNDARY);
 
-	float3 pos = particle.PredictedPosition;
+	float3 pos = float3(PredictedPositions[idx3], PredictedPositions[idx3 + 1], PredictedPositions[idx3 + 2]);
+	float3 vel = float3(Velocities[idx3], Velocities[idx3 + 1], Velocities[idx3 + 2]);
 
 	// Previous iteration's Lambda (for Jacobi-style update)
-	float lambda_i_prev = particle.Lambda;
+	float lambda_i_prev = Lambdas[idx];
 
 	// Convert smoothing radius from cm to m for kernel calculations
 	float h = SmoothingRadius * CM_TO_M;
@@ -408,15 +421,16 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 						uint maxNeighborIdx = min(cellEnd, (uint)(ParticleCount - 1));
 						for (uint neighborIdx = cellStart; neighborIdx <= maxNeighborIdx; ++neighborIdx)
 						{
-							FGPUFluidParticle neighbor = Particles[neighborIdx];
+							uint neighborIdx3 = neighborIdx * 3;
+							uint neighborFlags = Flags[neighborIdx];
 
 							// Skip attached neighbors - they cluster at bone and cause explosion
-							if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+							if (HasFlag(neighborFlags, GPU_PARTICLE_FLAG_IS_ATTACHED))
 							{
 								continue;
 							}
 
-							float3 neighborPos = neighbor.PredictedPosition;
+							float3 neighborPos = float3(PredictedPositions[neighborIdx3], PredictedPositions[neighborIdx3 + 1], PredictedPositions[neighborIdx3 + 2]);
 							float3 r_cm = pos - neighborPos;
 							float r2_cm = dot(r_cm, r_cm);
 							float r2 = r2_cm * CM_TO_M_SQ;
@@ -430,7 +444,7 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 									cachedCount++;
 								}
 
-								float mass = neighbor.Mass;
+								float mass = Masses[neighborIdx];
 								float w = Poly6Kernel(r2, h2);
 								density += mass * Poly6Coeff * w;
 								if (neighborIdx != idx) neighborCount++;
@@ -445,7 +459,7 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 								if (neighborIdx != idx && r2 >= SMALL_NUMBER)
 								{
-									float lambda_j_prev = neighbor.Lambda;
+									float lambda_j_prev = Lambdas[neighborIdx];
 									// Branchless tensile instability using pre-computed tensileK_scaled
 									// When disabled, tensileK_scaled = 0, so scorr = 0
 									float diff = h2 - r2;
@@ -556,15 +570,16 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 								continue;
 							}
 
-							FGPUFluidParticle neighbor = Particles[neighborIdx];
+							uint neighborIdx3 = neighborIdx * 3;
+							uint neighborFlags = Flags[neighborIdx];
 
 							// Skip attached neighbors - they cluster at bone and cause explosion
-							if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+							if (HasFlag(neighborFlags, GPU_PARTICLE_FLAG_IS_ATTACHED))
 							{
 								continue;
 							}
 
-							float3 neighborPos = neighbor.PredictedPosition;
+							float3 neighborPos = float3(PredictedPositions[neighborIdx3], PredictedPositions[neighborIdx3 + 1], PredictedPositions[neighborIdx3 + 2]);
 							float3 r_cm = pos - neighborPos;
 							float r2_cm = dot(r_cm, r_cm);
 							float r2 = r2_cm * CM_TO_M_SQ;
@@ -579,7 +594,7 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 									cachedCount++;
 								}
 
-								float mass = neighbor.Mass;
+								float mass = Masses[neighborIdx];
 								float w = Poly6Kernel(r2, h2);
 								density += mass * Poly6Coeff * w;
 
@@ -598,7 +613,7 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 								if (neighborIdx != idx && r2 >= SMALL_NUMBER)
 								{
-									float lambda_j_prev = neighbor.Lambda;
+									float lambda_j_prev = Lambdas[neighborIdx];
 									// Branchless tensile instability using pre-computed tensileK_scaled
 									float diff = h2 - r2;
 									float W_r = diff * diff * diff;
@@ -687,15 +702,16 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			uint n = reverseOrder ? (cachedCount - 1 - ni) : ni;
 			uint neighborIdx = NeighborList[baseIdx + n];
 
-			FGPUFluidParticle neighbor = Particles[neighborIdx];
+			uint neighborIdx3 = neighborIdx * 3;
+			uint neighborFlags = Flags[neighborIdx];
 
 			// Skip attached neighbors - they cluster at bone and cause explosion
-			if (HasFlag(neighbor.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+			if (HasFlag(neighborFlags, GPU_PARTICLE_FLAG_IS_ATTACHED))
 			{
 				continue;
 			}
 
-			float3 neighborPos = neighbor.PredictedPosition;
+			float3 neighborPos = float3(PredictedPositions[neighborIdx3], PredictedPositions[neighborIdx3 + 1], PredictedPositions[neighborIdx3 + 2]);
 			float3 r_cm = pos - neighborPos;
 			float r2_cm = dot(r_cm, r_cm);
 			float r2 = r2_cm * CM_TO_M_SQ;
@@ -703,7 +719,7 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			// Still need distance check as positions changed
 			if (r2 < h2)
 			{
-				float mass = neighbor.Mass;
+				float mass = Masses[neighborIdx];
 				float w = Poly6Kernel(r2, h2);
 				density += mass * Poly6Coeff * w;
 
@@ -722,7 +738,7 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 				if (neighborIdx != idx && r2 >= SMALL_NUMBER)
 				{
-					float lambda_j_prev = neighbor.Lambda;
+					float lambda_j_prev = Lambdas[neighborIdx];
 					// Branchless tensile instability using pre-computed tensileK_scaled
 					float diff = h2 - r2;
 					float W_r = diff * diff * diff;
@@ -865,7 +881,7 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 									if (r_len > SMALL_NUMBER)
 									{
 										float3 r_dir = r_cm / r_len;  // Direction from boundary to fluid
-										float3 relVel = particle.Velocity - boundary.Velocity;
+										float3 relVel = vel - boundary.Velocity;
 
 										// Negative dot = boundary catching up (approaching)
 										float approachSpeed = -dot(relVel, r_dir);
@@ -888,14 +904,14 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 								//=============================================================
 								if (bEnableBoundaryVelocityTransfer && BoundaryAdhesionStrength > 0.0f)
 								{
-									float3 relativeVelocity = particle.Velocity - boundary.Velocity;
+									float3 relativeVelocity = vel - boundary.Velocity;
 									float relativeSpeed = length(relativeVelocity);
-									
+
 									// Detach factor: high relative speed = less transfer
 									float detachFactor = smoothstep(BoundaryDetachSpeedThreshold, BoundaryMaxDetachSpeed, relativeSpeed);
 									float transferFactor = (1.0f - detachFactor) * BoundaryVelocityTransferStrength;
-									
-									float3 velDiff = boundary.Velocity - particle.Velocity;
+
+									float3 velDiff = boundary.Velocity - vel;
 									float contribution = w * boundary.Psi * BoundaryAdhesionStrength * transferFactor;
 									boundaryVelCorrection += velDiff * contribution;
 									boundaryVelWeight += contribution;
@@ -937,7 +953,7 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 						if (r_len > SMALL_NUMBER)
 						{
 							float3 r_dir = r_cm / r_len;  // Direction from boundary to fluid
-							float3 relVel = particle.Velocity - boundary.Velocity;
+							float3 relVel = vel - boundary.Velocity;
 
 							// Negative dot = boundary catching up (approaching)
 							float approachSpeed = -dot(relVel, r_dir);
@@ -960,14 +976,14 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 					//=============================================================
 					if (bEnableBoundaryVelocityTransfer && BoundaryAdhesionStrength > 0.0f)
 					{
-						float3 relativeVelocity = particle.Velocity - boundary.Velocity;
+						float3 relativeVelocity = vel - boundary.Velocity;
 						float relativeSpeed = length(relativeVelocity);
-						
+
 						// Detach factor: high relative speed = less transfer
 						float detachFactor = smoothstep(BoundaryDetachSpeedThreshold, BoundaryMaxDetachSpeed, relativeSpeed);
 						float transferFactor = (1.0f - detachFactor) * BoundaryVelocityTransferStrength;
-						
-						float3 velDiff = boundary.Velocity - particle.Velocity;
+
+						float3 velDiff = boundary.Velocity - vel;
 						float contribution = w * boundary.Psi * BoundaryAdhesionStrength * transferFactor;
 						boundaryVelCorrection += velDiff * contribution;
 						boundaryVelWeight += contribution;
@@ -985,12 +1001,8 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	if (boundaryVelWeight > SMALL_NUMBER && SolverIterationCount > 0 && !bIsNearBoundary)
 	{
 		float iterationScale = 1.0f / (float)SolverIterationCount;
-		particle.Velocity += (boundaryVelCorrection / boundaryVelWeight) * iterationScale;
+		vel += (boundaryVelCorrection / boundaryVelWeight) * iterationScale;
 	}
-
-	// Store density and neighbor count
-	particle.Density = density;
-	particle.NeighborCount = neighborCount;
 
 	//=========================================
 	// Calculate NEW Lambda (XPBD formulation)
@@ -998,10 +1010,11 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	float C = (density * invRestDensity) - 1.0f;
 	float alphaTilde = Compliance / max(DeltaTimeSq, 0.00001f);
 
+	float lambda = lambda_i_prev;
 	if (C > 0.0f)
 	{
 		float deltaLambda = (-C - alphaTilde * lambda_i_prev) / (sumGradC2 + alphaTilde);
-		particle.Lambda = lambda_i_prev + deltaLambda;
+		lambda = lambda_i_prev + deltaLambda;
 	}
 	// If C <= 0, keep previous Lambda
 
@@ -1010,7 +1023,7 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	// PBF formula: Δp = (1/ρ₀) × Σⱼ (λᵢ + λⱼ + s_corr) × ∇W
 	// This is a SUM over neighbors, not an average
 	float3 deltaP_cm = deltaP * invRestDensity;
-	particle.PredictedPosition += deltaP_cm;
+	pos += deltaP_cm;
 
 	//=========================================
 	// Apply Position-Based Surface Tension
@@ -1047,9 +1060,9 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		{
 			float relaxation = 1.0f - SurfaceTensionVelocityDamping;
 			float3 posCorrection = avgSTCorrection * surfaceScale * relaxation;
-			particle.PredictedPosition += posCorrection;
+			pos += posCorrection;
 			// Also update velocity to match position change (for viscosity compatibility)
-			particle.Velocity += posCorrection * invDeltaTime;
+			vel += posCorrection * invDeltaTime;
 		}
 	}
 
@@ -1073,10 +1086,21 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		// Apply with damping for stability
 		float relaxation = 1.0f - SurfaceTensionVelocityDamping;
 		float3 posCorrection = avgCohesionCorrection * relaxation;
-		particle.PredictedPosition += posCorrection;
+		pos += posCorrection;
 		// Also update velocity to match position change (for viscosity compatibility)
-		particle.Velocity += posCorrection * invDeltaTime;
+		vel += posCorrection * invDeltaTime;
 	}
 
-	Particles[idx] = particle;
+	// Write back to SOA buffers
+	PredictedPositions[idx3] = pos.x;
+	PredictedPositions[idx3 + 1] = pos.y;
+	PredictedPositions[idx3 + 2] = pos.z;
+
+	Velocities[idx3] = vel.x;
+	Velocities[idx3 + 1] = vel.y;
+	Velocities[idx3 + 2] = vel.z;
+
+	Densities[idx] = density;
+	Lambdas[idx] = lambda;
+	NeighborCountsBuffer[idx] = neighborCount;
 }

@@ -7,10 +7,14 @@
 #include "FluidGPUPhysics.ush"
 
 //=============================================================================
-// Shader Parameters
+// Shader Parameters (SoA - Structure of Arrays)
 //=============================================================================
 
-RWStructuredBuffer<FGPUFluidParticle> Particles;
+RWBuffer<float> Positions;              // float3 as 3 floats
+RWBuffer<float> PredictedPositions;     // float3 as 3 floats
+RWBuffer<float> Velocities;             // float3 as 3 floats
+RWBuffer<uint> Flags;
+
 int ParticleCount;
 float DeltaTime;
 float MaxVelocity;      // Safety clamp to prevent divergence
@@ -29,53 +33,75 @@ void FinalizePositionsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		return;
 	}
 
-	FGPUFluidParticle particle = Particles[idx];
+	uint idx3 = idx * 3;
+	uint flags = Flags[idx];
+
+	// Read current values
+	float3 position = float3(Positions[idx3], Positions[idx3 + 1], Positions[idx3 + 2]);
+	float3 predictedPosition = float3(PredictedPositions[idx3], PredictedPositions[idx3 + 1], PredictedPositions[idx3 + 2]);
+	float3 velocity = float3(Velocities[idx3], Velocities[idx3 + 1], Velocities[idx3 + 2]);
 
 	// Skip CPU-attached particles (they follow bone position directly)
-	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+	if (HasFlag(flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
 	{
 		// For CPU-attached particles, just sync position
-		particle.Position = particle.PredictedPosition;
-		Particles[idx] = particle;
+		Positions[idx3] = predictedPosition.x;
+		Positions[idx3 + 1] = predictedPosition.y;
+		Positions[idx3 + 2] = predictedPosition.z;
 		return;
 	}
 
 	// NEAR_BOUNDARY particles: position and velocity already set by ApplyBoneTransform
 	// Don't recalculate velocity from position change (would cause explosion)
-	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_NEAR_BOUNDARY))
+	if (HasFlag(flags, GPU_PARTICLE_FLAG_NEAR_BOUNDARY))
 	{
-		particle.Position = particle.PredictedPosition;
+		Positions[idx3] = predictedPosition.x;
+		Positions[idx3 + 1] = predictedPosition.y;
+		Positions[idx3 + 2] = predictedPosition.z;
+
 		// Keep bone velocity, just apply damping
-		particle.Velocity *= GlobalDamping;
-		particle.Flags = ClearFlag(particle.Flags, GPU_PARTICLE_FLAG_JUST_DETACHED);
-		Particles[idx] = particle;
+		velocity *= GlobalDamping;
+		Velocities[idx3] = velocity.x;
+		Velocities[idx3 + 1] = velocity.y;
+		Velocities[idx3 + 2] = velocity.z;
+
+		Flags[idx] = ClearFlag(flags, GPU_PARTICLE_FLAG_JUST_DETACHED);
 		return;
 	}
 
 	// Store old position for velocity calculation
-	float3 oldPosition = particle.Position;
+	float3 oldPosition = position;
 
 	// Update position from predicted position
-	particle.Position = particle.PredictedPosition;
+	position = predictedPosition;
 
 	// Recalculate velocity from position change (pure PBF formula per paper Algorithm 1 line 22)
 	// v = (x* - x) / dt
 	float invDt = 1.0f / max(DeltaTime, 0.0001f);
-	particle.Velocity = (particle.Position - oldPosition) * invDt;
+	velocity = (position - oldPosition) * invDt;
 
 	// Safety clamp: prevent extreme velocities that could cause divergence
-	float velocityMag = length(particle.Velocity);
+	float velocityMag = length(velocity);
 	if (velocityMag > MaxVelocity)
 	{
-		particle.Velocity = (particle.Velocity / velocityMag) * MaxVelocity;
+		velocity = (velocity / velocityMag) * MaxVelocity;
 	}
 
 	// Apply global damping to dissipate energy
 	// GlobalDamping of 0.995 means 0.5% energy loss per substep
-	particle.Velocity *= GlobalDamping;
+	velocity *= GlobalDamping;
 
 	// Clear frame-specific flags
-	particle.Flags = ClearFlag(particle.Flags, GPU_PARTICLE_FLAG_JUST_DETACHED);
+	flags = ClearFlag(flags, GPU_PARTICLE_FLAG_JUST_DETACHED);
 
-	Particles[idx] = particle;
+	// Write back
+	Positions[idx3] = position.x;
+	Positions[idx3 + 1] = position.y;
+	Positions[idx3 + 2] = position.z;
+
+	Velocities[idx3] = velocity.x;
+	Velocities[idx3 + 1] = velocity.y;
+	Velocities[idx3 + 2] = velocity.z;
+
+	Flags[idx] = flags;
 }

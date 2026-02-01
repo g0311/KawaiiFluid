@@ -65,7 +65,7 @@ void FGPUAdhesionManager::Release()
 
 void FGPUAdhesionManager::AddAdhesionPass(
 	FRDGBuilder& GraphBuilder,
-	FRDGBufferUAVRef ParticlesUAV,
+	const FSimulationSpatialData& SpatialData,
 	FRDGBufferUAVRef AttachmentUAV,
 	FGPUCollisionManager* CollisionManager,
 	int32 CurrentParticleCount,
@@ -154,7 +154,11 @@ void FGPUAdhesionManager::AddAdhesionPass(
 	if (!ConvexPlanesBuffer) ConvexPlanesBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyPlanes"));
 
 	FAdhesionCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FAdhesionCS::FParameters>();
-	PassParameters->Particles = ParticlesUAV;
+	// Bind SOA buffers
+	PassParameters->Positions = GraphBuilder.CreateUAV(SpatialData.SoA_Positions, PF_R32_FLOAT);
+	PassParameters->PredictedPositions = GraphBuilder.CreateUAV(SpatialData.SoA_PredictedPositions, PF_R32_FLOAT);
+	PassParameters->Velocities = GraphBuilder.CreateUAV(SpatialData.SoA_Velocities, PF_R32_FLOAT);
+	PassParameters->Flags = GraphBuilder.CreateUAV(SpatialData.SoA_Flags, PF_R32_UINT);
 	PassParameters->ParticleCount = CurrentParticleCount;
 	PassParameters->ParticleRadius = Params.ParticleRadius;
 	PassParameters->Attachments = AttachmentUAV;
@@ -197,7 +201,7 @@ void FGPUAdhesionManager::AddAdhesionPass(
 
 void FGPUAdhesionManager::AddUpdateAttachedPositionsPass(
 	FRDGBuilder& GraphBuilder,
-	FRDGBufferUAVRef ParticlesUAV,
+	const FSimulationSpatialData& SpatialData,
 	FRDGBufferUAVRef AttachmentUAV,
 	FGPUCollisionManager* CollisionManager,
 	int32 CurrentParticleCount,
@@ -286,7 +290,11 @@ void FGPUAdhesionManager::AddUpdateAttachedPositionsPass(
 	if (!ConvexPlanesBuffer) ConvexPlanesBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyPlanesUpdate"));
 
 	FUpdateAttachedPositionsCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FUpdateAttachedPositionsCS::FParameters>();
-	PassParameters->Particles = ParticlesUAV;
+	// Bind SOA buffers
+	PassParameters->Positions = GraphBuilder.CreateUAV(SpatialData.SoA_Positions, PF_R32_FLOAT);
+	PassParameters->PredictedPositions = GraphBuilder.CreateUAV(SpatialData.SoA_PredictedPositions, PF_R32_FLOAT);
+	PassParameters->Velocities = GraphBuilder.CreateUAV(SpatialData.SoA_Velocities, PF_R32_FLOAT);
+	PassParameters->Flags = GraphBuilder.CreateUAV(SpatialData.SoA_Flags, PF_R32_UINT);
 	PassParameters->ParticleCount = CurrentParticleCount;
 	PassParameters->Attachments = AttachmentUAV;
 	PassParameters->BoneTransforms = BoneTransformsSRVLocal;
@@ -328,7 +336,7 @@ void FGPUAdhesionManager::AddUpdateAttachedPositionsPass(
 
 void FGPUAdhesionManager::AddClearDetachedFlagPass(
 	FRDGBuilder& GraphBuilder,
-	FRDGBufferUAVRef ParticlesUAV,
+	const FSimulationSpatialData& SpatialData,
 	int32 CurrentParticleCount)
 {
 	if (!IsAdhesionEnabled())
@@ -340,7 +348,7 @@ void FGPUAdhesionManager::AddClearDetachedFlagPass(
 	TShaderMapRef<FClearDetachedFlagCS> ComputeShader(ShaderMap);
 
 	FClearDetachedFlagCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FClearDetachedFlagCS::FParameters>();
-	PassParameters->Particles = ParticlesUAV;
+	PassParameters->Flags = GraphBuilder.CreateUAV(SpatialData.SoA_Flags, PF_R32_UINT);
 	PassParameters->ParticleCount = CurrentParticleCount;
 
 	const uint32 NumGroups = FMath::DivideAndRoundUp(CurrentParticleCount, FClearDetachedFlagCS::ThreadGroupSize);

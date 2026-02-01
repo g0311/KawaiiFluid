@@ -11,8 +11,14 @@
 // Shader Parameters
 //=============================================================================
 
-// Particle buffer
-RWStructuredBuffer<FGPUFluidParticle> Particles;
+// Particle buffers (SoA - Structure of Arrays)
+RWBuffer<float> Positions;
+RWBuffer<float> PredictedPositions;
+RWBuffer<float> Velocities;
+Buffer<float> Densities;            // Read-only for feedback
+Buffer<int> SourceIDs;              // Read-only for feedback
+RWBuffer<uint> Flags;
+
 int ParticleCount;
 float ParticleRadius;
 
@@ -206,18 +212,22 @@ void PrimitiveCollisionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		return;
 	}
 
-	FGPUFluidParticle particle = Particles[idx];
+	uint idx3 = idx * 3;
+	uint flags = Flags[idx];
 
 	// Skip CPU-attached particles only (they follow bone position directly)
 	// Boundary-attached particles still need collision detection
-	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+	if (HasFlag(flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
 	{
 		return;
 	}
 
-	float3 pos = particle.PredictedPosition;
-	float3 originalPos = particle.Position;  // Original position for position-level friction
-	float3 vel = particle.Velocity;
+	// Read SoA buffers
+	float3 pos = float3(PredictedPositions[idx3], PredictedPositions[idx3 + 1], PredictedPositions[idx3 + 2]);
+	float3 originalPos = float3(Positions[idx3], Positions[idx3 + 1], Positions[idx3 + 2]);
+	float3 vel = float3(Velocities[idx3], Velocities[idx3 + 1], Velocities[idx3 + 2]);
+	float density = Densities[idx];
+	int sourceID = SourceIDs[idx];
 	bool bCollided = false;
 
 	// Check collision with all spheres
@@ -239,7 +249,7 @@ void PrimitiveCollisionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			bCollided = true;
 
 			// Record feedback for particle -> player interaction (includes velocity for drag calculation)
-			RecordCollisionFeedback(idx, si, COLLIDER_TYPE_SPHERE, particle.Density, normal, penetration, particle.Velocity, sphere.OwnerID, particle.SourceID, sphere.BoneIndex, sphere.bHasFluidInteraction, impactWorld, pos);
+			RecordCollisionFeedback(idx, si, COLLIDER_TYPE_SPHERE, density, normal, penetration, vel, sphere.OwnerID, sourceID, sphere.BoneIndex, sphere.bHasFluidInteraction, impactWorld, pos);
 		}
 	}
 
@@ -262,7 +272,7 @@ void PrimitiveCollisionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			bCollided = true;
 
 			// Record feedback for particle -> player interaction (includes velocity for drag calculation)
-			RecordCollisionFeedback(idx, SphereCount + ci, COLLIDER_TYPE_CAPSULE, particle.Density, normal, penetration, particle.Velocity, capsule.OwnerID, particle.SourceID, capsule.BoneIndex, capsule.bHasFluidInteraction, impactWorld, pos);
+			RecordCollisionFeedback(idx, SphereCount + ci, COLLIDER_TYPE_CAPSULE, density, normal, penetration, vel, capsule.OwnerID, sourceID, capsule.BoneIndex, capsule.bHasFluidInteraction, impactWorld, pos);
 		}
 	}
 
@@ -286,12 +296,12 @@ void PrimitiveCollisionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			// Mark as near ground if collision normal is mostly upward
 			if (normal.z > 0.5f)
 			{
-				particle.Flags = SetFlag(particle.Flags, GPU_PARTICLE_FLAG_NEAR_GROUND);
+				flags = SetFlag(flags, GPU_PARTICLE_FLAG_NEAR_GROUND);
 			}
 			bCollided = true;
 
 			// Record feedback for particle -> player interaction (includes velocity for drag calculation)
-			RecordCollisionFeedback(idx, SphereCount + CapsuleCount + bi, COLLIDER_TYPE_BOX, particle.Density, normal, penetration, particle.Velocity, box.OwnerID, particle.SourceID, box.BoneIndex, box.bHasFluidInteraction, impactWorld, pos);
+			RecordCollisionFeedback(idx, SphereCount + CapsuleCount + bi, COLLIDER_TYPE_BOX, density, normal, penetration, vel, box.OwnerID, sourceID, box.BoneIndex, box.bHasFluidInteraction, impactWorld, pos);
 		}
 	}
 
@@ -337,23 +347,29 @@ void PrimitiveCollisionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			// Mark as near ground if collision normal is mostly upward
 			if (normal.z > 0.5f)
 			{
-				particle.Flags = SetFlag(particle.Flags, GPU_PARTICLE_FLAG_NEAR_GROUND);
+				flags = SetFlag(flags, GPU_PARTICLE_FLAG_NEAR_GROUND);
 			}
 			bCollided = true;
 
 			// Record feedback for particle -> player interaction (includes velocity for drag calculation)
-			RecordCollisionFeedback(idx, SphereCount + CapsuleCount + BoxCount + cxi, COLLIDER_TYPE_CONVEX, particle.Density, normal, penetration, particle.Velocity, convex.OwnerID, particle.SourceID, convex.BoneIndex, convex.bHasFluidInteraction, impactWorld, pos);
+			RecordCollisionFeedback(idx, SphereCount + CapsuleCount + BoxCount + cxi, COLLIDER_TYPE_CONVEX, density, normal, penetration, vel, convex.OwnerID, sourceID, convex.BoneIndex, convex.bHasFluidInteraction, impactWorld, pos);
 		}
 	}
 
 	// Clear near ground flag if no collision
 	if (!bCollided)
 	{
-		particle.Flags = ClearFlag(particle.Flags, GPU_PARTICLE_FLAG_NEAR_GROUND);
+		flags = ClearFlag(flags, GPU_PARTICLE_FLAG_NEAR_GROUND);
 	}
 
-	// Write back
-	particle.PredictedPosition = pos;
-	particle.Velocity = vel;
-	Particles[idx] = particle;
+	// Write back to SoA buffers
+	PredictedPositions[idx3] = pos.x;
+	PredictedPositions[idx3 + 1] = pos.y;
+	PredictedPositions[idx3 + 2] = pos.z;
+
+	Velocities[idx3] = vel.x;
+	Velocities[idx3 + 1] = vel.y;
+	Velocities[idx3 + 2] = vel.z;
+
+	Flags[idx] = flags;
 }

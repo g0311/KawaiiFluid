@@ -11,7 +11,12 @@
 // Shader Parameters
 //=============================================================================
 
-RWStructuredBuffer<FGPUFluidParticle> Particles;
+// Particle buffers (SoA - Structure of Arrays)
+RWBuffer<float> Positions;
+RWBuffer<float> PredictedPositions;
+RWBuffer<float> Velocities;
+RWBuffer<uint> Flags;
+
 int ParticleCount;
 float ParticleRadius;
 
@@ -106,17 +111,19 @@ void HeightmapCollisionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		return;
 	}
 
-	FGPUFluidParticle particle = Particles[idx];
+	uint idx3 = idx * 3;
+	uint flags = Flags[idx];
 
 	// Skip CPU-attached particles (they follow bone position directly)
-	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+	if (HasFlag(flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
 	{
 		return;
 	}
 
-	float3 pos = particle.PredictedPosition;
-	float3 originalPos = particle.Position;  // Original position for position-level friction
-	float3 vel = particle.Velocity;
+	// Read SoA buffers
+	float3 pos = float3(PredictedPositions[idx3], PredictedPositions[idx3 + 1], PredictedPositions[idx3 + 2]);
+	float3 originalPos = float3(Positions[idx3], Positions[idx3 + 1], Positions[idx3 + 2]);
+	float3 vel = float3(Velocities[idx3], Velocities[idx3 + 1], Velocities[idx3 + 2]);
 
 	// Check if particle is within heightmap XY bounds
 	if (!IsInHeightmapBounds(pos.xy))
@@ -187,22 +194,27 @@ void HeightmapCollisionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		// Mark particle as near ground (used by adhesion system)
 		if (normal.z > 0.5f)
 		{
-			particle.Flags = SetFlag(particle.Flags, GPU_PARTICLE_FLAG_NEAR_GROUND);
+			flags = SetFlag(flags, GPU_PARTICLE_FLAG_NEAR_GROUND);
 		}
 
 		// Mark as collided this frame
-		particle.Flags = SetFlag(particle.Flags, GPU_PARTICLE_FLAG_HAS_COLLIDED);
+		flags = SetFlag(flags, GPU_PARTICLE_FLAG_HAS_COLLIDED);
 	}
 	else if (signedDistance > ParticleRadius * 3.0f)
 	{
 		// Clear near ground flag if particle is well above terrain
 		// (signedDistance > 0 means above terrain plane)
-		particle.Flags = ClearFlag(particle.Flags, GPU_PARTICLE_FLAG_NEAR_GROUND);
+		flags = ClearFlag(flags, GPU_PARTICLE_FLAG_NEAR_GROUND);
 	}
 
-	// Write back updated particle state
-	particle.PredictedPosition = pos;
-	particle.Velocity = vel;
+	// Write back to SoA buffers
+	PredictedPositions[idx3] = pos.x;
+	PredictedPositions[idx3 + 1] = pos.y;
+	PredictedPositions[idx3 + 2] = pos.z;
 
-	Particles[idx] = particle;
+	Velocities[idx3] = vel.x;
+	Velocities[idx3 + 1] = vel.y;
+	Velocities[idx3 + 2] = vel.z;
+
+	Flags[idx] = flags;
 }

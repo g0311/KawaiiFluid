@@ -11,8 +11,11 @@
 // Shader Parameters
 //=============================================================================
 
-// Particle buffer
-RWStructuredBuffer<FGPUFluidParticle> Particles;
+// Particle SOA buffers
+RWBuffer<float> Positions;
+RWBuffer<float> PredictedPositions;
+RWBuffer<float> Velocities;
+RWBuffer<uint> Flags;
 int ParticleCount;
 float ParticleRadius;
 
@@ -216,11 +219,12 @@ void AdhesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		return;
 	}
 
-	FGPUFluidParticle particle = Particles[idx];
+	uint idx3 = idx * 3;
+	uint flags = Flags[idx];
 	FGPUParticleAttachment attachment = Attachments[idx];
 	const float EffectiveAdhesionRadius = max(0.0f, AdhesionRadius + ColliderContactOffset);
 
-	float3 pos = particle.Position;
+	float3 pos = float3(Positions[idx3], Positions[idx3 + 1], Positions[idx3 + 2]);
 
 	// If already attached, skip adhesion check (handled by UpdateAttachedPositions)
 	if (attachment.PrimitiveType >= 0)
@@ -229,7 +233,7 @@ void AdhesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	}
 
 	// Skip if just detached this frame
-	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_JUST_DETACHED))
+	if (HasFlag(flags, GPU_PARTICLE_FLAG_JUST_DETACHED))
 	{
 		return;
 	}
@@ -341,10 +345,10 @@ void AdhesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		attachment.AttachmentTime = CurrentTime;
 		attachment.RelativeVelocity = float3(0, 0, 0);  // No relative velocity on attach
 
-		// Set attached flag on particle
-		particle.Flags = SetFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED);
+		// Set attached flag
+		flags = SetFlag(flags, GPU_PARTICLE_FLAG_IS_ATTACHED);
 
-		Particles[idx] = particle;
+		Flags[idx] = flags;
 		Attachments[idx] = attachment;
 	}
 }
@@ -371,13 +375,17 @@ void UpdateAttachedPositionsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		return;
 	}
 
-	FGPUFluidParticle particle = Particles[idx];
+	uint idx3 = idx * 3;
+	float3 position = float3(Positions[idx3], Positions[idx3 + 1], Positions[idx3 + 2]);
+	float3 predictedPosition = float3(PredictedPositions[idx3], PredictedPositions[idx3 + 1], PredictedPositions[idx3 + 2]);
+	float3 velocity = float3(Velocities[idx3], Velocities[idx3 + 1], Velocities[idx3 + 2]);
+	uint flags = Flags[idx];
 	FGPUBoneTransform bone = BoneTransforms[attachment.BoneIndex];
-	float3 previousVelocity = particle.Velocity;
+	float3 previousVelocity = velocity;
 
 	// Desired bone-follow position and inferred speed
 	float3 desiredPos = BoneLocalToWorld(attachment.LocalOffset, bone);
-	float3 followDelta = desiredPos - particle.PredictedPosition;
+	float3 followDelta = desiredPos - predictedPosition;
 	const float DesiredSpeed = length(followDelta) / max(DeltaTime, 0.0001f);
 
 	// AdhesionStrength affects detach thresholds (0~1 ratio)
@@ -406,7 +414,7 @@ void UpdateAttachedPositionsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		}
 
 		// Additional safety: detach if we drift too far from the surface
-		float predictedSurfaceDistance = ComputeAttachmentSurfaceDistance(particle.PredictedPosition, attachment);
+		float predictedSurfaceDistance = ComputeAttachmentSurfaceDistance(predictedPosition, attachment);
 		if (predictedSurfaceDistance > EffectiveDistThreshold)
 		{
 			bShouldDetach = true;
@@ -432,8 +440,8 @@ void UpdateAttachedPositionsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		attachment.LocalOffset = float3(0, 0, 0);
 		attachment.RelativeVelocity = float3(0, 0, 0);  // Reset relative velocity
 
-		particle.Flags = ClearFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED);
-		particle.Flags = SetFlag(particle.Flags, GPU_PARTICLE_FLAG_JUST_DETACHED);
+		flags = ClearFlag(flags, GPU_PARTICLE_FLAG_IS_ATTACHED);
+		flags = SetFlag(flags, GPU_PARTICLE_FLAG_JUST_DETACHED);
 
 		// Clamp and dampen velocity on detach to prevent particles flying too far
 		const float MaxDetachVelocity = 500.0f;  // cm/s (5 m/s max)
@@ -445,7 +453,7 @@ void UpdateAttachedPositionsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			clampedVelocity = clampedVelocity * (MaxDetachVelocity / velMag);
 		}
 		float3 desiredVelocity = clampedVelocity;
-		particle.Velocity = lerp(previousVelocity, desiredVelocity, saturate(BoneVelocityScale));
+		velocity = lerp(previousVelocity, desiredVelocity, saturate(BoneVelocityScale));
 	}
 	else
 	{
@@ -515,26 +523,36 @@ void UpdateAttachedPositionsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			attachment.LocalOffset = WorldToBoneLocal(newWorldPos, bone);
 
 			// Update particle position
-			particle.Position = newWorldPos;
-			particle.PredictedPosition = newWorldPos;
+			position = newWorldPos;
+			predictedPosition = newWorldPos;
 			float3 desiredVelocity = boneVelocity + slidingAccel * DeltaTime;
-			particle.Velocity = lerp(previousVelocity, desiredVelocity, saturate(BoneVelocityScale));
+			velocity = lerp(previousVelocity, desiredVelocity, saturate(BoneVelocityScale));
 		}
 		else
 		{
 			// No sliding - just follow bone
-			particle.Position = desiredPos;
-			particle.PredictedPosition = desiredPos;
+			position = desiredPos;
+			predictedPosition = desiredPos;
 			float3 desiredVelocity = boneVelocity;
-			particle.Velocity = lerp(previousVelocity, desiredVelocity, saturate(BoneVelocityScale));
+			velocity = lerp(previousVelocity, desiredVelocity, saturate(BoneVelocityScale));
 		}
 
 		// Store relative velocity for anisotropy (particle velocity - bone velocity)
 		// This ensures anisotropy only reflects movement ON the surface, not with the bone
-		attachment.RelativeVelocity = particle.Velocity - boneVelocity;
+		attachment.RelativeVelocity = velocity - boneVelocity;
 	}
 
-	Particles[idx] = particle;
+	// Write back to SoA buffers
+	Positions[idx3] = position.x;
+	Positions[idx3 + 1] = position.y;
+	Positions[idx3 + 2] = position.z;
+	PredictedPositions[idx3] = predictedPosition.x;
+	PredictedPositions[idx3 + 1] = predictedPosition.y;
+	PredictedPositions[idx3 + 2] = predictedPosition.z;
+	Velocities[idx3] = velocity.x;
+	Velocities[idx3 + 1] = velocity.y;
+	Velocities[idx3 + 2] = velocity.z;
+	Flags[idx] = flags;
 	Attachments[idx] = attachment;
 }
 
@@ -551,7 +569,7 @@ void ClearDetachedFlagCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		return;
 	}
 
-	FGPUFluidParticle particle = Particles[idx];
-	particle.Flags = ClearFlag(particle.Flags, GPU_PARTICLE_FLAG_JUST_DETACHED);
-	Particles[idx] = particle;
+	uint flags = Flags[idx];
+	flags = ClearFlag(flags, GPU_PARTICLE_FLAG_JUST_DETACHED);
+	Flags[idx] = flags;
 }

@@ -22,8 +22,10 @@ struct FGPUBoundaryParticle;
 
 struct KAWAIIFLUIDRUNTIME_API FAnisotropyComputeParams
 {
-	// Input buffers
-	FRDGBufferSRVRef PhysicsParticlesSRV = nullptr;	// FGPUFluidParticle buffer
+	// Input buffers (SoA - Structure of Arrays)
+	FRDGBufferSRVRef PositionsSRV = nullptr;		// float3 positions as Buffer<float> [count*3]
+	FRDGBufferSRVRef VelocitiesSRV = nullptr;		// float3 velocities as Buffer<float> [count*3]
+	FRDGBufferSRVRef FlagsSRV = nullptr;			// uint flags as Buffer<uint> [count]
 	FRDGBufferSRVRef AttachmentsSRV = nullptr;		// FGPUParticleAttachment buffer (for surface normal)
 
 	// TODO(KHJ): Remove legacy hash-based lookup - bUseZOrderSorting is always true
@@ -115,8 +117,10 @@ public:
 	using FPermutationDomain = TShaderPermutationDomain<FGridResolutionDim>;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		// Input: Physics particle buffer (FGPUFluidParticle)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUFluidParticle>, InPhysicsParticles)
+		// SoA (Structure of Arrays) Particle Buffers
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float>, InPositions)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float>, InVelocities)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, InFlags)
 
 		// Input: Attachment buffer (FGPUParticleAttachment) - for surface normal of attached particles
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUParticleAttachment>, InAttachments)

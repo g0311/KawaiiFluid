@@ -7,6 +7,7 @@
 #include "RHIResources.h"
 #include "RenderResource.h"
 #include "GPU/GPUFluidParticle.h"
+#include "GPU/GPUFluidSpatialData.h"
 #include "GPU/Managers/GPUSpawnManager.h"
 #include "GPU/Managers/GPUCollisionManager.h"
 #include "GPU/Managers/GPUZOrderSortManager.h"
@@ -792,75 +793,7 @@ private:
 	// Internal Methods
 	//=============================================================================
 
-	/** Struct to hold shared spatial data for simulation passes */
-	struct FSimulationSpatialData
-	{
-		// Hash Table buffers (Legacy / Compatibility)
-		FRDGBufferRef CellCountsBuffer = nullptr;
-		FRDGBufferRef ParticleIndicesBuffer = nullptr;
-		FRDGBufferSRVRef CellCountsSRV = nullptr;
-		FRDGBufferSRVRef ParticleIndicesSRV = nullptr;
-
-		// Z-Order buffers (Sorted)
-		FRDGBufferRef CellStartBuffer = nullptr;
-		FRDGBufferRef CellEndBuffer = nullptr;
-		FRDGBufferSRVRef CellStartSRV = nullptr;
-		FRDGBufferSRVRef CellEndSRV = nullptr;
-		
-
-		// Neighbor Cache buffers
-		FRDGBufferRef NeighborListBuffer = nullptr;
-		FRDGBufferRef NeighborCountsBuffer = nullptr;
-		FRDGBufferSRVRef NeighborListSRV = nullptr;
-		FRDGBufferSRVRef NeighborCountsSRV = nullptr;
-
-		// Skinned Boundary Particle buffers (SkeletalMesh - same-frame)
-		// Created in AddBoundarySkinningPass, used in AddSolveDensityPressurePass
-		FRDGBufferRef SkinnedBoundaryBuffer = nullptr;
-		FRDGBufferSRVRef SkinnedBoundarySRV = nullptr;
-		int32 SkinnedBoundaryParticleCount = 0;
-		bool bSkinnedBoundaryPerformed = false;
-
-		// Skinned Boundary Z-Order buffers (same-frame)
-		FRDGBufferRef SkinnedZOrderSortedBuffer = nullptr;
-		FRDGBufferRef SkinnedZOrderCellStartBuffer = nullptr;
-		FRDGBufferRef SkinnedZOrderCellEndBuffer = nullptr;
-		FRDGBufferSRVRef SkinnedZOrderSortedSRV = nullptr;
-		FRDGBufferSRVRef SkinnedZOrderCellStartSRV = nullptr;
-		FRDGBufferSRVRef SkinnedZOrderCellEndSRV = nullptr;
-		int32 SkinnedZOrderParticleCount = 0;
-		bool bSkinnedZOrderPerformed = false;
-
-		// Static Boundary Particle buffers (StaticMesh - persistent GPU)
-		// Cached on GPU, only re-sorted when dirty
-		FRDGBufferSRVRef StaticBoundarySRV = nullptr;
-		FRDGBufferSRVRef StaticZOrderSortedSRV = nullptr;
-		FRDGBufferSRVRef StaticZOrderCellStartSRV = nullptr;
-		FRDGBufferSRVRef StaticZOrderCellEndSRV = nullptr;
-		int32 StaticBoundaryParticleCount = 0;
-		bool bStaticBoundaryAvailable = false;
-
-		// Bone Delta Attachment buffer (NEW simplified bone-following)
-		// Created by EnsureBoneDeltaAttachmentBuffer, used by ApplyBoneTransform & UpdateBoneDeltaAttachment
-		FRDGBufferRef BoneDeltaAttachmentBuffer = nullptr;
-		FRDGBufferUAVRef BoneDeltaAttachmentUAV = nullptr;
-		FRDGBufferSRVRef BoneDeltaAttachmentSRV = nullptr;
-
-		// Legacy aliases (for backward compatibility during transition)
-		FRDGBufferRef& WorldBoundaryBuffer = SkinnedBoundaryBuffer;
-		FRDGBufferSRVRef& WorldBoundarySRV = SkinnedBoundarySRV;
-		int32& WorldBoundaryParticleCount = SkinnedBoundaryParticleCount;
-		bool& bBoundarySkinningPerformed = bSkinnedBoundaryPerformed;
-
-		FRDGBufferRef& BoundaryZOrderSortedBuffer = SkinnedZOrderSortedBuffer;
-		FRDGBufferRef& BoundaryZOrderCellStartBuffer = SkinnedZOrderCellStartBuffer;
-		FRDGBufferRef& BoundaryZOrderCellEndBuffer = SkinnedZOrderCellEndBuffer;
-		FRDGBufferSRVRef& BoundaryZOrderSortedSRV = SkinnedZOrderSortedSRV;
-		FRDGBufferSRVRef& BoundaryZOrderCellStartSRV = SkinnedZOrderCellStartSRV;
-		FRDGBufferSRVRef& BoundaryZOrderCellEndSRV = SkinnedZOrderCellEndSRV;
-		int32& BoundaryZOrderParticleCount = SkinnedZOrderParticleCount;
-		bool& bBoundaryZOrderPerformed = bSkinnedZOrderPerformed;
-	};
+	// Note: FSimulationSpatialData moved to GPU/GPUFluidSpatialData.h to avoid circular dependency
 
 	/** Phase 1: Prepare particle buffer (CPU Upload or Reuse PersistentBuffer) */
 	FRDGBufferRef PrepareParticleBuffer(
@@ -987,19 +920,19 @@ private:
 	/** Add bounds collision pass */
 	void AddBoundsCollisionPass(
 		FRDGBuilder& GraphBuilder,
-		FRDGBufferUAVRef ParticlesUAV,
+		const FSimulationSpatialData& SpatialData,
 		const FGPUFluidSimulationParams& Params);
 
 	/** Add primitive collision pass (spheres, capsules, boxes, convexes) */
 	void AddPrimitiveCollisionPass(
 		FRDGBuilder& GraphBuilder,
-		FRDGBufferUAVRef ParticlesUAV,
+		const FSimulationSpatialData& SpatialData,
 		const FGPUFluidSimulationParams& Params);
 
 	/** Add heightmap collision pass (Landscape terrain) */
 	void AddHeightmapCollisionPass(
 		FRDGBuilder& GraphBuilder,
-		FRDGBufferUAVRef ParticlesUAV,
+		const FSimulationSpatialData& SpatialData,
 		const FGPUFluidSimulationParams& Params);
 
 	//-------------------------------------------------------------------------
@@ -1036,7 +969,7 @@ private:
 	/** Add finalize positions pass */
 	void AddFinalizePositionsPass(
 		FRDGBuilder& GraphBuilder,
-		FRDGBufferUAVRef ParticlesUAV,
+		const FSimulationSpatialData& SpatialData,
 		const FGPUFluidSimulationParams& Params);
 
 	/** Add extract positions pass (for spatial hash) */

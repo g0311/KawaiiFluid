@@ -7,10 +7,14 @@
 #include "FluidGPUPhysics.ush"
 
 //=============================================================================
-// Shader Parameters
+// Shader Parameters (SoA - Structure of Arrays)
 //=============================================================================
 
-RWStructuredBuffer<FGPUFluidParticle> Particles;
+RWBuffer<float> Positions;
+RWBuffer<float> PredictedPositions;
+RWBuffer<float> Velocities;
+RWBuffer<uint> Flags;
+
 int ParticleCount;
 float ParticleRadius;
 
@@ -259,19 +263,20 @@ void BoundsCollisionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		return;
 	}
 
-	FGPUFluidParticle particle = Particles[idx];
+	uint idx3 = idx * 3;
+	uint flags = Flags[idx];
 
 	// Skip CPU-attached particles only (they follow bone position directly)
 	// Boundary-attached particles still need collision with simulation bounds
-	if (HasFlag(particle.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
+	if (HasFlag(flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
 	{
 		return;
 	}
 
-	float3 pos = particle.PredictedPosition;
-	float3 originalPos = particle.Position;  // Original position for position-level friction
-	float3 vel = particle.Velocity;
-	uint flags = particle.Flags;
+	// Read SoA buffers
+	float3 pos = float3(PredictedPositions[idx3], PredictedPositions[idx3 + 1], PredictedPositions[idx3 + 2]);
+	float3 originalPos = float3(Positions[idx3], Positions[idx3 + 1], Positions[idx3 + 2]);
+	float3 vel = float3(Velocities[idx3], Velocities[idx3 + 1], Velocities[idx3 + 2]);
 
 	// Apply collision based on mode (with position-level friction)
 	if (bUseOBB != 0)
@@ -283,10 +288,14 @@ void BoundsCollisionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		ApplyAABBCollision(pos, originalPos, vel, flags);
 	}
 
-	// Update particle
-	particle.PredictedPosition = pos;
-	particle.Velocity = vel;
-	particle.Flags = flags;
+	// Write back to SoA buffers
+	PredictedPositions[idx3] = pos.x;
+	PredictedPositions[idx3 + 1] = pos.y;
+	PredictedPositions[idx3 + 2] = pos.z;
 
-	Particles[idx] = particle;
+	Velocities[idx3] = vel.x;
+	Velocities[idx3 + 1] = vel.y;
+	Velocities[idx3 + 2] = vel.z;
+
+	Flags[idx] = flags;
 }

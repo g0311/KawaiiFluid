@@ -251,6 +251,8 @@ IMPLEMENT_GLOBAL_SHADER(FUpdateBoneDeltaAttachmentCS,
 // Pass Builder Implementation
 //=============================================================================
 
+// DEPRECATED: Legacy function - use GPUCollisionManager::AddPrimitiveCollisionPass instead
+#if 0
 void FGPUFluidSimulatorPassBuilder::AddPrimitiveCollisionPass(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferUAVRef ParticlesUAV,
@@ -314,6 +316,7 @@ void FGPUFluidSimulatorPassBuilder::AddPrimitiveCollisionPass(
 		PassParameters,
 		FIntVector(NumGroups, 1, 1));
 }
+#endif // DEPRECATED
 
 void FGPUFluidSimulatorPassBuilder::AddExtractRenderDataPass(
 	FRDGBuilder& GraphBuilder,
@@ -420,3 +423,10 @@ void FGPUFluidSimulatorPassBuilder::AddExtractRenderDataSoAPass(
 		PassParameters,
 		FIntVector(NumGroups, 1, 1));
 }
+
+//=============================================================================
+// SoA Conversion Shaders
+//=============================================================================
+
+IMPLEMENT_GLOBAL_SHADER(FSplitAoSToSoACS, "/Plugin/KawaiiFluidSystem/Private/FluidParticleSoA.usf", "SplitAoSToSoACS", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FMergeSoAToAoSCS, "/Plugin/KawaiiFluidSystem/Private/FluidParticleSoA.usf", "MergeSoAToAoSCS", SF_Compute);

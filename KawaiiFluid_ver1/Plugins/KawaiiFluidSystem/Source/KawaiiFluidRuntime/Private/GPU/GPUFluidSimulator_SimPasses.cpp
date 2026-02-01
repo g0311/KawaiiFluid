@@ -185,7 +185,15 @@ void FGPUFluidSimulator::AddSolveDensityPressurePass(
 	TShaderMapRef<FSolveDensityPressureCS> ComputeShader(ShaderMap, PermutationVector);
 
 	FSolveDensityPressureCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FSolveDensityPressureCS::FParameters>();
-	PassParameters->Particles = InParticlesUAV;
+	// SoA (Structure of Arrays) Particle Buffers
+	PassParameters->Positions = GraphBuilder.CreateUAV(SpatialData.SoA_Positions, PF_R32_FLOAT);
+	PassParameters->PredictedPositions = GraphBuilder.CreateUAV(SpatialData.SoA_PredictedPositions, PF_R32_FLOAT);
+	PassParameters->Velocities = GraphBuilder.CreateUAV(SpatialData.SoA_Velocities, PF_R32_FLOAT);
+	PassParameters->Masses = GraphBuilder.CreateUAV(SpatialData.SoA_Masses, PF_R32_FLOAT);
+	PassParameters->Densities = GraphBuilder.CreateUAV(SpatialData.SoA_Densities, PF_R32_FLOAT);
+	PassParameters->Lambdas = GraphBuilder.CreateUAV(SpatialData.SoA_Lambdas, PF_R32_FLOAT);
+	PassParameters->Flags = GraphBuilder.CreateUAV(SpatialData.SoA_Flags, PF_R32_UINT);
+	PassParameters->NeighborCountsBuffer = GraphBuilder.CreateUAV(SpatialData.SoA_NeighborCounts, PF_R32_UINT);
 	// Hash table mode (legacy)
 	PassParameters->CellCounts = InCellCountsSRV;
 	PassParameters->ParticleIndices = InParticleIndicesSRV;
@@ -597,7 +605,7 @@ void FGPUFluidSimulator::AddParticleSleepingPass(
 
 void FGPUFluidSimulator::AddFinalizePositionsPass(
 	FRDGBuilder& GraphBuilder,
-	FRDGBufferUAVRef ParticlesUAV,
+	const FSimulationSpatialData& SpatialData,
 	const FGPUFluidSimulationParams& Params)
 {
 	if (CurrentParticleCount <= 0) return;
@@ -606,7 +614,10 @@ void FGPUFluidSimulator::AddFinalizePositionsPass(
 	TShaderMapRef<FFinalizePositionsCS> ComputeShader(ShaderMap);
 
 	FFinalizePositionsCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FFinalizePositionsCS::FParameters>();
-	PassParameters->Particles = ParticlesUAV;
+	PassParameters->Positions = GraphBuilder.CreateUAV(SpatialData.SoA_Positions, PF_R32_FLOAT);
+	PassParameters->PredictedPositions = GraphBuilder.CreateUAV(SpatialData.SoA_PredictedPositions, PF_R32_FLOAT);
+	PassParameters->Velocities = GraphBuilder.CreateUAV(SpatialData.SoA_Velocities, PF_R32_FLOAT);
+	PassParameters->Flags = GraphBuilder.CreateUAV(SpatialData.SoA_Flags, PF_R32_UINT);
 	PassParameters->ParticleCount = CurrentParticleCount;
 	PassParameters->DeltaTime = Params.DeltaTime;
 	PassParameters->MaxVelocity = MaxVelocity;  // Safety clamp (50000 cm/s = 500 m/s)

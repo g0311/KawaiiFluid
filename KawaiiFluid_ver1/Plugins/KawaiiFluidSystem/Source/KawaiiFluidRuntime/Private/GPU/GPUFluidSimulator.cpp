@@ -592,6 +592,52 @@ void FGPUFluidSimulator::SimulateSubstep_RDG(FRDGBuilder& GraphBuilder, const FG
 	}
 
 	// =====================================================
+	// Phase 2.5: Split AoS to SoA (Memory Bandwidth Optimization)
+	// Converts FGPUFluidParticle (64 bytes) into separate field buffers
+	// so simulation passes only read/write fields they need
+	// =====================================================
+	{
+		RDG_EVENT_SCOPE(GraphBuilder, "GPUFluid_SplitAoSToSoA");
+
+		// Create SoA buffers (float3 stored as 3 floats, so 3× particle count)
+		SpatialData.SoA_Positions = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateBufferDesc(sizeof(float), CurrentParticleCount * 3), TEXT("SoA_Positions"));
+		SpatialData.SoA_PredictedPositions = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateBufferDesc(sizeof(float), CurrentParticleCount * 3), TEXT("SoA_PredictedPositions"));
+		SpatialData.SoA_Velocities = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateBufferDesc(sizeof(float), CurrentParticleCount * 3), TEXT("SoA_Velocities"));
+		SpatialData.SoA_Masses = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateBufferDesc(sizeof(float), CurrentParticleCount), TEXT("SoA_Masses"));
+		SpatialData.SoA_Densities = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateBufferDesc(sizeof(float), CurrentParticleCount), TEXT("SoA_Densities"));
+		SpatialData.SoA_Lambdas = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateBufferDesc(sizeof(float), CurrentParticleCount), TEXT("SoA_Lambdas"));
+		SpatialData.SoA_Flags = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateBufferDesc(sizeof(uint32), CurrentParticleCount), TEXT("SoA_Flags"));
+		SpatialData.SoA_NeighborCounts = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateBufferDesc(sizeof(uint32), CurrentParticleCount), TEXT("SoA_NeighborCounts"));
+		SpatialData.SoA_ParticleIDs = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateBufferDesc(sizeof(int32), CurrentParticleCount), TEXT("SoA_ParticleIDs"));
+		SpatialData.SoA_SourceIDs = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateBufferDesc(sizeof(int32), CurrentParticleCount), TEXT("SoA_SourceIDs"));
+
+		// Run Split shader
+		TShaderMapRef<FSplitAoSToSoACS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+		FSplitAoSToSoACS::FParameters* PassParams = GraphBuilder.AllocParameters<FSplitAoSToSoACS::FParameters>();
+
+		PassParams->SourceParticles = ParticlesSRVLocal;
+		PassParams->OutPositions = GraphBuilder.CreateUAV(SpatialData.SoA_Positions, PF_R32_FLOAT);
+		PassParams->OutPredictedPositions = GraphBuilder.CreateUAV(SpatialData.SoA_PredictedPositions, PF_R32_FLOAT);
+		PassParams->OutVelocities = GraphBuilder.CreateUAV(SpatialData.SoA_Velocities, PF_R32_FLOAT);
+		PassParams->OutMasses = GraphBuilder.CreateUAV(SpatialData.SoA_Masses, PF_R32_FLOAT);
+		PassParams->OutDensities = GraphBuilder.CreateUAV(SpatialData.SoA_Densities, PF_R32_FLOAT);
+		PassParams->OutLambdas = GraphBuilder.CreateUAV(SpatialData.SoA_Lambdas, PF_R32_FLOAT);
+		PassParams->OutFlags = GraphBuilder.CreateUAV(SpatialData.SoA_Flags, PF_R32_UINT);
+		PassParams->OutNeighborCounts = GraphBuilder.CreateUAV(SpatialData.SoA_NeighborCounts, PF_R32_UINT);
+		PassParams->OutParticleIDs = GraphBuilder.CreateUAV(SpatialData.SoA_ParticleIDs, PF_R32_SINT);
+		PassParams->OutSourceIDs = GraphBuilder.CreateUAV(SpatialData.SoA_SourceIDs, PF_R32_SINT);
+		PassParams->SplitParticleCount = CurrentParticleCount;
+
+		FComputeShaderUtils::AddPass(
+			GraphBuilder,
+			RDG_EVENT_NAME("SplitAoSToSoA"),
+			ComputeShader,
+			PassParams,
+			FComputeShaderUtils::GetGroupCount(CurrentParticleCount, FSplitAoSToSoACS::ThreadGroupSize)
+		);
+	}
+
+	// =====================================================
 	// Phase 3: Constraint Solver Loop (Density/Pressure + Collision per iteration)
 	// XPBD Principle: Collision is solved inside solver loop to prevent jittering
 	// =====================================================
@@ -606,6 +652,38 @@ void FGPUFluidSimulator::SimulateSubstep_RDG(FRDGBuilder& GraphBuilder, const FG
 	// Phase 5: Post-Simulation (Viscosity, Finalize, Anisotropy)
 	// =====================================================
 	ExecutePostSimulation(GraphBuilder, ParticleBuffer, ParticlesUAVLocal, SpatialData, Params);
+
+	// =====================================================
+	// Phase 5.5: Merge SoA to AoS (Memory Bandwidth Optimization Complete)
+	// Converts separate field buffers back into FGPUFluidParticle (64 bytes)
+	// =====================================================
+	{
+		RDG_EVENT_SCOPE(GraphBuilder, "GPUFluid_MergeSoAToAoS");
+
+		TShaderMapRef<FMergeSoAToAoSCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+		FMergeSoAToAoSCS::FParameters* PassParams = GraphBuilder.AllocParameters<FMergeSoAToAoSCS::FParameters>();
+
+		PassParams->InPositions = GraphBuilder.CreateSRV(SpatialData.SoA_Positions, PF_R32_FLOAT);
+		PassParams->InPredictedPositions = GraphBuilder.CreateSRV(SpatialData.SoA_PredictedPositions, PF_R32_FLOAT);
+		PassParams->InVelocities = GraphBuilder.CreateSRV(SpatialData.SoA_Velocities, PF_R32_FLOAT);
+		PassParams->InMasses = GraphBuilder.CreateSRV(SpatialData.SoA_Masses, PF_R32_FLOAT);
+		PassParams->InDensities = GraphBuilder.CreateSRV(SpatialData.SoA_Densities, PF_R32_FLOAT);
+		PassParams->InLambdas = GraphBuilder.CreateSRV(SpatialData.SoA_Lambdas, PF_R32_FLOAT);
+		PassParams->InFlags = GraphBuilder.CreateSRV(SpatialData.SoA_Flags, PF_R32_UINT);
+		PassParams->InNeighborCounts = GraphBuilder.CreateSRV(SpatialData.SoA_NeighborCounts, PF_R32_UINT);
+		PassParams->InParticleIDs = GraphBuilder.CreateSRV(SpatialData.SoA_ParticleIDs, PF_R32_SINT);
+		PassParams->InSourceIDs = GraphBuilder.CreateSRV(SpatialData.SoA_SourceIDs, PF_R32_SINT);
+		PassParams->TargetParticles = ParticlesUAVLocal;
+		PassParams->MergeParticleCount = CurrentParticleCount;
+
+		FComputeShaderUtils::AddPass(
+			GraphBuilder,
+			RDG_EVENT_NAME("MergeSoAToAoS"),
+			ComputeShader,
+			PassParams,
+			FComputeShaderUtils::GetGroupCount(CurrentParticleCount, FMergeSoAToAoSCS::ThreadGroupSize)
+		);
+	}
 
 	// =====================================================
 	// Phase 5.5: Bone Delta Attachment - Update Attachment Data (SIMULATION END)
@@ -1059,7 +1137,7 @@ FRDGBufferRef FGPUFluidSimulator::PrepareParticleBuffer(
 	return ParticleBuffer;
 }
 
-FGPUFluidSimulator::FSimulationSpatialData FGPUFluidSimulator::BuildSpatialStructures(
+FSimulationSpatialData FGPUFluidSimulator::BuildSpatialStructures(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferRef& InOutParticleBuffer,
 	FRDGBufferSRVRef& OutParticlesSRV,
@@ -1322,9 +1400,9 @@ void FGPUFluidSimulator::ExecuteConstraintSolverLoop(
 		// Step 2: Collision Constraints (MUST be inside solver loop!)
 		// If density pushes a particle through a wall, collision pushes it back.
 		// Solving both constraints together allows convergence to a valid state.
-		AddBoundsCollisionPass(GraphBuilder, ParticlesUAV, Params);
-		AddPrimitiveCollisionPass(GraphBuilder, ParticlesUAV, Params);
-		AddHeightmapCollisionPass(GraphBuilder, ParticlesUAV, Params);
+		AddBoundsCollisionPass(GraphBuilder, SpatialData, Params);
+		AddPrimitiveCollisionPass(GraphBuilder, SpatialData, Params);
+		AddHeightmapCollisionPass(GraphBuilder, SpatialData, Params);
 	}
 
 	// Create SRVs for use in subsequent passes
@@ -1395,7 +1473,7 @@ void FGPUFluidSimulator::ExecuteAdhesion(
 		}
 
 		FRDGBufferUAVRef AttachmentUAV = GraphBuilder.CreateUAV(AttachmentBuffer);
-		AdhesionManager->AddAdhesionPass(GraphBuilder, ParticlesUAV, AttachmentUAV, CollisionManager.Get(), CurrentParticleCount, Params);
+		AdhesionManager->AddAdhesionPass(GraphBuilder, SpatialData, AttachmentUAV, CollisionManager.Get(), CurrentParticleCount, Params);
 		GraphBuilder.QueueBufferExtraction(AttachmentBuffer, &PersistentAttachmentBuffer, ERHIAccess::UAVCompute);
 	}
 }
@@ -1415,7 +1493,7 @@ void FGPUFluidSimulator::ExecutePostSimulation(
 		return;
 	}
 
-	AddFinalizePositionsPass(GraphBuilder, ParticlesUAV, Params);
+	AddFinalizePositionsPass(GraphBuilder, SpatialData, Params);
 
 	// REMOVED: Viscosity pass is now integrated into Phase 2 (PredictPositions)
 	// - Fluid Viscosity (XSPH + Laplacian): Calculated together with Cohesion in single PrevNeighborCache loop
@@ -1463,7 +1541,7 @@ void FGPUFluidSimulator::ExecutePostSimulation(
 
 	if (AdhesionManager.IsValid() && AdhesionManager->IsAdhesionEnabled())
 	{
-		AdhesionManager->AddClearDetachedFlagPass(GraphBuilder, ParticlesUAV, CurrentParticleCount);
+		AdhesionManager->AddClearDetachedFlagPass(GraphBuilder, SpatialData, CurrentParticleCount);
 	}
 
 	if (IsBoundaryAdhesionEnabled())
@@ -1525,7 +1603,10 @@ void FGPUFluidSimulator::ExecutePostSimulation(
 			if (Axis1Buffer && Axis2Buffer && Axis3Buffer && SpatialData.CellCountsBuffer && SpatialData.ParticleIndicesBuffer)
 			{
 				FAnisotropyComputeParams AnisotropyParams;
-				AnisotropyParams.PhysicsParticlesSRV = GraphBuilder.CreateSRV(ParticleBuffer);
+				// SoA particle buffers
+				AnisotropyParams.PositionsSRV = GraphBuilder.CreateSRV(SpatialData.SoA_Positions, PF_R32_FLOAT);
+				AnisotropyParams.VelocitiesSRV = GraphBuilder.CreateSRV(SpatialData.SoA_Velocities, PF_R32_FLOAT);
+				AnisotropyParams.FlagsSRV = GraphBuilder.CreateSRV(SpatialData.SoA_Flags, PF_R32_UINT);
 
 				// Attachment buffer for anisotropy
 				TRefCountPtr<FRDGPooledBuffer> AttachmentBufferForAniso = AdhesionManager.IsValid() ? AdhesionManager->GetPersistentAttachmentBuffer() : nullptr;
@@ -3091,7 +3172,7 @@ bool FGPUFluidSimulator::GetParticlesBySourceID(int32 SourceID, TArray<FFluidPar
 
 void FGPUFluidSimulator::AddBoundsCollisionPass(
 	FRDGBuilder& GraphBuilder,
-	FRDGBufferUAVRef ParticlesUAV,
+	const FSimulationSpatialData& SpatialData,
 	const FGPUFluidSimulationParams& Params)
 {
 	// Skip bounds collision when bSkipBoundsCollision is set
@@ -3104,29 +3185,29 @@ void FGPUFluidSimulator::AddBoundsCollisionPass(
 
 	if (CollisionManager.IsValid())
 	{
-		CollisionManager->AddBoundsCollisionPass(GraphBuilder, ParticlesUAV, CurrentParticleCount, Params);
+		CollisionManager->AddBoundsCollisionPass(GraphBuilder, SpatialData, CurrentParticleCount, Params);
 	}
 }
 
 void FGPUFluidSimulator::AddPrimitiveCollisionPass(
 	FRDGBuilder& GraphBuilder,
-	FRDGBufferUAVRef ParticlesUAV,
+	const FSimulationSpatialData& SpatialData,
 	const FGPUFluidSimulationParams& Params)
 {
 	if (CollisionManager.IsValid())
 	{
-		CollisionManager->AddPrimitiveCollisionPass(GraphBuilder, ParticlesUAV, CurrentParticleCount, Params);
+		CollisionManager->AddPrimitiveCollisionPass(GraphBuilder, SpatialData, CurrentParticleCount, Params);
 	}
 }
 
 void FGPUFluidSimulator::AddHeightmapCollisionPass(
 	FRDGBuilder& GraphBuilder,
-	FRDGBufferUAVRef ParticlesUAV,
+	const FSimulationSpatialData& SpatialData,
 	const FGPUFluidSimulationParams& Params)
 {
 	if (CollisionManager.IsValid())
 	{
-		CollisionManager->AddHeightmapCollisionPass(GraphBuilder, ParticlesUAV, CurrentParticleCount, Params);
+		CollisionManager->AddHeightmapCollisionPass(GraphBuilder, SpatialData, CurrentParticleCount, Params);
 	}
 }
 
