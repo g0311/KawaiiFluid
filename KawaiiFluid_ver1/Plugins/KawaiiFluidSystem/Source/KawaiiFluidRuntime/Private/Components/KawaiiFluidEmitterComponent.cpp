@@ -1086,10 +1086,10 @@ void UKawaiiFluidEmitterComponent::SpawnStreamLayer(FVector Position, FVector La
 	const float RowSpacing = Spacing * FMath::Sqrt(3.0f) * 0.5f;  // ~0.866 * Spacing
 	const float RadiusSq = Radius * Radius;
 
-	// Jitter setup (matches SimulationModule)
-	const float Jitter = FMath::Clamp(StreamJitter, 0.0f, 0.5f);
+	// Jitter setup
+	const float Jitter = bUseStreamJitter ? FMath::Clamp(StreamJitterAmount, 0.0f, 0.5f) : 0.0f;
 	const float MaxJitterOffset = Spacing * Jitter;
-	const bool bApplyJitter = Jitter > KINDA_SMALL_NUMBER;
+	const bool bApplyJitter = bUseStreamJitter && Jitter > KINDA_SMALL_NUMBER;
 
 	// Row count calculation (matches SimulationModule)
 	const int32 NumRows = FMath::CeilToInt(Radius / RowSpacing) * 2 + 1;
@@ -1170,10 +1170,10 @@ void UKawaiiFluidEmitterComponent::SpawnStreamLayerBatch(FVector Position, FVect
 	const float RowSpacing = Spacing * FMath::Sqrt(3.0f) * 0.5f;  // ~0.866 * Spacing
 	const float RadiusSq = Radius * Radius;
 
-	// Jitter setup (matches SimulationModule)
-	const float Jitter = FMath::Clamp(StreamJitter, 0.0f, 0.5f);
+	// Jitter setup
+	const float Jitter = bUseStreamJitter ? FMath::Clamp(StreamJitterAmount, 0.0f, 0.5f) : 0.0f;
 	const float MaxJitterOffset = Spacing * Jitter;
-	const bool bApplyJitter = Jitter > KINDA_SMALL_NUMBER;
+	const bool bApplyJitter = bUseStreamJitter && Jitter > KINDA_SMALL_NUMBER;
 
 	// Row count calculation (matches SimulationModule)
 	const int32 NumRows = FMath::CeilToInt(Radius / RowSpacing) * 2 + 1;

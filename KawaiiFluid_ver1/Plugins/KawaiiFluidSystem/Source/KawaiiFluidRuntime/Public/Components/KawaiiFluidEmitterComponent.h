@@ -154,6 +154,19 @@ public:
 		        EditConditionHides, ClampMin = "1.0", ClampMax = "1000.0"))
 	float ManualLayersPerSecond = 60.0f;
 
+	/** Enable jitter for stream particles.
+	 *  Adds random offset to particle positions for natural appearance. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter|Stream",
+		meta = (EditCondition = "EmitterMode == EKawaiiFluidEmitterMode::Stream", EditConditionHides))
+	bool bUseStreamJitter = false;
+
+	/** Jitter amount as a fraction of particle spacing (0.0 ~ 0.5).
+	 *  0.15 = 15% of spacing as max random offset. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter|Stream",
+		meta = (EditCondition = "EmitterMode == EKawaiiFluidEmitterMode::Stream && bUseStreamJitter", 
+		        EditConditionHides, ClampMin = "0.0", ClampMax = "0.5"))
+	float StreamJitterAmount = 0.15f;
+
 	/** Use world space for velocity direction (if false, uses local space) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid Emitter|Velocity")
 	bool bUseWorldSpaceVelocity = false;
@@ -413,7 +426,7 @@ protected:
 	FVector SpawnOffset = FVector::ZeroVector;
 	FVector SpawnDirection = FVector(0, 0, -1);
 	float StreamParticleSpacing = 0.0f;
-	float StreamJitter = 0.15f;
+	// Note: StreamJitter moved to UPROPERTY (bUseStreamJitter, StreamJitterAmount)
 	float StreamLayerSpacingRatio = 0.816f;
 	int32 MaxLayersPerFrame = 1;  // Prevents particle explosion on frame drops
 
