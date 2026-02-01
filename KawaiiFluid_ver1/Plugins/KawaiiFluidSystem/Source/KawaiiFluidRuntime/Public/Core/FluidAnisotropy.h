@@ -13,9 +13,6 @@
 UENUM(BlueprintType)
 enum class EFluidAnisotropyMode : uint8
 {
-	/** No anisotropy - render as spheres */
-	None UMETA(DisplayName = "None (Spheres)"),
-
 	/** Stretch ellipsoids along velocity direction */
 	VelocityBased UMETA(DisplayName = "Velocity Based"),
 

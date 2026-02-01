@@ -866,11 +866,6 @@ void CalculateRefraction(
 		return;
 	}
 
-	// Calculate refraction mask (reduce at thin/edge areas)
-	float ThicknessMask = saturate(Surface.Thickness * 0.1);
-	float EdgeMask = saturate(abs(Surface.Normal.z) * 2.0);
-	float RefractionMask = ThicknessMask * EdgeMask;
-
 	// Fluid view position (reference for depth comparison)
 	float3 FluidViewPos = ReconstructViewPosition(UV, Surface.Depth);
 
@@ -904,19 +899,7 @@ void CalculateRefraction(
 	float3 HitViewPos = FluidViewPos + RefractDir * RefractDistance;
 	float2 RefractedUV_Raw = bTotalInternalReflection ? UV : ProjectToScreenUV(HitViewPos);
 
-	// Apply refraction mask to blend between refracted and original UV
-	RefractedUV_Raw = lerp(UV, RefractedUV_Raw, RefractionMask);
-
-	// Calculate how far the UV is out of bounds (0 = in bounds, >0 = out of bounds)
-	float2 OutOfBoundsLow = max(0.0 - RefractedUV_Raw, 0.0);   // How far below 0
-	float2 OutOfBoundsHigh = max(RefractedUV_Raw - 1.0, 0.0);  // How far above 1
-	float OutOfBoundsAmount = length(OutOfBoundsLow + OutOfBoundsHigh);
-
-	// Blend factor: 1.0 when in bounds, fades to 0.0 as UV goes further out of bounds
-	// The divisor (0.05) controls how quickly the fade happens
-	float InBoundsBlend = saturate(1.0 - OutOfBoundsAmount / 0.05);
-
-	// Now clamp UV for sampling
+	// Clamp UV for sampling (no blending with original - refraction only)
 	float2 RefractedUV = saturate(RefractedUV_Raw);
 
 	// Check if direct refraction is valid
@@ -939,12 +922,9 @@ void CalculateRefraction(
 
 	if (bDepthValid)
 	{
-		float3 RefractedColor = SceneColorTexture.Sample(InputSampler, RefractedSceneUV).rgb;
-		float3 OriginalColor = SceneColorTexture.Sample(InputSampler, SceneUV).rgb;
-
-		OutRefractedColor = lerp(OriginalColor, RefractedColor, InBoundsBlend);
+		OutRefractedColor = SceneColorTexture.Sample(InputSampler, RefractedSceneUV).rgb;
 		OutRefractedDepth = RefractedDepth;
-		OutRefractionValidity = InBoundsBlend;
+		OutRefractionValidity = 1.0;
 		return;
 	}
 
@@ -998,7 +978,6 @@ void CalculateRefraction(
 
 		float3 NeighborHitViewPos = NeighborFluidViewPos + NeighborRefractDir * NeighborRefractDistance;
 		float2 NeighborRefractedUV = (length(NeighborRefractDir) < 0.001) ? NeighborUV : ProjectToScreenUV(NeighborHitViewPos);
-		NeighborRefractedUV = lerp(NeighborUV, NeighborRefractedUV, RefractionMask);
 		NeighborRefractedUV = saturate(NeighborRefractedUV);
 
 		// Check if neighbor's refraction is valid
@@ -1061,7 +1040,9 @@ void CalculateRefraction(
  */
 float CalculateCaustics(float2 UV, FFluidSurfaceData Surface, float RefractedDepth, float RefractionValidity)
 {
-	if (!bEnableCaustics)
+	// Caustics require refraction to be enabled (physically dependent)
+	// User's bEnableCaustics choice is preserved in data for when refraction is re-enabled
+	if (!bEnableCaustics || !bEnableRefraction)
 	{
 		return 1.0;
 	}
@@ -1443,8 +1424,7 @@ void MainPS(
 	// Apply PreExposure for UE5 HDR pipeline
 	FinalColor *= View.PreExposure;
 
-	// Edge alpha for anti-aliasing (only affects fluid boundaries)
-	float EdgeAlpha = saturate(Surface.Thickness * 5.0);
-
-	OutColor = float4(FinalColor, EdgeAlpha);
+	// Always opaque within fluid region - Beer's Law already handles transparency
+	// Original scene is sampled via refraction, not alpha blending
+	OutColor = float4(FinalColor, 1.0);
 }
