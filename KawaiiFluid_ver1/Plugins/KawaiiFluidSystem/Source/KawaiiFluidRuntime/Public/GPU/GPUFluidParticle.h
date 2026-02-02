@@ -1292,11 +1292,12 @@ struct FGPUBoundaryAdhesionParams
  * Must match HLSL struct in FluidStatsCompact.usf
  *
  * Memory Layout (32 bytes):
- *   Position    (12 bytes) - float3
- *   ParticleID  (4 bytes)  - int32
- *   SourceID    (4 bytes)  - int32
- *   NeighborCount (4 bytes) - uint32
- *   Padding     (8 bytes)  - for 16-byte alignment
+ *   Position      (12 bytes) - float3
+ *   ParticleID    (4 bytes)  - int32
+ *   SourceID      (4 bytes)  - int32
+ *   NeighborCount (4 bytes)  - uint32
+ *   Flags         (4 bytes)  - uint32 (for debug visualization)
+ *   Padding       (4 bytes)  - for 16-byte alignment
  */
 struct FCompactParticleStats
 {
@@ -1304,16 +1305,16 @@ struct FCompactParticleStats
 	int32 ParticleID;         // 4 bytes  - Unique particle ID (total: 16)
 	int32 SourceID;           // 4 bytes  - Source Component ID
 	uint32 NeighborCount;     // 4 bytes  - Neighbor count for surface detection
-	float Padding1;           // 4 bytes  - Alignment padding
-	float Padding2;           // 4 bytes  - Alignment padding (total: 32)
+	uint32 Flags;             // 4 bytes  - Particle flags (EGPUParticleFlags)
+	float Padding;            // 4 bytes  - Alignment padding (total: 32)
 
 	FCompactParticleStats()
 		: Position(FVector3f::ZeroVector)
 		, ParticleID(0)
 		, SourceID(-1)
 		, NeighborCount(0)
-		, Padding1(0.0f)
-		, Padding2(0.0f)
+		, Flags(0)
+		, Padding(0.0f)
 	{
 	}
 };

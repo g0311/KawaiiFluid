@@ -2302,6 +2302,21 @@ const TArray<int32>* FGPUFluidSimulator::GetAllParticleIDs() const
 	return &CachedAllParticleIDs;
 }
 
+const TArray<uint32>* FGPUFluidSimulator::GetParticleFlags() const
+{
+	if (!bHasValidGPUResults.load())
+	{
+		return nullptr;
+	}
+
+	FScopeLock Lock(&const_cast<FCriticalSection&>(BufferLock));
+	if (CachedParticleFlags.Num() == 0)
+	{
+		return nullptr;
+	}
+	return &CachedParticleFlags;
+}
+
 void FGPUFluidSimulator::ClearSpawnRequests()
 {
 	if (SpawnManager.IsValid()) { SpawnManager->ClearSpawnRequests(); }
@@ -3894,6 +3909,7 @@ void FGPUFluidSimulator::ProcessStatsReadback(FRHICommandListImmediate& RHICmdLi
 		TArray<uint32> NewFlags;
 		NewPositions.SetNumUninitialized(ParticleCount);   // Always needed for despawn
 		NewSourceIDs.SetNumUninitialized(ParticleCount);   // Always needed for despawn
+		NewFlags.SetNumUninitialized(ParticleCount);       // Always needed for debug visualization
 		if (bNeedVelocity)
 		{
 			NewVelocities.SetNumUninitialized(ParticleCount);  // ISM rendering
@@ -3908,7 +3924,6 @@ void FGPUFluidSimulator::ProcessStatsReadback(FRHICommandListImmediate& RHICmdLi
 			NewVelocityMagnitudes.SetNumUninitialized(ParticleCount);
 			NewMasses.SetNumUninitialized(ParticleCount);
 			NewNeighborCounts.SetNumUninitialized(ParticleCount);
-			NewFlags.SetNumUninitialized(ParticleCount);
 		}
 
 		if (bIsCompactMode)
@@ -3938,6 +3953,7 @@ void FGPUFluidSimulator::ProcessStatsReadback(FRHICommandListImmediate& RHICmdLi
 
 					NewPositions[i] = P.Position;
 					NewSourceIDs[i] = P.SourceID;
+					NewFlags[i] = P.Flags;
 
 					// NeighborCount available in compact mode
 					if (bNeedShadowData)
@@ -3976,6 +3992,7 @@ void FGPUFluidSimulator::ProcessStatsReadback(FRHICommandListImmediate& RHICmdLi
 
 					NewPositions[i] = P.Position;
 					NewSourceIDs[i] = P.SourceID;
+					NewFlags[i] = P.Flags;
 
 					if (bNeedVelocity)
 					{
@@ -3993,7 +4010,6 @@ void FGPUFluidSimulator::ProcessStatsReadback(FRHICommandListImmediate& RHICmdLi
 						NewVelocityMagnitudes[i] = P.Velocity.Length();
 						NewMasses[i] = P.Mass;
 						NewNeighborCounts[i] = P.NeighborCount;
-						NewFlags[i] = P.Flags;
 					}
 				}
 			}, EParallelForFlags::Unbalanced);
@@ -4040,6 +4056,7 @@ void FGPUFluidSimulator::ProcessStatsReadback(FRHICommandListImmediate& RHICmdLi
 			CachedAllParticleIDs = MoveTemp(NewAllParticleIDs);
 			CachedParticlePositions = MoveTemp(NewPositions);    // Always available for despawn API
 			CachedParticleSourceIDs = MoveTemp(NewSourceIDs);    // Always available for despawn API
+			CachedParticleFlags = MoveTemp(NewFlags);            // Always available for debug visualization
 
 			// Velocity for ISM rendering (lightweight API)
 			if (bNeedVelocity)

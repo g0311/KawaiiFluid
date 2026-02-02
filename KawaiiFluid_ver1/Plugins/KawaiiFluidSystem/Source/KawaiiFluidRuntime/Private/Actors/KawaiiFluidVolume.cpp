@@ -1108,6 +1108,9 @@ void AKawaiiFluidVolume::DrawDebugParticles()
 			return;
 		}
 
+		// Get flags for Point_IsAttached debug mode
+		const TArray<uint32>* Flags = Simulator->GetParticleFlags();
+
 		// Update bounds for position-based coloring
 		DebugDrawBoundsMin = FVector(Positions[0]);
 		DebugDrawBoundsMax = FVector(Positions[0]);
@@ -1118,11 +1121,12 @@ void AKawaiiFluidVolume::DrawDebugParticles()
 			DebugDrawBoundsMax = DebugDrawBoundsMax.ComponentMax(P);
 		}
 
-		// Draw particles (position-based coloring only in GPU mode, no Density available)
+		// Draw particles
 		for (int32 i = 0; i < TotalCount; ++i)
 		{
 			FVector Pos(Positions[i]);
-			FColor Color = ComputeDebugDrawColor(i, TotalCount, Pos, 0.0f);
+			const bool bNearBoundary = Flags && i < Flags->Num() && ((*Flags)[i] & EGPUParticleFlags::NearBoundary);
+			FColor Color = ComputeDebugDrawColor(i, TotalCount, Pos, 0.0f, bNearBoundary);
 			DrawDebugPoint(World, Pos, DebugPointSize, Color, false, -1.0f, 0);
 		}
 	}

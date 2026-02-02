@@ -756,6 +756,13 @@ public:
 	const TArray<int32>* GetAllParticleIDs() const;
 
 	/**
+	 * Get particle flags from cached readback data
+	 * Returns nullptr if no cached data available
+	 * @return Pointer to array of particle flags, or nullptr if not available
+	 */
+	const TArray<uint32>* GetParticleFlags() const;
+
+	/**
 	 * Clear all pending spawn requests
 	 */
 	void ClearSpawnRequests();
@@ -1167,6 +1174,9 @@ private:
 
 	// Cached particle velocities (always built during readback for lightweight ISM rendering)
 	TArray<FVector3f> CachedParticleVelocities;
+
+	// Cached particle flags (always built during readback for debug visualization)
+	TArray<uint32> CachedParticleFlags;
 
 	// Flag indicating valid GPU results are available for download
 	std::atomic<bool> bHasValidGPUResults{false};
