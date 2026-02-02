@@ -19,6 +19,7 @@ class FUseAnisotropyDim : SHADER_PERMUTATION_BOOL("USE_ANISOTROPY");
 BEGIN_SHADER_PARAMETER_STRUCT(FFluidDepthParameters, )
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float3>, ParticlePositions)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float3>, ParticleVelocities)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float3>, RenderOffset)  // 표면 입자 렌더링 오프셋
 	SHADER_PARAMETER(float, ParticleRadius)
 	SHADER_PARAMETER(FMatrix44f, ViewMatrix)
 	SHADER_PARAMETER(FMatrix44f, ProjectionMatrix)

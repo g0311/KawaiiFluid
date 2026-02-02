@@ -47,6 +47,10 @@ struct KAWAIIFLUIDRUNTIME_API FAnisotropyComputeParams
 	FRDGBufferUAVRef OutAxis2UAV = nullptr;
 	FRDGBufferUAVRef OutAxis3UAV = nullptr;
 
+	// Render offset for surface particles (이웃 방향으로 당겨서 렌더링)
+	FRDGBufferUAVRef OutRenderOffsetUAV = nullptr;
+	float ParticleRadius = 0.0f;  // 시뮬레이션에서 전달받음
+
 	// Parameters
 	int32 ParticleCount = 0;
 	EGPUAnisotropyMode Mode = EGPUAnisotropyMode::DensityBased;
@@ -157,6 +161,10 @@ public:
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FVector4f>, OutAnisotropyAxis1)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FVector4f>, OutAnisotropyAxis2)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FVector4f>, OutAnisotropyAxis3)
+
+		// Output: Render offset for surface particles (이웃 방향으로 당김)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FVector3f>, OutRenderOffset)
+		SHADER_PARAMETER(float, ParticleRadius)
 
 		// Parameters
 		SHADER_PARAMETER(uint32, ParticleCount)

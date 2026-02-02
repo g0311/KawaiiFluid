@@ -288,6 +288,26 @@ bool FKawaiiFluidRenderResource::IsAnisotropyEnabled() const
 	return Simulator && Simulator->IsAnisotropyEnabled();
 }
 
+FRDGBufferSRVRef FKawaiiFluidRenderResource::GetRenderOffsetBufferSRV(FRDGBuilder& GraphBuilder) const
+{
+	FGPUFluidSimulator* Simulator = CachedGPUSimulator.load();
+	if (!Simulator || !Simulator->IsAnisotropyEnabled())
+	{
+		return nullptr;
+	}
+
+	TRefCountPtr<FRDGPooledBuffer> RenderOffsetPooled = Simulator->GetPersistentRenderOffsetBuffer();
+	if (!RenderOffsetPooled.IsValid())
+	{
+		return nullptr;
+	}
+
+	FRDGBufferRef RenderOffsetBuffer = GraphBuilder.RegisterExternalBuffer(
+		RenderOffsetPooled,
+		TEXT("UnifiedRenderOffset"));
+	return GraphBuilder.CreateSRV(RenderOffsetBuffer);
+}
+
 //========================================
 // Bounds and RenderParticle buffer management
 //========================================

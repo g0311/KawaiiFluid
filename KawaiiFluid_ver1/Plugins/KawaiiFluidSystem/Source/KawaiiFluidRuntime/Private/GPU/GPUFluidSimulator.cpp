@@ -1673,6 +1673,13 @@ void FGPUFluidSimulator::ExecutePostSimulation(
 				AnisotropyParams.OutAxis3UAV = GraphBuilder.CreateUAV(Axis3Buffer);
 				AnisotropyParams.ParticleCount = CurrentParticleCount;
 
+				// Render offset for surface particles (이웃 방향으로 당겨서 렌더링)
+				FRDGBufferRef RenderOffsetBuffer = GraphBuilder.CreateBuffer(
+					FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector3f), CurrentParticleCount),
+					TEXT("FluidRenderOffset"));
+				AnisotropyParams.OutRenderOffsetUAV = GraphBuilder.CreateUAV(RenderOffsetBuffer);
+				AnisotropyParams.ParticleRadius = Params.ParticleRadius;
+
 				// Params Mapping
 				AnisotropyParams.Mode = (EGPUAnisotropyMode)CachedAnisotropyParams.Mode;
 				AnisotropyParams.VelocityStretchFactor = CachedAnisotropyParams.VelocityStretchFactor;
@@ -1838,6 +1845,7 @@ void FGPUFluidSimulator::ExecutePostSimulation(
 				GraphBuilder.QueueBufferExtraction(Axis1Buffer, &PersistentAnisotropyAxis1Buffer, ERHIAccess::SRVCompute);
 				GraphBuilder.QueueBufferExtraction(Axis2Buffer, &PersistentAnisotropyAxis2Buffer, ERHIAccess::SRVCompute);
 				GraphBuilder.QueueBufferExtraction(Axis3Buffer, &PersistentAnisotropyAxis3Buffer, ERHIAccess::SRVCompute);
+				GraphBuilder.QueueBufferExtraction(RenderOffsetBuffer, &PersistentRenderOffsetBuffer, ERHIAccess::SRVCompute);
 			}
 		}
 	}

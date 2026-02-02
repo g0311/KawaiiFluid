@@ -375,11 +375,13 @@ public:
 	TRefCountPtr<FRDGPooledBuffer> GetPersistentAnisotropyAxis1Buffer() const { return PersistentAnisotropyAxis1Buffer; }
 	TRefCountPtr<FRDGPooledBuffer> GetPersistentAnisotropyAxis2Buffer() const { return PersistentAnisotropyAxis2Buffer; }
 	TRefCountPtr<FRDGPooledBuffer> GetPersistentAnisotropyAxis3Buffer() const { return PersistentAnisotropyAxis3Buffer; }
+	TRefCountPtr<FRDGPooledBuffer> GetPersistentRenderOffsetBuffer() const { return PersistentRenderOffsetBuffer; }
 
 	/** Access anisotropy buffers for writing (compute shader output) */
 	TRefCountPtr<FRDGPooledBuffer>& AccessPersistentAnisotropyAxis1Buffer() { return PersistentAnisotropyAxis1Buffer; }
 	TRefCountPtr<FRDGPooledBuffer>& AccessPersistentAnisotropyAxis2Buffer() { return PersistentAnisotropyAxis2Buffer; }
 	TRefCountPtr<FRDGPooledBuffer>& AccessPersistentAnisotropyAxis3Buffer() { return PersistentAnisotropyAxis3Buffer; }
+	TRefCountPtr<FRDGPooledBuffer>& AccessPersistentRenderOffsetBuffer() { return PersistentRenderOffsetBuffer; }
 
 	//=============================================================================
 	// Heightmap Collision (Delegated to FGPUCollisionManager)
@@ -1237,6 +1239,7 @@ private:
 	TRefCountPtr<FRDGPooledBuffer> PersistentAnisotropyAxis1Buffer;
 	TRefCountPtr<FRDGPooledBuffer> PersistentAnisotropyAxis2Buffer;
 	TRefCountPtr<FRDGPooledBuffer> PersistentAnisotropyAxis3Buffer;
+	TRefCountPtr<FRDGPooledBuffer> PersistentRenderOffsetBuffer;  // 표면 입자 렌더링 오프셋
 	int32 AnisotropyFrameCounter = 0;  // Frame counter for UpdateInterval optimization
 
 	// Critical section for thread-safe buffer access

@@ -157,6 +157,14 @@ public:
 	/** Check if Anisotropy is enabled */
 	bool IsAnisotropyEnabled() const;
 
+	/**
+	 * Get RenderOffset buffer SRV (valid only in GPU mode with anisotropy enabled)
+	 * Used for surface particle rendering offset
+	 * @param GraphBuilder RDG builder
+	 * @return RenderOffset buffer SRV or nullptr if not available
+	 */
+	FRDGBufferSRVRef GetRenderOffsetBufferSRV(FRDGBuilder& GraphBuilder) const;
+
 	//========================================
 	// Bounds data
 	//========================================

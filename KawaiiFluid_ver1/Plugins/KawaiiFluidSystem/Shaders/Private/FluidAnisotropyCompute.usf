@@ -52,6 +52,10 @@ RWStructuredBuffer<float4> OutAnisotropyAxis1;
 RWStructuredBuffer<float4> OutAnisotropyAxis2;
 RWStructuredBuffer<float4> OutAnisotropyAxis3;
 
+// Output: Render offset for surface particles (이웃 방향으로 당겨서 렌더링)
+RWStructuredBuffer<float3> OutRenderOffset;
+float ParticleRadius;
+
 // Parameters
 uint ParticleCount;
 uint AnisotropyMode;  // 0=Velocity, 1=Density, 2=Hybrid
@@ -696,7 +700,8 @@ void CalculateDensityBased(
 	uint ParticleIndex,
 	out float3 Axis1, out float3 Axis2, out float3 Axis3,
 	out float Scale1, out float Scale2, out float Scale3,
-	out int OutNeighborCount)
+	out int OutNeighborCount,
+	out float3 OutSmoothedCenter)  // 이웃들의 가중 평균 위치 (렌더 오프셋용)
 {
 	// Default: identity (sphere with scale 1.0, NOT AnisotropyScale)
 	Axis1 = float3(1, 0, 0);
@@ -704,6 +709,7 @@ void CalculateDensityBased(
 	Axis3 = float3(0, 0, 1);
 	Scale1 = Scale2 = Scale3 = 1.0f;
 	OutNeighborCount = 0;
+	OutSmoothedCenter = float3(0, 0, 0);  // 초기화
 
 	uint idx3 = ParticleIndex * 3;
 	float3 CenterPos = float3(InPositions[idx3], InPositions[idx3 + 1], InPositions[idx3 + 2]);
@@ -845,6 +851,7 @@ void CalculateDensityBased(
 
 	// Compute Smoothed Position (weighted average)
 	float3 SmoothedCenter = SumWP / SumW;
+	OutSmoothedCenter = SmoothedCenter;  // 렌더 오프셋 계산용으로 반환
 
 	// =========================================================================
 	// PASS 2: Compute Covariance from LOCAL CACHE (no memory access!)
@@ -1205,6 +1212,8 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	float3 Axis1, Axis2, Axis3;
 	float Scale1, Scale2, Scale3;
 	int NeighborCount = 0;
+	float3 SmoothedCenter = float3(0, 0, 0);  // 이웃들의 가중 평균 위치
+	float3 renderOffset = float3(0, 0, 0);    // 표면 입자 렌더링 오프셋
 
 	// Read particle data (SOA)
 	uint idx3 = Idx * 3;
@@ -1284,7 +1293,7 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	else if (AnisotropyMode == MODE_DENSITY_BASED)
 	{
 		// Pure density-based: axes from covariance only
-		CalculateDensityBased(Idx, Axis1, Axis2, Axis3, Scale1, Scale2, Scale3, NeighborCount);
+		CalculateDensityBased(Idx, Axis1, Axis2, Axis3, Scale1, Scale2, Scale3, NeighborCount, SmoothedCenter);
 	}
 	else // MODE_HYBRID
 	{
@@ -1295,7 +1304,7 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		float3 DensityAxis1, DensityAxis2, DensityAxis3;
 		float DensityScale1, DensityScale2, DensityScale3;
 		CalculateDensityBased(Idx, DensityAxis1, DensityAxis2, DensityAxis3,
-		                      DensityScale1, DensityScale2, DensityScale3, NeighborCount);
+		                      DensityScale1, DensityScale2, DensityScale3, NeighborCount, SmoothedCenter);
 
 		// Calculate velocity-based anisotropy
 		float3 VelocityAxis1, VelocityAxis2, VelocityAxis3;
@@ -1373,8 +1382,25 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		Scale3 = exp(LogScale3);
 	}
 
+	// =========================================================================
+	// 표면 입자 렌더 오프셋 계산
+	// 이웃이 1개 이상이면 SmoothedCenter 방향으로 ParticleRadius만큼 당김
+	// NEAR_BOUNDARY 입자는 이미 콜라이더에 붙어있으므로 오프셋 불필요
+	// =========================================================================
+	if (!bUsedSurfaceNormal && NeighborCount >= 1)
+	{
+		float3 CenterPos = float3(InPositions[idx3], InPositions[idx3 + 1], InPositions[idx3 + 2]);
+		float3 toNeighbors = SmoothedCenter - CenterPos;
+		float dist = length(toNeighbors);
+		if (dist > 0.001f)
+		{
+			renderOffset = (toNeighbors / dist) * ParticleRadius;
+		}
+	}
+
 	// Write output (direction.xyz + scale.w)
 	OutAnisotropyAxis1[Idx] = float4(Axis1, Scale1);
 	OutAnisotropyAxis2[Idx] = float4(Axis2, Scale2);
 	OutAnisotropyAxis3[Idx] = float4(Axis3, Scale3);
+	OutRenderOffset[Idx] = renderOffset;
 }

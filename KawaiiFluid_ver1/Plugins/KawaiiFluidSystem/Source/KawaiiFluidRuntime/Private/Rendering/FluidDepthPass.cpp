@@ -189,6 +189,17 @@ void RenderFluidDepthPass(
 			AnisotropyAxis2SRV,
 			AnisotropyAxis3SRV);
 
+		// RenderOffset buffer (for surface particle rendering offset)
+		FRDGBufferSRVRef RenderOffsetSRV = RR->GetRenderOffsetBufferSRV(GraphBuilder);
+		if (!RenderOffsetSRV)
+		{
+			// Create dummy buffer if RenderOffset is not available
+			FRDGBufferDesc DummyOffsetDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector3f), 1);
+			FRDGBufferRef DummyOffsetBuffer = GraphBuilder.CreateBuffer(DummyOffsetDesc, TEXT("DummyRenderOffset"));
+			AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(DummyOffsetBuffer), 0);
+			RenderOffsetSRV = GraphBuilder.CreateSRV(DummyOffsetBuffer);
+		}
+
 		// Skip if no valid particles
 		if (!ParticleBufferSRV || ParticleCount == 0)
 		{
@@ -212,6 +223,9 @@ void RenderFluidDepthPass(
 
 		// Velocity buffer for flow texture
 		PassParameters->ParticleVelocities = VelocityBufferSRV;
+
+		// RenderOffset buffer for surface particle rendering
+		PassParameters->RenderOffset = RenderOffsetSRV;
 
 		// ViewRect and texture size (pre-computed outside loop)
 		PassParameters->SceneViewRect = SceneViewRectSize;
