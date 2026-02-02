@@ -237,9 +237,9 @@ struct FGPUFluidSimulationParams
 		// Surface Tension (Position-Based, always enabled)
 		, bEnablePositionBasedSurfaceTension(1)  // Always enabled
 		, SurfaceTensionStrength(0.3f)
-		, SurfaceTensionActivationRatio(0.4f)
+		, SurfaceTensionActivationRatio(0.5f)
 		, SurfaceTensionFalloffRatio(0.7f)
-		, SurfaceTensionSurfaceThreshold(15)
+		, SurfaceTensionSurfaceThreshold(0)  // 0 = applies to all particles
 		, SurfaceTensionVelocityDamping(0.7f)
 		, SurfaceTensionTolerance(1.0f)
 		// Surface Tension max correction

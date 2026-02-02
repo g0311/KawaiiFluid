@@ -365,7 +365,7 @@ public:
 	float StackPressureRadius = 0.0f;
 
 	/**
-	 * Artificial Pressure Strength (Tensile Instability Correction)
+	 * Artificial Pressure Strength (k) - Tensile Instability Correction
 	 * Prevents particle clumping caused by SPH tensile instability.
 	 * Uses artificial pressure term from PBF (Eq.13-14).
 	 *
@@ -378,23 +378,16 @@ public:
 		meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float ArtificialPressure = 0.0f;
 
-	/**
-	 * Artificial Pressure Exponent (n)
-	 * Controls the sharpness of anti-clumping effect.
-	 * Formula: s_corr = -k * (W(r)/W(Δq))^n
-	 * Higher = sharper cutoff, Lower = smoother falloff
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|Stability",
-		meta = (ClampMin = "1", ClampMax = "8"))
+	//========================================
+	// Artificial Pressure Internal Parameters
+	// (Not exposed to editor - tuned internally)
+	// Formula: s_corr = -k * (W(r)/W(Δq))^n
+	//========================================
+
+	/** Exponent (n) - controls sharpness of anti-clumping effect */
 	int32 ArtificialPressureExponent = 4;
 
-	/**
-	 * Artificial Pressure Reference Distance (Δq) as ratio of SmoothingRadius
-	 * 0.0 = NVIDIA Flex style (pure anti-clustering, recommended)
-	 * 0.1~0.3 = PBF paper style (some clustering allowed)
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|Stability",
-		meta = (ClampMin = "0.0", ClampMax = "0.5"))
+	/** Reference Distance (Δq) as ratio of SmoothingRadius (0 = NVIDIA Flex style) */
 	float ArtificialPressureDeltaQ = 0.0f;
 
 	//========================================
@@ -403,65 +396,27 @@ public:
 	// Creates rounded droplets by minimizing surface area
 	//========================================
 
-	/**
-	 * Surface Tension activation distance as ratio of SmoothingRadius
-	 * Surface tension is applied when particle distance exceeds this.
-	 * Lower values = tighter surface (more spherical droplets)
-	 * Typical: 0.3 ~ 0.5
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|SurfaceTension",
-		meta = (ClampMin = "0.1", ClampMax = "0.9"))
-	float SurfaceTensionActivationRatio = 0.4f;
+	//========================================
+	// Surface Tension Internal Parameters
+	// (Not exposed to editor - tuned internally)
+	//========================================
 
-	/**
-	 * Surface Tension falloff distance as ratio of SmoothingRadius
-	 * Beyond this, strength decreases linearly to zero at SmoothingRadius.
-	 * Must be > SurfaceTensionActivationRatio
-	 * Typical: 0.6 ~ 0.9
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|SurfaceTension",
-		meta = (ClampMin = "0.2", ClampMax = "1.0"))
+	/** Activation distance as ratio of SmoothingRadius (0.3~0.5 typical) */
+	float SurfaceTensionActivationRatio = 0.5f;
+
+	/** Falloff distance as ratio of SmoothingRadius (0.6~0.9 typical) */
 	float SurfaceTensionFalloffRatio = 0.7f;
 
-	/**
-	 * Surface particles neighbor threshold
-	 * Particles with fewer neighbors get stronger surface tension (actual surface particles).
-	 * This creates proper droplet formation at fluid boundaries.
-	 * 0 = uniform strength for all particles
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|SurfaceTension",
-		meta = (ClampMin = "0", ClampMax = "30"))
-	int32 SurfaceTensionSurfaceThreshold = 15;
+	/** Surface particles neighbor threshold (0 = uniform for all, applies to all particles) */
+	int32 SurfaceTensionSurfaceThreshold = 0;
 
-	/**
-	 * Maximum correction per iteration (cm)
-	 * Limits position change from surface tension/cohesion per solver iteration.
-	 * Prevents instability from large corrections.
-	 * 0 = no limit (not recommended)
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|SurfaceTension",
-		meta = (ClampMin = "0.0", ClampMax = "50.0"))
+	/** Maximum correction per iteration in cm (stability limit) */
 	float MaxSurfaceTensionCorrectionPerIteration = 5.0f;
 
-	/**
-	 * Surface Tension velocity damping (under-relaxation)
-	 * Controls position correction strength.
-	 * 0.0 = full correction (may oscillate), 1.0 = no correction (too stable)
-	 * 0.5~0.8 = good balance between responsiveness and stability
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|SurfaceTension",
-		meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	/** Velocity damping / under-relaxation (0.5~0.8 typical) */
 	float SurfaceTensionVelocityDamping = 0.7f;
 
-	/**
-	 * Dead zone tolerance around activation distance (cm)
-	 * Particles within this distance of ActivationDistance won't receive correction.
-	 * This prevents oscillation at equilibrium by allowing particles to settle.
-	 * Higher values = larger dead zone, easier to stabilize but less precise shape
-	 * Typical: 0.5 ~ 2.0 cm (1~2% of SmoothingRadius)
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Physics|Simulation|SurfaceTension",
-		meta = (ClampMin = "0.0", ClampMax = "5.0"))
+	/** Dead zone tolerance around activation distance in cm */
 	float SurfaceTensionTolerance = 1.0f;
 
 	//========================================
