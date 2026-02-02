@@ -7,11 +7,12 @@
 // 2. rsqrt: Uses fast inverse square root instead of sqrt
 // 3. Loop Unroll: Explicit 27-cell unrolling for cellRadius=1 case
 // 4. Neighbor Caching: First iteration builds neighbor list, subsequent iterations reuse
-// 5. Wave Intrinsics: Register-to-register data sharing within warp (30-50% memory reduction)
-// 6. Half Precision: Velocity/Density/Lambda as FP16 (50% bandwidth reduction)
-// 7. Uniform Mass: Single mass constant instead of per-particle buffer (4B/neighbor saved)
-// 8. Shared Memory (LDS): Tile-based caching for 256 spatially adjacent particles
-// 9. ALU Optimization: Inline kernels, single rsqrt, branchless tensile/ST, precomputed constants
+// 5. Half Precision: Velocity/Density/Lambda as FP16 (50% bandwidth reduction)
+// 6. Uniform Mass: Single mass constant instead of per-particle buffer (4B/neighbor saved)
+// 7. Shared Memory (LDS): Tile-based caching for 256 spatially adjacent particles
+// 8. ALU Optimization: Inline kernels, single rsqrt, branchless tensile/ST, precomputed constants
+//
+// NOTE: Wave Intrinsics removed - unsafe in divergent loops (thread retire causes garbage reads)
 
 #include "/Engine/Public/Platform.ush"
 #include "/Engine/Private/Common.ush"
@@ -27,10 +28,14 @@
 // Thread Group (256 threads) processes spatially adjacent particles (Z-Order sorted)
 // When neighbor is in same tile, read from LDS (~20x faster than Global Memory)
 //
-// Memory hierarchy (fastest to slowest):
-// 1. Shared Memory (LDS): ~20 cycles, same tile (256 particles)
-// 2. Wave Intrinsics: ~4 cycles, same warp (32/64 particles)
-// 3. Global Memory: ~400 cycles, different tile
+// Memory hierarchy:
+// 1. Shared Memory (LDS): ~20 cycles, same tile (256 particles) - SAFE
+// 2. Global Memory: ~400 cycles, different tile - SAFE
+//
+// NOTE: Wave Intrinsics removed - unsafe in divergent neighbor loops.
+// When threads finish at different times (due to varying neighbor counts),
+// WaveReadLaneAt can read garbage from retired thread registers.
+// LDS data persists until entire Thread Group completes, so it's always safe.
 //=============================================================================
 #define TILE_SIZE THREAD_GROUP_SIZE  // 256
 
@@ -38,132 +43,26 @@ groupshared float3 gs_Positions[TILE_SIZE];
 groupshared float  gs_Lambdas[TILE_SIZE];
 groupshared uint   gs_Flags[TILE_SIZE];
 
-//=============================================================================
-// Wave Intrinsics Helper
-// When Z-Order sorted, adjacent threads process spatially adjacent particles.
-// If neighbor's index is within the warp range, we can use WaveReadLaneAt
-// to read from another thread's register (instant!) instead of Global Memory.
-//=============================================================================
-
-#ifndef COMPILER_SUPPORTS_WAVE_INTRINSICS
-	#define COMPILER_SUPPORTS_WAVE_INTRINSICS 1
-#endif
-
-// Reduced struct: No Mass (uniform), Lambda read separately when needed
-struct FWaveParticleData
+// Neighbor particle data structure
+struct FNeighborParticleData
 {
 	float3 Position;
 	float Lambda;
 	uint Flags;
 };
 
-// Get neighbor data - uses Wave Intrinsics if neighbor is in same warp, otherwise Global Memory
-// Mass removed (uniform constant), Lambda read from packed DensityLambda buffer
-FWaveParticleData GetNeighborData(
-	uint neighborIdx,
-	uint waveStartIdx,
-	uint waveSize,
-	FWaveParticleData myData,
-	uint4 activeLaneMask,
-	RWBuffer<float> InPredictedPositions,
-	RWBuffer<uint> InPackedDensityLambda,
-	RWBuffer<uint> InFlags)
-{
-	FWaveParticleData result;
-
-#if COMPILER_SUPPORTS_WAVE_INTRINSICS
-	// Check if neighbor is within this warp's particle index range
-	uint laneOffset = neighborIdx - waveStartIdx;
-
-	// Check if target lane is active (didn't return early)
-	bool bLaneActive = false;
-	if (laneOffset < 32)
-		bLaneActive = (activeLaneMask.x & (1u << laneOffset)) != 0;
-	else if (laneOffset < 64)
-		bLaneActive = (activeLaneMask.y & (1u << (laneOffset - 32))) != 0;
-
-	if (laneOffset < waveSize && bLaneActive)
-	{
-		// FAST PATH: Neighbor is in same warp AND active - use Wave Intrinsics
-		result.Position.x = WaveReadLaneAt(myData.Position.x, laneOffset);
-		result.Position.y = WaveReadLaneAt(myData.Position.y, laneOffset);
-		result.Position.z = WaveReadLaneAt(myData.Position.z, laneOffset);
-		result.Lambda = WaveReadLaneAt(myData.Lambda, laneOffset);
-		result.Flags = WaveReadLaneAt(myData.Flags, laneOffset);
-	}
-	else
-	{
-		// SLOW PATH: Different warp OR inactive lane - must use Global Memory
-		uint neighborIdx3 = neighborIdx * 3;
-		result.Position = float3(
-			InPredictedPositions[neighborIdx3],
-			InPredictedPositions[neighborIdx3 + 1],
-			InPredictedPositions[neighborIdx3 + 2]);
-
-		// Unpack Lambda from packed DensityLambda buffer (half2: density, lambda)
-		float neighborDensity;  // unused here
-		UnpackDensityLambda(InPackedDensityLambda[neighborIdx], neighborDensity, result.Lambda);
-		result.Flags = InFlags[neighborIdx];
-	}
-#else
-	// Fallback for platforms without Wave Intrinsics support
-	uint neighborIdx3 = neighborIdx * 3;
-	result.Position = float3(
-		InPredictedPositions[neighborIdx3],
-		InPredictedPositions[neighborIdx3 + 1],
-		InPredictedPositions[neighborIdx3 + 2]);
-
-	float neighborDensity;
-	UnpackDensityLambda(InPackedDensityLambda[neighborIdx], neighborDensity, result.Lambda);
-	result.Flags = InFlags[neighborIdx];
-#endif
-
-	return result;
-}
-
-// Get neighbor data with optimal memory hierarchy:
-// 1. Wave Intrinsics (registers): ~4 cycles - same warp (32/64 threads)
-// 2. Shared Memory (LDS): ~20 cycles - same tile (256 threads)
-// 3. Global Memory (VRAM): ~400 cycles - different tile
-//
-// NOTE: Warp(32) ⊂ Tile(256), so Wave check must come FIRST
-FWaveParticleData GetNeighborDataWithTile(
+// Get neighbor data with LDS + Global Memory hierarchy
+// LDS is safe because data persists until Thread Group completes
+FNeighborParticleData GetNeighborDataWithTile(
 	uint neighborIdx,
 	uint tileStartIdx,
-	uint waveStartIdx,
-	uint waveSize,
-	FWaveParticleData myData,
-	uint4 activeLaneMask,
 	RWBuffer<float> InPredictedPositions,
 	RWBuffer<uint> InPackedDensityLambda,
 	RWBuffer<uint> InFlags)
 {
-	FWaveParticleData result;
+	FNeighborParticleData result;
 
-#if COMPILER_SUPPORTS_WAVE_INTRINSICS
-	// 1. Wave Intrinsics check (FASTEST: ~4 cycles, register-to-register)
-	uint laneOffset = neighborIdx - waveStartIdx;
-
-	// Check if target lane is active
-	bool bLaneActive = false;
-	if (laneOffset < 32)
-		bLaneActive = (activeLaneMask.x & (1u << laneOffset)) != 0;
-	else if (laneOffset < 64)
-		bLaneActive = (activeLaneMask.y & (1u << (laneOffset - 32))) != 0;
-
-	if (laneOffset < waveSize && bLaneActive)
-	{
-		// Register read via Wave Intrinsics
-		result.Position.x = WaveReadLaneAt(myData.Position.x, laneOffset);
-		result.Position.y = WaveReadLaneAt(myData.Position.y, laneOffset);
-		result.Position.z = WaveReadLaneAt(myData.Position.z, laneOffset);
-		result.Lambda = WaveReadLaneAt(myData.Lambda, laneOffset);
-		result.Flags = WaveReadLaneAt(myData.Flags, laneOffset);
-		return result;
-	}
-#endif
-
-	// 2. Tile (LDS) check (FAST: ~20 cycles)
+	// 1. Tile (LDS) check - FAST and SAFE (~20 cycles)
 	uint tileOffset = neighborIdx - tileStartIdx;
 	if (tileOffset < TILE_SIZE)
 	{
@@ -173,7 +72,7 @@ FWaveParticleData GetNeighborDataWithTile(
 		return result;
 	}
 
-	// 3. Global Memory (SLOW: ~400 cycles)
+	// 2. Global Memory - SLOW but SAFE (~400 cycles)
 	uint neighborIdx3 = neighborIdx * 3;
 	result.Position = float3(
 		InPredictedPositions[neighborIdx3],
@@ -409,34 +308,6 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	// NEAR_BOUNDARY flag check - used later to skip position corrections
 	bool bIsNearBoundary = HasFlag(flags, GPU_PARTICLE_FLAG_NEAR_BOUNDARY);
 
-	//=========================================================================
-	// Wave Intrinsics Setup
-	// Z-Order sorting means adjacent threads process spatially adjacent particles.
-	// When neighborIdx falls within [waveStartIdx, waveStartIdx + waveSize),
-	// we can use WaveReadLaneAt for instant register-to-register access.
-	//=========================================================================
-#if COMPILER_SUPPORTS_WAVE_INTRINSICS
-	uint waveSize = WaveGetLaneCount();  // 32 (NVIDIA) or 64 (AMD)
-	uint laneIndex = WaveGetLaneIndex(); // 0 ~ waveSize-1
-	uint waveStartIdx = idx - laneIndex; // Particle index of lane 0 in this warp
-
-	// Get mask of active lanes (threads that didn't return early)
-	// Bit N = 1 means lane N is still active and has valid register data
-	uint4 activeLaneMask = WaveActiveBallot(true);
-#else
-	// Fallback: set invalid range so GetNeighborData always uses Global Memory
-	uint waveSize = 0;
-	uint waveStartIdx = 0xFFFFFFFF;
-	uint4 activeLaneMask = uint4(0, 0, 0, 0);
-#endif
-
-	// Load own data to registers for Wave Intrinsics sharing
-	// Note: Mass removed (using UniformParticleMass constant instead)
-	FWaveParticleData myData;
-	myData.Position = pos;
-	myData.Lambda = lambda_i_prev;
-	myData.Flags = flags;
-
 	// Convert smoothing radius from cm to m for kernel calculations
 	float h = SmoothingRadius * CM_TO_M;
 	float h2 = h * h;
@@ -524,11 +395,10 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 						uint maxNeighborIdx = min(cellEnd, (uint)(ParticleCount - 1));
 						for (uint neighborIdx = cellStart; neighborIdx <= maxNeighborIdx; ++neighborIdx)
 						{
-							// Shared Memory + Wave Intrinsics: Get neighbor data
-						// 1st: Check tile (LDS), 2nd: Check warp (registers), 3rd: Global Memory
-						FWaveParticleData neighborData = GetNeighborDataWithTile(
-							neighborIdx, tileStartIdx, waveStartIdx, waveSize, myData, activeLaneMask,
-							PredictedPositions, PackedDensityLambda, Flags);
+							// Get neighbor data: LDS first, then Global Memory
+							FNeighborParticleData neighborData = GetNeighborDataWithTile(
+								neighborIdx, tileStartIdx,
+								PredictedPositions, PackedDensityLambda, Flags);
 
 							// Skip attached neighbors - they cluster at bone and cause explosion
 							if (HasFlag(neighborData.Flags, GPU_PARTICLE_FLAG_IS_ATTACHED))
@@ -639,10 +509,9 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 								continue;
 							}
 
-							// Shared Memory + Wave Intrinsics: Get neighbor data
-							// Note: Legacy hash mode has less spatial coherence, but still benefits
-							FWaveParticleData neighborData = GetNeighborDataWithTile(
-								neighborIdx, tileStartIdx, waveStartIdx, waveSize, myData, activeLaneMask,
+							// Get neighbor data: LDS first, then Global Memory
+							FNeighborParticleData neighborData = GetNeighborDataWithTile(
+								neighborIdx, tileStartIdx,
 								PredictedPositions, PackedDensityLambda, Flags);
 
 							// Skip attached neighbors - they cluster at bone and cause explosion
@@ -747,11 +616,10 @@ void SolveDensityPressureCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			uint n = reverseOrder ? (cachedCount - 1 - ni) : ni;
 			uint neighborIdx = NeighborList[baseIdx + n];
 
-			// Shared Memory + Wave Intrinsics: Get neighbor data
-			// For cached iterations, Position and Lambda have changed, so we need fresh reads.
-			// Shared Memory is refreshed each iteration via GroupMemoryBarrierWithGroupSync.
-			FWaveParticleData neighborData = GetNeighborDataWithTile(
-				neighborIdx, tileStartIdx, waveStartIdx, waveSize, myData, activeLaneMask,
+			// Get neighbor data: LDS first, then Global Memory
+			// LDS is refreshed each iteration via GroupMemoryBarrierWithGroupSync.
+			FNeighborParticleData neighborData = GetNeighborDataWithTile(
+				neighborIdx, tileStartIdx,
 				PredictedPositions, PackedDensityLambda, Flags);
 
 			// Skip attached neighbors - they cluster at bone and cause explosion
