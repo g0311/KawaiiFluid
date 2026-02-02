@@ -96,7 +96,9 @@ void UKawaiiFluidMetaballRenderer::ApplySettings(const FKawaiiFluidMetaballRende
 	LocalParameters.SpecularStrength = Settings.SpecularStrength;
 	LocalParameters.SpecularRoughness = Settings.SpecularRoughness;
 	LocalParameters.ParticleRenderRadius = Settings.ParticleRenderRadius;
-	LocalParameters.SmoothingRadius = Settings.SmoothingRadius;
+	LocalParameters.SmoothingWorldScale = Settings.SmoothingWorldScale;
+	LocalParameters.SmoothingMinRadius = Settings.SmoothingMinRadius;
+	LocalParameters.SmoothingMaxRadius = Settings.SmoothingMaxRadius;
 	LocalParameters.ThicknessScale = Settings.ThicknessScale;
 
 	// Anisotropy parameters

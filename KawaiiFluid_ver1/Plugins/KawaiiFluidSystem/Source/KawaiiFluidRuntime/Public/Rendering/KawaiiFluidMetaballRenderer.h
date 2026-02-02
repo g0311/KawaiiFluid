@@ -91,13 +91,26 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidMetaballRendererSettings
 	//========================================
 
 	/**
-	 * Depth smoothing filter radius in pixels.
-	 * Controls how many neighboring pixels are sampled during smoothing.
-	 * Larger values produce smoother surfaces but may blur fine details.
-	 * Recommended: 10~30 for typical fluid, 30~50 for slime/gel.
+	 * Blur radius as a multiple of particle screen size.
+	 * Automatically scales based on distance from camera.
+	 * 2.0 = blur covers 2x the particle's screen area.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoothing", meta = (EditCondition = "bEnabled", ClampMin = "1", ClampMax = "100"))
-	int32 SmoothingRadius = 20;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoothing", meta = (EditCondition = "bEnabled", ClampMin = "0.5", ClampMax = "5.0"))
+	float SmoothingWorldScale = 2.0f;
+
+	/**
+	 * Minimum blur radius in pixels (prevents over-sharpening at distance).
+	 * Limited by GPU LDS cache size.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoothing", meta = (EditCondition = "bEnabled", ClampMin = "1", ClampMax = "64"))
+	int32 SmoothingMinRadius = 4;
+
+	/**
+	 * Maximum blur radius in pixels (performance limit for close objects).
+	 * Limited by GPU LDS cache size (max 64 at full resolution).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Smoothing", meta = (EditCondition = "bEnabled", ClampMin = "4", ClampMax = "64"))
+	int32 SmoothingMaxRadius = 32;
 
 	//========================================
 	// Anisotropy

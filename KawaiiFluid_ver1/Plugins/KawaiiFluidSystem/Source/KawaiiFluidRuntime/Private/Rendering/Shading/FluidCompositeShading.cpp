@@ -14,26 +14,6 @@
 #include "HAL/IConsoleManager.h"
 #include "EngineGlobals.h"
 
-static TAutoConsoleVariable<int32> CVarFluidScreenSpaceReflectionDebugMode(
-	TEXT("r.Fluid.ScreenSpaceReflectionDebugMode"),
-	0,
-	TEXT("SSR Debug visualization mode for fluid rendering.\n")
-	TEXT("0: None (normal rendering)\n")
-	TEXT("1: Hit/Miss (Red=hit, Blue=miss)\n")
-	TEXT("2: Reflection direction\n")
-	TEXT("3: Hit sample color\n")
-	TEXT("4: Reflection Z (Green=into scene, Red=toward camera)\n")
-	TEXT("5: 3D Hit test (R=XY distance, G=penetrated, B=not penetrated)\n")
-	TEXT("6: Exit reason (Red=behind camera, Green=off screen, Blue=max steps)\n")
-	TEXT("7: Normal visualization\n")
-	TEXT("8: ViewDir visualization\n")
-	TEXT("9: ViewPos.z visualization\n")
-	TEXT("10: Fresnel value\n")
-	TEXT("11: FresnelStrength/ReflectionBlend/Fresnel\n")
-	TEXT("12: Final reflection blend factor\n")
-	TEXT("13: XY distance detail (Cyan=XY far, Red=close but no penetration)"),
-	ECVF_RenderThreadSafe);
-
 void KawaiiScreenSpaceShading::RenderPostProcessShading(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
@@ -226,9 +206,6 @@ void KawaiiScreenSpaceShading::RenderPostProcessShading(
 	PassParameters->ScreenSpaceReflectionThickness = RenderParams.ScreenSpaceReflectionThickness;
 	PassParameters->ScreenSpaceReflectionIntensity = RenderParams.ScreenSpaceReflectionIntensity;
 	PassParameters->ScreenSpaceReflectionEdgeFade = RenderParams.ScreenSpaceReflectionEdgeFade;
-	// CVar override takes priority if set (non-zero)
-	int32 DebugModeFromCVar = CVarFluidScreenSpaceReflectionDebugMode.GetValueOnRenderThread();
-	PassParameters->ScreenSpaceReflectionDebugMode = (DebugModeFromCVar > 0) ? DebugModeFromCVar : static_cast<int32>(RenderParams.ScreenSpaceReflectionDebugMode);
 	PassParameters->ViewportSize = FVector2f(Output.ViewRect.Width(), Output.ViewRect.Height());
 
 	// Render target (blend over existing scene)

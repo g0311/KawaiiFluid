@@ -67,6 +67,11 @@ class FFluidNarrowRangeFilterLDS_CS : public FGlobalShader
 		SHADER_PARAMETER(float, NarrowRangeThresholdRatio)
 		SHADER_PARAMETER(float, NarrowRangeClampRatio)
 		SHADER_PARAMETER(float, NarrowRangeGrazingBoost)
+		// Distance-based dynamic smoothing parameters
+		SHADER_PARAMETER(float, SmoothingWorldScale)
+		SHADER_PARAMETER(float, SmoothingMinRadius)
+		SHADER_PARAMETER(float, SmoothingMaxRadius)
+		SHADER_PARAMETER(float, FocalLengthPixels)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float>, OutputTexture)
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -301,20 +306,27 @@ void RenderFluidNarrowRangeSmoothingPass(
 	const FSceneView& View,
 	FRDGTextureRef InputDepthTexture,
 	FRDGTextureRef& OutSmoothedDepthTexture,
-	float FilterRadius,
 	float ParticleRadius,
 	float ThresholdRatio,
 	float ClampRatio,
 	int32 NumIterations,
-	float GrazingBoost)
+	float GrazingBoost,
+	const FDistanceBasedSmoothingParams& DistanceBasedParams)
 {
 	RDG_EVENT_SCOPE(GraphBuilder, "FluidNarrowRangeFilter_HalfRes");
 	check(InputDepthTexture);
 
 	NumIterations = FMath::Clamp(NumIterations, 1, 10);
 
-	// Clamp filter radius to LDS max (16)
-	const float ClampedFilterRadius = FMath::Min(FilterRadius, 16.0f);
+	// Calculate focal length in pixels for distance-based smoothing
+	// FocalLength = ProjectionMatrix[0][0] * (TextureWidth / 2)
+	// This converts world-space radius to screen-space pixel radius at depth z:
+	// PixelRadius = WorldRadius * FocalLengthPixels / Depth
+	const FMatrix ProjectionMatrix = View.ViewMatrices.GetProjectionMatrix();
+	const float FocalLengthPixels = ProjectionMatrix.M[0][0] * (InputDepthTexture->Desc.Extent.X * 0.5f);
+
+	// MaxRadius clamped to LDS limit (16 at half-res = 32 at full-res)
+	const float ClampedMaxRadius = FMath::Min(static_cast<float>(DistanceBasedParams.MaxRadius), 32.0f);
 
 	FIntPoint FullResSize = InputDepthTexture->Desc.Extent;
 	FIntPoint HalfResSize = FIntPoint(FMath::DivideAndRoundUp(FullResSize.X, 2),
@@ -365,8 +377,8 @@ void RenderFluidNarrowRangeSmoothingPass(
 	TShaderMapRef<FFluidNarrowRangeFilterLDS_CS> FilterShader(GlobalShaderMap);
 	const int32 LDS_TILE_SIZE = 16;
 
-	// Half the filter radius for half resolution (maintains same world-space effect)
-	const float HalfResFilterRadius = FMath::Max(ClampedFilterRadius * 0.5f, 2.0f);
+	// Half-res max radius (for LDS sizing and fallback)
+	const float HalfResMaxRadius = FMath::Max(ClampedMaxRadius * 0.5f, 2.0f);
 
 	FRDGTextureRef CurrentInput = HalfResDepth;
 
@@ -379,12 +391,19 @@ void RenderFluidNarrowRangeSmoothingPass(
 
 		PassParameters->InputTexture = CurrentInput;
 		PassParameters->TextureSize = FVector2f(HalfResSize.X, HalfResSize.Y);
-		PassParameters->BlurRadius = HalfResFilterRadius;
+		PassParameters->BlurRadius = HalfResMaxRadius;  // Fallback/max for shader
 		PassParameters->BlurDepthFalloff = 0.0f;
 		PassParameters->ParticleRadius = ParticleRadius;
 		PassParameters->NarrowRangeThresholdRatio = ThresholdRatio;
 		PassParameters->NarrowRangeClampRatio = ClampRatio;
 		PassParameters->NarrowRangeGrazingBoost = GrazingBoost;
+		// Distance-based dynamic smoothing parameters
+		PassParameters->SmoothingWorldScale = DistanceBasedParams.WorldScale;
+		// Half-res needs half the radius values
+		PassParameters->SmoothingMinRadius = FMath::Max(static_cast<float>(DistanceBasedParams.MinRadius) * 0.5f, 1.0f);
+		PassParameters->SmoothingMaxRadius = FMath::Min(static_cast<float>(DistanceBasedParams.MaxRadius) * 0.5f, 16.0f);
+		// FocalLength also scaled for half-res
+		PassParameters->FocalLengthPixels = FocalLengthPixels * 0.5f;
 		PassParameters->OutputTexture = GraphBuilder.CreateUAV(IterationOutput);
 
 		FComputeShaderUtils::AddPass(

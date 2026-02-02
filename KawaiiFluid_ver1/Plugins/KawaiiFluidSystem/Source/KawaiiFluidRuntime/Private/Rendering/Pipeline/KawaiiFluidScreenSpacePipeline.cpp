@@ -45,9 +45,6 @@ static bool GenerateIntermediateTextures(
 		AverageParticleRadius = TotalRadius / ValidCount;
 	}
 
-	// Use RenderParams for rendering parameters
-	float BlurRadius = static_cast<float>(RenderParams.SmoothingRadius);
-
 	// Calculate DepthFalloff considering anisotropy
 	// When anisotropy is enabled, ellipsoids become flat and create larger depth jumps at edges
 	// We need to increase DepthFalloff to accommodate these larger depth differences
@@ -84,12 +81,19 @@ static bool GenerateIntermediateTextures(
 		AdjustedParticleRadius *= AnisotropyMultiplier;
 	}
 
+	// Distance-based dynamic smoothing parameters
+	FDistanceBasedSmoothingParams DistanceBasedParams;
+	DistanceBasedParams.WorldScale = RenderParams.SmoothingWorldScale;
+	DistanceBasedParams.MinRadius = RenderParams.SmoothingMinRadius;
+	DistanceBasedParams.MaxRadius = RenderParams.SmoothingMaxRadius;
+
 	RenderFluidNarrowRangeSmoothingPass(GraphBuilder, View, DepthTexture, SmoothedDepthTexture,
-	                                    BlurRadius, AdjustedParticleRadius,
+	                                    AdjustedParticleRadius,
 	                                    RenderParams.NarrowRangeThresholdRatio,
 	                                    RenderParams.NarrowRangeClampRatio,
 	                                    NumIterations,
-	                                    RenderParams.NarrowRangeGrazingBoost);
+	                                    RenderParams.NarrowRangeGrazingBoost,
+	                                    DistanceBasedParams);
 
 	if (!SmoothedDepthTexture)
 	{
@@ -120,8 +124,9 @@ static bool GenerateIntermediateTextures(
 	// 5. Thickness Smoothing Pass (Separable Gaussian Blur)
 	// Smooths out individual particle contributions for cleaner Beer's Law absorption
 	FRDGTextureRef SmoothedThicknessTexture = nullptr;
+	const float ThicknessBlurRadius = static_cast<float>(RenderParams.SmoothingMaxRadius);
 	RenderFluidThicknessSmoothingPass(GraphBuilder, View, ThicknessTexture, SmoothedThicknessTexture,
-	                                  BlurRadius, 2);  // 2 iterations for thickness
+	                                  ThicknessBlurRadius, 2);  // 2 iterations for thickness
 
 	if (!SmoothedThicknessTexture)
 	{

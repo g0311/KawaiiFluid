@@ -107,7 +107,6 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
     SHADER_PARAMETER(float, ScreenSpaceReflectionThickness)       // Hit detection thickness
     SHADER_PARAMETER(float, ScreenSpaceReflectionIntensity)       // SSR intensity
     SHADER_PARAMETER(float, ScreenSpaceReflectionEdgeFade)        // Screen edge fade
-    SHADER_PARAMETER(int, ScreenSpaceReflectionDebugMode)         // Debug visualization mode (0=none, 1-9=various debug views)
     SHADER_PARAMETER(FVector2f, ViewportSize)   // Viewport size (pixels)
 
     // ------------------------------------------------------

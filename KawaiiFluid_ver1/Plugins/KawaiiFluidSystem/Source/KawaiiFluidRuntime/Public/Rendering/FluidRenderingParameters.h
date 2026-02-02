@@ -29,44 +29,6 @@ enum class EFluidReflectionMode : uint8
 };
 
 /**
- * SSR Debug visualization mode.
- * Used to diagnose Screen Space Reflection issues at runtime.
- */
-UENUM(BlueprintType)
-enum class EScreenSpaceReflectionDebugMode : uint8
-{
-	/** No debug visualization (normal rendering) */
-	None = 0 UMETA(DisplayName = "None"),
-
-	/** Hit/Miss - Red = hit (intensity varies), Blue = miss */
-	HitMiss = 1 UMETA(DisplayName = "Hit/Miss"),
-
-	/** Reflection Direction - RGB = XYZ (0.5 = 0) */
-	ReflectionDirection = 2 UMETA(DisplayName = "Reflection Direction"),
-
-	/** Hit Color - Direct display of hit color (Magenta = miss) */
-	HitColor = 3 UMETA(DisplayName = "Hit Color"),
-
-	/** Reflection Z - Green = into scene (SSR possible), Red = toward camera (SSR not possible) */
-	ReflectionZ = 4 UMETA(DisplayName = "Reflection Z"),
-
-	/** Depth Compare - Red = ray in front, Green = ray behind, Blue = scene depth */
-	DepthCompare = 5 UMETA(DisplayName = "Depth Compare"),
-
-	/** Exit Reason - Red = behind camera, Green = off screen, Blue = max steps, Yellow = hit */
-	ExitReason = 6 UMETA(DisplayName = "Exit Reason"),
-
-	/** Normal - Normal direction visualization (RGB = XYZ) */
-	Normal = 7 UMETA(DisplayName = "Normal"),
-
-	/** ViewDir - View direction visualization (RGB = XYZ) */
-	ViewDir = 8 UMETA(DisplayName = "ViewDir"),
-
-	/** ViewPos.z - View position Z (Blue = in front, Red = behind) */
-	ViewPosZ = 9 UMETA(DisplayName = "ViewPos.z")
-};
-
-/**
  * @brief Fluid rendering parameters.
  * Settings used throughout the SSFR pipeline.
  */
@@ -247,12 +209,29 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	float ParticleRenderRadius = 15.0f;
 
 	/**
-	 * Filter kernel size in pixels for depth smoothing.
-	 * Larger = smoother surface but may lose fine details.
+	 * Blur radius as a multiple of particle screen size.
+	 * Automatically scales based on distance from camera.
+	 * 2.0 = blur covers 2x the particle's screen area.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Depth & Smoothing",
-		meta = (ClampMin = "1", ClampMax = "50"))
-	int32 SmoothingRadius = 20;
+		meta = (ClampMin = "0.5", ClampMax = "5.0"))
+	float SmoothingWorldScale = 2.0f;
+
+	/**
+	 * Minimum blur radius in pixels (prevents over-sharpening at distance).
+	 * Limited by GPU LDS cache size.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Depth & Smoothing",
+		meta = (ClampMin = "1", ClampMax = "64"))
+	int32 SmoothingMinRadius = 4;
+
+	/**
+	 * Maximum blur radius in pixels (performance limit for close objects).
+	 * Limited by GPU LDS cache size (max 64 at full resolution).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Depth & Smoothing",
+		meta = (ClampMin = "4", ClampMax = "64"))
+	int32 SmoothingMaxRadius = 32;
 
 	/**
 	 * Number of smoothing passes.
@@ -391,14 +370,6 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 		meta = (DisplayName = "SSR Edge Fade", EditCondition = "ReflectionMode == EFluidReflectionMode::ScreenSpaceReflection || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap", ClampMin = "0.0", ClampMax = "0.5"))
 	float ScreenSpaceReflectionEdgeFade = 0.1f;
 
-	/**
-	 * Debug visualization mode for diagnosing SSR issues.
-	 * Shows hit/miss status, ray direction, depth comparison, etc.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Reflection",
-		meta = (DisplayName = "SSR Debug Mode", EditCondition = "ReflectionMode == EFluidReflectionMode::ScreenSpaceReflection || ReflectionMode == EFluidReflectionMode::ScreenSpaceReflectionWithCubemap"))
-	EScreenSpaceReflectionDebugMode ScreenSpaceReflectionDebugMode = EScreenSpaceReflectionDebugMode::None;
-
 	//========================================
 	// Anisotropy
 	//========================================
@@ -444,7 +415,9 @@ FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
 	Hash = HashCombine(Hash, GetTypeHash(Params.ReflectionIntensity));
 	Hash = HashCombine(Hash, GetTypeHash(Params.ReflectionMipLevel));
 	Hash = HashCombine(Hash, GetTypeHash(Params.ParticleRenderRadius));
-	Hash = HashCombine(Hash, GetTypeHash(Params.SmoothingRadius));
+	Hash = HashCombine(Hash, GetTypeHash(Params.SmoothingWorldScale));
+	Hash = HashCombine(Hash, GetTypeHash(Params.SmoothingMinRadius));
+	Hash = HashCombine(Hash, GetTypeHash(Params.SmoothingMaxRadius));
 	Hash = HashCombine(Hash, GetTypeHash(Params.SmoothingIterations));
 	// Narrow-Range parameters
 	Hash = HashCombine(Hash, GetTypeHash(Params.NarrowRangeThresholdRatio));
@@ -497,7 +470,9 @@ FORCEINLINE bool operator==(const FFluidRenderingParameters& A, const FFluidRend
 		FMath::IsNearlyEqual(A.ReflectionIntensity, B.ReflectionIntensity, 0.001f) &&
 		FMath::IsNearlyEqual(A.ReflectionMipLevel, B.ReflectionMipLevel, 0.001f) &&
 		FMath::IsNearlyEqual(A.ParticleRenderRadius, B.ParticleRenderRadius, 0.001f) &&
-		A.SmoothingRadius == B.SmoothingRadius &&
+		FMath::IsNearlyEqual(A.SmoothingWorldScale, B.SmoothingWorldScale, 0.01f) &&
+		A.SmoothingMinRadius == B.SmoothingMinRadius &&
+		A.SmoothingMaxRadius == B.SmoothingMaxRadius &&
 		A.SmoothingIterations == B.SmoothingIterations &&
 		// Narrow-Range parameters
 		FMath::IsNearlyEqual(A.NarrowRangeThresholdRatio, B.NarrowRangeThresholdRatio, 0.01f) &&

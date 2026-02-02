@@ -76,7 +76,6 @@ float ScreenSpaceReflectionStepSize;
 float ScreenSpaceReflectionThickness;
 float ScreenSpaceReflectionIntensity;
 float ScreenSpaceReflectionEdgeFade;
-int ScreenSpaceReflectionDebugMode;
 float2 ViewportSize;
 
 // -----------------------------------------------------------------------------
@@ -263,12 +262,6 @@ float3 CookTorranceBRDF(float NoV, float NoL, float NoH, float HoV, float Roughn
 	return numerator / denominator;
 }
 
-// SSR debug global variables
-static float g_SSRDebugLastRayDepth = 0;
-static float g_SSRDebugLastSceneDepth = 0;
-static int g_SSRDebugExitReason = 0;  // 0=max steps, 1=behind camera, 2=off screen
-static float g_SSRDebugDepthPenetration = 0;
-
 // -----------------------------------------------------------------------------
 // Caustics (Jacobian Method)
 // -----------------------------------------------------------------------------
@@ -445,12 +438,10 @@ float TraceSSR(float3 RayOrigin, float3 RayDir, out float2 OutHitUV, out float3 
 {
 	OutHitUV = float2(0, 0);
 	OutHitColor = float3(0, 0, 0);
-	g_SSRDebugExitReason = 0;
 
 	// Early exit if reflection points toward camera
 	if (RayDir.z > 0.1)
 	{
-		g_SSRDebugExitReason = 1;
 		return 0.0;
 	}
 
@@ -509,7 +500,6 @@ float TraceSSR(float3 RayOrigin, float3 RayDir, out float2 OutHitUV, out float3 
 
 		if (any(UV < 0.0) || any(UV > 1.0))
 		{
-			g_SSRDebugExitReason = 2;
 			break;
 		}
 
@@ -519,10 +509,6 @@ float TraceSSR(float3 RayOrigin, float3 RayDir, out float2 OutHitUV, out float3 
 		float2 SampleUV = UV * SceneUVScale;
 		float SceneDeviceZ = SceneDepthTexture.SampleLevel(PointClampSampler, SampleUV, 0).r;
 		float SceneDepth = ConvertFromDeviceZ(SceneDeviceZ);
-
-		g_SSRDebugLastRayDepth = RayDepth;
-		g_SSRDebugLastSceneDepth = SceneDepth;
-		g_SSRDebugDepthPenetration = RayDepth - SceneDepth;
 
 		if (SceneDepth > 50000.0)
 		{
@@ -1128,161 +1114,14 @@ float3 SampleCubemapReflection(float3 ViewSpaceReflect)
 }
 
 /**
- * Handle SSR debug visualization modes.
- * @return true if debug mode handled (should return early), false otherwise
- */
-bool HandleSSRDebugVisualization(
-	int DebugMode,
-	float SSRHitStrength,
-	float2 SSRHitUV,
-	float3 SSRHitColor,
-	float3 ViewSpaceReflect,
-	float3 Normal,
-	float3 ViewDir,
-	float3 ViewPos,
-	float Fresnel,
-	out float4 OutColor)
-{
-	OutColor = float4(0, 0, 0, 1);
-
-	if (DebugMode == 1)
-	{
-		OutColor = (SSRHitStrength > 0.0) ? float4(SSRHitStrength, 0, 0, 1) : float4(0, 0, 1, 1);
-		return true;
-	}
-	else if (DebugMode == 2)
-	{
-		OutColor = float4(ViewSpaceReflect * 0.5 + 0.5, 1.0);
-		return true;
-	}
-	else if (DebugMode == 3)
-	{
-		OutColor = (SSRHitStrength > 0.0) ? float4(SSRHitColor, 1.0) : float4(1, 0, 1, 1);
-		return true;
-	}
-	else if (DebugMode == 4)
-	{
-		float ReflectZ = ViewSpaceReflect.z;
-		OutColor = (ReflectZ < 0.0) ? float4(0, saturate(-ReflectZ), 0, 1) : float4(saturate(ReflectZ), 0, 0, 1);
-		return true;
-	}
-	else if (DebugMode == 5)
-	{
-		if (SSRHitStrength > 0.0)
-		{
-			OutColor = float4(1, 1, 0, 1);
-		}
-		else
-		{
-			float g = saturate(g_SSRDebugDepthPenetration / 50.0);
-			float b = (g_SSRDebugDepthPenetration < 0.0) ? saturate(-g_SSRDebugDepthPenetration / 50.0) : 0.0;
-			OutColor = float4(0, g, b, 1);
-		}
-		return true;
-	}
-	else if (DebugMode == 6)
-	{
-		if (SSRHitStrength > 0.0)
-		{
-			OutColor = float4(1, 1, 0, 1);
-		}
-		else if (g_SSRDebugExitReason == 1)
-		{
-			OutColor = float4(1, 0, 0, 1);
-		}
-		else if (g_SSRDebugExitReason == 2)
-		{
-			OutColor = float4(0, 1, 0, 1);
-		}
-		else
-		{
-			OutColor = float4(0, 0, 1, 1);
-		}
-		return true;
-	}
-	else if (DebugMode == 7)
-	{
-		OutColor = float4(Normal * 0.5 + 0.5, 1.0);
-		return true;
-	}
-	else if (DebugMode == 8)
-	{
-		OutColor = float4(ViewDir * 0.5 + 0.5, 1.0);
-		return true;
-	}
-	else if (DebugMode == 9)
-	{
-		OutColor = (ViewPos.z < 0.0) ? float4(0, 0, saturate(-ViewPos.z / 1000.0), 1) : float4(saturate(ViewPos.z / 1000.0), 0, 0, 1);
-		return true;
-	}
-	else if (DebugMode == 10)
-	{
-		OutColor = float4(Fresnel, Fresnel, Fresnel, 1.0);
-		return true;
-	}
-	else if (DebugMode == 11)
-	{
-		OutColor = float4(FresnelStrength / 10.0, FresnelReflectionBlend, Fresnel, 1.0);
-		return true;
-	}
-	else if (DebugMode == 12)
-	{
-		float BlendFactor = Fresnel * FresnelReflectionBlend;
-		OutColor = float4(BlendFactor, BlendFactor, BlendFactor, 1.0);
-		return true;
-	}
-	else if (DebugMode == 13)
-	{
-		if (SSRHitStrength > 0.0)
-		{
-			OutColor = float4(1, 1, 0, 1);
-		}
-		else
-		{
-			bool bIsSky = g_SSRDebugLastSceneDepth > 50000.0;
-			float Penetration = g_SSRDebugDepthPenetration;
-			float MaxPenetration = ScreenSpaceReflectionThickness * g_SSRDebugLastSceneDepth * 0.1;
-
-			if (bIsSky)
-			{
-				OutColor = float4(0, 0.5, 0, 1);
-			}
-			else if (Penetration <= 0.0)
-			{
-				OutColor = float4(0, 0, 1, 1);
-			}
-			else if (Penetration > MaxPenetration)
-			{
-				OutColor = float4(1, 0, 0, 1);
-			}
-			else
-			{
-				OutColor = float4(1, 0, 1, 1);
-			}
-		}
-		return true;
-	}
-	else if (DebugMode == 14)
-	{
-		OutColor = (SSRHitStrength > 0.0) ? float4(SSRHitUV.x, SSRHitUV.y, SSRHitStrength, 1.0) : float4(0, 0, 0.2, 1);
-		return true;
-	}
-
-	return false;
-}
-
-/**
  * Calculate reflection based on ReflectionMode.
  * @param Surface Fluid surface data
  * @param Fresnel Fresnel term
  * @param OutResult Output reflection result
- * @param OutDebugColor Output debug color (if debug mode active)
- * @return true if debug visualization handled (should return early)
  */
-bool CalculateReflection(FFluidSurfaceData Surface, float Fresnel, out FReflectionResult OutResult, out float4 OutDebugColor)
+void CalculateReflection(FFluidSurfaceData Surface, float Fresnel, out FReflectionResult OutResult)
 {
 	OutResult = (FReflectionResult)0;
-	OutDebugColor = float4(0, 0, 0, 1);
 
 	float3 ViewSpaceReflect = reflect(-Surface.ViewDir, Surface.ReflectionNormal);
 
@@ -1290,7 +1129,7 @@ bool CalculateReflection(FFluidSurfaceData Surface, float Fresnel, out FReflecti
 	if (ReflectionMode == 0)
 	{
 		OutResult.BlendFactor = 0.0;
-		return false;
+		return;
 	}
 
 	// Mode 1: Cubemap Only
@@ -1298,7 +1137,7 @@ bool CalculateReflection(FFluidSurfaceData Surface, float Fresnel, out FReflecti
 	{
 		OutResult.Color = SampleCubemapReflection(ViewSpaceReflect);
 		OutResult.BlendFactor = Fresnel * FresnelReflectionBlend;
-		return false;
+		return;
 	}
 
 	// Mode 2: SSR Only
@@ -1308,21 +1147,9 @@ bool CalculateReflection(FFluidSurfaceData Surface, float Fresnel, out FReflecti
 		float3 SSRHitColor;
 		float SSRHitStrength = TraceSSR(Surface.ViewPos, ViewSpaceReflect, SSRHitUV, SSRHitColor);
 
-		// Handle debug visualization
-		if (ScreenSpaceReflectionDebugMode > 0)
-		{
-			if (HandleSSRDebugVisualization(
-				ScreenSpaceReflectionDebugMode, SSRHitStrength, SSRHitUV, SSRHitColor,
-				ViewSpaceReflect, Surface.Normal, Surface.ViewDir, Surface.ViewPos,
-				Fresnel, OutDebugColor))
-			{
-				return true;
-			}
-		}
-
 		OutResult.Color = (SSRHitStrength > 0.0) ? SSRHitColor * SSRHitStrength : float3(0, 0, 0);
 		OutResult.BlendFactor = Fresnel * ScreenSpaceReflectionIntensity * SSRHitStrength;
-		return false;
+		return;
 	}
 
 	// Mode 3: SSR + Cubemap Fallback
@@ -1336,10 +1163,8 @@ bool CalculateReflection(FFluidSurfaceData Surface, float Fresnel, out FReflecti
 		OutResult.SSRColor = SSRHitColor;
 		OutResult.SSRHitRatio = SSRHit;
 		OutResult.BlendFactor = 1.0;  // Handled specially in composite
-		return false;
+		return;
 	}
-
-	return false;
 }
 
 /**
@@ -1408,12 +1233,7 @@ void MainPS(
 
 	// Calculate reflection
 	FReflectionResult Reflection;
-	float4 DebugColor;
-	if (CalculateReflection(Surface, Lighting.Fresnel, Reflection, DebugColor))
-	{
-		OutColor = DebugColor;
-		return;
-	}
+	CalculateReflection(Surface, Lighting.Fresnel, Reflection);
 
 	// Blend reflection with base color
 	BaseColor = BlendReflection(BaseColor, Lighting.Fresnel, Reflection);
