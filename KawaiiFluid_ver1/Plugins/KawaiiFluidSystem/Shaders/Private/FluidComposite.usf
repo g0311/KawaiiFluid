@@ -830,6 +830,7 @@ float3 CalculateVolumeScattering(FFluidSurfaceData Surface)
  * @param UV Screen UV coordinate
  * @param Surface Fluid surface data
  * @param SceneLinearDepth Scene depth at original UV
+ * @param Fresnel Fresnel term (0=facing camera, 1=grazing angle)
  * @param OutRefractedColor Output refracted background color
  * @param OutRefractedDepth Output depth at refracted position (for caustics)
  * @param OutRefractionValidity Output validity factor (1.0 if direct refraction, 0.0~1.0 for neighbor blend)
@@ -838,6 +839,7 @@ void CalculateRefraction(
 	float2 UV,
 	FFluidSurfaceData Surface,
 	float SceneLinearDepth,
+	float Fresnel,
 	out float3 OutRefractedColor,
 	out float  OutRefractedDepth,
 	out float  OutRefractionValidity)
@@ -879,7 +881,11 @@ void CalculateRefraction(
 	// apparent_depth = real_depth * (n1/n2) where n1=air(1.0), n2=water(IOR)
 	// eta = 1.0/IOR is already the ratio we need
 	float ApparentDepth = DistToBackground * eta;
-	float RefractDistance = ApparentDepth * RefractionScale;
+
+	// Apply Fresnel-based attenuation: at grazing angles (high Fresnel),
+	// reflection dominates and refraction should be minimal
+	float FresnelAttenuation = 1.0 - Fresnel;
+	float RefractDistance = ApparentDepth * RefractionScale * FresnelAttenuation;
 
 	// Calculate hit position and project to screen
 	float3 HitViewPos = FluidViewPos + RefractDir * RefractDistance;
@@ -1221,7 +1227,7 @@ void MainPS(
 	float3 RefractedBackground;
 	float RefractedDepth;
 	float RefractionValidity;
-	CalculateRefraction(UV, Surface, SceneLinearDepth, RefractedBackground, RefractedDepth, RefractionValidity);
+	CalculateRefraction(UV, Surface, SceneLinearDepth, Lighting.Fresnel, RefractedBackground, RefractedDepth, RefractionValidity);
 
 	// Apply caustics
 	float CausticBrightness = CalculateCaustics(UV, Surface, RefractedDepth, RefractionValidity);
