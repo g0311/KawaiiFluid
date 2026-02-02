@@ -7,13 +7,31 @@
 // Pipeline:
 // 1. Histogram: Each thread group computes per-warp histogram
 // 2. Global Prefix Sum: Compute global offsets for each bucket
-// 3. Scatter: Write elements to final positions (STABLE via LDS ranking)
+// 3. Scatter: Write elements to final positions (STABLE via Wave Intrinsics ranking)
 //
-// OPTIMIZED: 8-bit radix reduces passes from 6 to 3, halving dispatch overhead.
-// LDS Usage: ~13KB (Warp histogram 8KB + Base offsets 1KB + Element digits 4KB)
+// OPTIMIZATIONS:
+// - 8-bit radix reduces passes from 6 to 3, halving dispatch overhead
+// - Wave Intrinsics for O(1) intra-warp ranking (replaces O(128) LDS scan)
+// - Wave-level histogram reduces LDS atomic contention
+//
+// NOTE: Wave Intrinsics are SAFE here because:
+// - All threads execute same number of iterations ([unroll] loops)
+// - No early returns - all threads complete together
+// - No divergent control flow within warp
+//
+// LDS Usage: ~9KB (Warp histogram 8KB + Base offsets 1KB)
 
 #include "/Engine/Public/Platform.ush"
 #include "/Engine/Private/Common.ush"
+
+//=============================================================================
+// Wave Intrinsics Support Detection
+// SM6.0+ required for Wave Intrinsics (WaveActiveBallot, WaveGetLaneIndex, etc.)
+// If platform doesn't define this macro, assume NOT supported (safe fallback)
+//=============================================================================
+#ifndef COMPILER_SUPPORTS_WAVE_INTRINSICS
+    #define COMPILER_SUPPORTS_WAVE_INTRINSICS 0   // Default: LDS fallback (safe for all platforms)
+#endif
 
 //=============================================================================
 // Configuration - 8-bit Radix (256 buckets)
@@ -130,8 +148,56 @@ void RadixSortGlobalPrefixSumCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 //=============================================================================
 // Pass 2b: Prefix Sum over Global Offsets
 // Converts bucket totals to bucket start positions
+//
+// Wave-optimized: O(log n) parallel prefix sum using WavePrefixSum
+// Fallback: O(n) sequential prefix sum
+//
+// Both versions dispatch with (1, 1, 1) groups - thread count differs in numthreads
 //=============================================================================
 
+#if COMPILER_SUPPORTS_WAVE_INTRINSICS
+
+// Wave-optimized version: 256 threads with WavePrefixSum + LDS cross-wave
+// Complexity: O(log waveSize) intra-wave + O(numWaves) cross-wave
+groupshared uint BucketWaveTotals[8];  // Max 8 waves (256 threads / 32 wave size)
+
+[numthreads(RADIX_SIZE, 1, 1)]
+void RadixSortBucketPrefixSumCS(uint3 GroupThreadId : SV_GroupThreadID)
+{
+    uint idx = GroupThreadId.x;
+    uint laneIdx = WaveGetLaneIndex();
+    uint waveSize = WaveGetLaneCount();
+    uint waveIdx = idx / waveSize;
+
+    // Step 1: Read bucket count
+    uint myCount = GlobalOffsets[idx];
+
+    // Step 2: Intra-wave exclusive prefix sum (O(log waveSize) internally)
+    uint wavePrefixSum = WavePrefixSum(myCount);
+    uint waveTotal = WaveActiveSum(myCount);
+
+    // Step 3: First lane of each wave stores wave total to LDS
+    if (WaveIsFirstLane())
+    {
+        BucketWaveTotals[waveIdx] = waveTotal;
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    // Step 4: Compute cross-wave prefix (small sequential loop, max 8 iterations)
+    uint crossWavePrefix = 0;
+    for (uint w = 0; w < waveIdx; ++w)
+    {
+        crossWavePrefix += BucketWaveTotals[w];
+    }
+
+    // Step 5: Final prefix = cross-wave prefix + intra-wave prefix
+    GlobalOffsets[idx] = crossWavePrefix + wavePrefixSum;
+}
+
+#else
+
+// Fallback: Single-threaded sequential prefix sum
+// Complexity: O(n) where n = RADIX_SIZE (256)
 [numthreads(1, 1, 1)]
 void RadixSortBucketPrefixSumCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
@@ -143,6 +209,8 @@ void RadixSortBucketPrefixSumCS(uint3 DispatchThreadId : SV_DispatchThreadID)
         prefixSum += count;
     }
 }
+
+#endif
 
 //=============================================================================
 // Pass 3: Scatter Elements to Final Positions (STABLE SORT)
@@ -313,6 +381,9 @@ groupshared uint SmallSortTemp[1024];      // 4KB
 groupshared uint SmallSortTempV[1024];     // 4KB
 groupshared uint SmallHistogram[RADIX_SIZE];        // 1KB
 groupshared uint SmallPrefixSum[RADIX_SIZE];        // 1KB
+#if COMPILER_SUPPORTS_WAVE_INTRINSICS
+groupshared uint SmallWaveTotals[8];       // 32B - wave totals for parallel prefix sum
+#endif
 
 [numthreads(SMALL_SORT_THREAD_COUNT, 1, 1)]
 void RadixSortSmallCS(uint3 GroupThreadId : SV_GroupThreadID)
@@ -369,8 +440,36 @@ void RadixSortSmallCS(uint3 GroupThreadId : SV_GroupThreadID)
 
         //=====================================================================
         // Step 3: Exclusive prefix sum on histogram (256 buckets)
-        // Single thread - simple but correct
+        // Wave path: O(log n) parallel using WavePrefixSum + LDS
+        // Fallback: O(n) sequential single-thread
         //=====================================================================
+#if COMPILER_SUPPORTS_WAVE_INTRINSICS
+        {
+            // All 256 threads participate in parallel prefix sum
+            uint laneIdx = WaveGetLaneIndex();
+            uint waveSize = WaveGetLaneCount();
+            uint waveIdx = localIdx / waveSize;
+
+            uint myCount = SmallHistogram[localIdx];
+            uint wavePrefixSum = WavePrefixSum(myCount);
+            uint waveTotal = WaveActiveSum(myCount);
+
+            if (WaveIsFirstLane())
+            {
+                SmallWaveTotals[waveIdx] = waveTotal;
+            }
+            GroupMemoryBarrierWithGroupSync();
+
+            uint crossWavePrefix = 0;
+            for (uint w = 0; w < waveIdx; ++w)
+            {
+                crossWavePrefix += SmallWaveTotals[w];
+            }
+
+            SmallPrefixSum[localIdx] = crossWavePrefix + wavePrefixSum;
+        }
+        GroupMemoryBarrierWithGroupSync();
+#else
         if (localIdx == 0)
         {
             uint sum = 0;
@@ -382,6 +481,7 @@ void RadixSortSmallCS(uint3 GroupThreadId : SV_GroupThreadID)
             }
         }
         GroupMemoryBarrierWithGroupSync();
+#endif
 
         //=====================================================================
         // Step 4: Scatter to temp buffer using atomic increment
