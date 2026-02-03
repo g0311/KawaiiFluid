@@ -305,6 +305,275 @@ void NarrowRangeFilterLDS_CS(
 }
 
 //=============================================================================
+// Separable Narrow-Range Filter (Horizontal Pass)
+// 32x faster than 2D version: O(2n) instead of O(n²)
+// 65×65 = 4,225 iterations → 65+65 = 130 iterations
+//=============================================================================
+
+[numthreads(256, 1, 1)]
+void NarrowRangeFilterHorizontalCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	int2 CenterCoord = int2(DispatchThreadId.x, DispatchThreadId.y);
+	if (any(CenterCoord >= int2(TextureSize)))
+		return;
+
+	float CenterDepth = InputTexture.Load(int3(CenterCoord, 0));
+
+	// Background: pass through
+	if (CenterDepth > BACKGROUND_DEPTH_THRESH)
+	{
+		OutputTexture[CenterCoord] = CenterDepth;
+		return;
+	}
+
+	// Distance-based dynamic blur radius
+	float WorldBlurRadius = ParticleRadius * SmoothingWorldScale;
+	float DynamicRadius = WorldBlurRadius * FocalLengthPixels / CenterDepth;
+	float EffectiveBlurRadius = clamp(DynamicRadius, SmoothingMinRadius, SmoothingMaxRadius);
+
+	const int KernelRadius = int(EffectiveBlurRadius);
+	const float Sigma = EffectiveBlurRadius / 3.0f;
+	const float Threshold = ParticleRadius * NarrowRangeThresholdRatio;
+	const float ClampThreshold = ParticleRadius * NarrowRangeClampRatio;
+
+	float Upper = CenterDepth + Threshold;
+	float Lower = CenterDepth - Threshold;
+	float TotalWeight = 0.0f;
+	float TotalWeightedDepth = 0.0f;
+
+	// 1D Horizontal only - O(n) instead of O(n²)
+	for (int OffsetX = -KernelRadius; OffsetX <= KernelRadius; ++OffsetX)
+	{
+		int SampleX = clamp(CenterCoord.x + OffsetX, 0, int(TextureSize.x) - 1);
+		float SampleDepth = InputTexture.Load(int3(SampleX, CenterCoord.y, 0));
+
+		if (SampleDepth > BACKGROUND_DEPTH_THRESH)
+			continue;
+
+		float SpatialWeight = GetGaussianWeight(abs(float(OffsetX)), Sigma);
+
+		if (SampleDepth > Upper)
+		{
+			continue;
+		}
+		else if (SampleDepth < Lower)
+		{
+			SampleDepth = max(SampleDepth, CenterDepth - ClampThreshold);
+		}
+		else
+		{
+			Upper = max(Upper, SampleDepth + Threshold);
+			Lower = min(Lower, SampleDepth - Threshold);
+		}
+
+		TotalWeightedDepth += SampleDepth * SpatialWeight;
+		TotalWeight += SpatialWeight;
+	}
+
+	OutputTexture[CenterCoord] = (TotalWeight > 0.0f) ? (TotalWeightedDepth / TotalWeight) : CenterDepth;
+}
+
+//=============================================================================
+// Separable Narrow-Range Filter (Vertical Pass)
+//=============================================================================
+
+[numthreads(1, 256, 1)]
+void NarrowRangeFilterVerticalCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	int2 CenterCoord = int2(DispatchThreadId.x, DispatchThreadId.y);
+	if (any(CenterCoord >= int2(TextureSize)))
+		return;
+
+	float CenterDepth = InputTexture.Load(int3(CenterCoord, 0));
+
+	// Background: pass through
+	if (CenterDepth > BACKGROUND_DEPTH_THRESH)
+	{
+		OutputTexture[CenterCoord] = CenterDepth;
+		return;
+	}
+
+	// Distance-based dynamic blur radius
+	float WorldBlurRadius = ParticleRadius * SmoothingWorldScale;
+	float DynamicRadius = WorldBlurRadius * FocalLengthPixels / CenterDepth;
+	float EffectiveBlurRadius = clamp(DynamicRadius, SmoothingMinRadius, SmoothingMaxRadius);
+
+	const int KernelRadius = int(EffectiveBlurRadius);
+	const float Sigma = EffectiveBlurRadius / 3.0f;
+	const float Threshold = ParticleRadius * NarrowRangeThresholdRatio;
+	const float ClampThreshold = ParticleRadius * NarrowRangeClampRatio;
+
+	float Upper = CenterDepth + Threshold;
+	float Lower = CenterDepth - Threshold;
+	float TotalWeight = 0.0f;
+	float TotalWeightedDepth = 0.0f;
+
+	// 1D Vertical only - O(n) instead of O(n²)
+	for (int OffsetY = -KernelRadius; OffsetY <= KernelRadius; ++OffsetY)
+	{
+		int SampleY = clamp(CenterCoord.y + OffsetY, 0, int(TextureSize.y) - 1);
+		float SampleDepth = InputTexture.Load(int3(CenterCoord.x, SampleY, 0));
+
+		if (SampleDepth > BACKGROUND_DEPTH_THRESH)
+			continue;
+
+		float SpatialWeight = GetGaussianWeight(abs(float(OffsetY)), Sigma);
+
+		if (SampleDepth > Upper)
+		{
+			continue;
+		}
+		else if (SampleDepth < Lower)
+		{
+			SampleDepth = max(SampleDepth, CenterDepth - ClampThreshold);
+		}
+		else
+		{
+			Upper = max(Upper, SampleDepth + Threshold);
+			Lower = min(Lower, SampleDepth - Threshold);
+		}
+
+		TotalWeightedDepth += SampleDepth * SpatialWeight;
+		TotalWeight += SpatialWeight;
+	}
+
+	OutputTexture[CenterCoord] = (TotalWeight > 0.0f) ? (TotalWeightedDepth / TotalWeight) : CenterDepth;
+}
+
+//=============================================================================
+// Separable Narrow-Range Filter (Diagonal1 Pass: ↘ direction)
+//=============================================================================
+
+[numthreads(256, 1, 1)]
+void NarrowRangeFilterDiagonal1CS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint LinearIdx = DispatchThreadId.x + DispatchThreadId.y * uint(TextureSize.x);
+	int2 CenterCoord = int2(LinearIdx % uint(TextureSize.x), LinearIdx / uint(TextureSize.x));
+
+	if (any(CenterCoord >= int2(TextureSize)))
+		return;
+
+	float CenterDepth = InputTexture.Load(int3(CenterCoord, 0));
+
+	if (CenterDepth > BACKGROUND_DEPTH_THRESH)
+	{
+		OutputTexture[CenterCoord] = CenterDepth;
+		return;
+	}
+
+	float WorldBlurRadius = ParticleRadius * SmoothingWorldScale;
+	float DynamicRadius = WorldBlurRadius * FocalLengthPixels / CenterDepth;
+	float EffectiveBlurRadius = clamp(DynamicRadius, SmoothingMinRadius, SmoothingMaxRadius);
+
+	// Diagonal needs shorter radius (√2 factor for same coverage)
+	const int KernelRadius = int(EffectiveBlurRadius * 0.707f);
+	const float Sigma = EffectiveBlurRadius * 0.707f / 3.0f;
+	const float Threshold = ParticleRadius * NarrowRangeThresholdRatio;
+	const float ClampThreshold = ParticleRadius * NarrowRangeClampRatio;
+
+	float Upper = CenterDepth + Threshold;
+	float Lower = CenterDepth - Threshold;
+	float TotalWeight = 0.0f;
+	float TotalWeightedDepth = 0.0f;
+
+	// Diagonal ↘ direction (+x, +y)
+	for (int Offset = -KernelRadius; Offset <= KernelRadius; ++Offset)
+	{
+		int2 SampleCoord = CenterCoord + int2(Offset, Offset);
+		SampleCoord = clamp(SampleCoord, int2(0, 0), int2(TextureSize) - 1);
+
+		float SampleDepth = InputTexture.Load(int3(SampleCoord, 0));
+
+		if (SampleDepth > BACKGROUND_DEPTH_THRESH)
+			continue;
+
+		float SpatialDist = abs(float(Offset)) * 1.414f; // √2 for diagonal
+		float SpatialWeight = GetGaussianWeight(SpatialDist, Sigma);
+
+		if (SampleDepth > Upper)
+			continue;
+		else if (SampleDepth < Lower)
+			SampleDepth = max(SampleDepth, CenterDepth - ClampThreshold);
+		else
+		{
+			Upper = max(Upper, SampleDepth + Threshold);
+			Lower = min(Lower, SampleDepth - Threshold);
+		}
+
+		TotalWeightedDepth += SampleDepth * SpatialWeight;
+		TotalWeight += SpatialWeight;
+	}
+
+	OutputTexture[CenterCoord] = (TotalWeight > 0.0f) ? (TotalWeightedDepth / TotalWeight) : CenterDepth;
+}
+
+//=============================================================================
+// Separable Narrow-Range Filter (Diagonal2 Pass: ↙ direction)
+//=============================================================================
+
+[numthreads(256, 1, 1)]
+void NarrowRangeFilterDiagonal2CS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint LinearIdx = DispatchThreadId.x + DispatchThreadId.y * uint(TextureSize.x);
+	int2 CenterCoord = int2(LinearIdx % uint(TextureSize.x), LinearIdx / uint(TextureSize.x));
+
+	if (any(CenterCoord >= int2(TextureSize)))
+		return;
+
+	float CenterDepth = InputTexture.Load(int3(CenterCoord, 0));
+
+	if (CenterDepth > BACKGROUND_DEPTH_THRESH)
+	{
+		OutputTexture[CenterCoord] = CenterDepth;
+		return;
+	}
+
+	float WorldBlurRadius = ParticleRadius * SmoothingWorldScale;
+	float DynamicRadius = WorldBlurRadius * FocalLengthPixels / CenterDepth;
+	float EffectiveBlurRadius = clamp(DynamicRadius, SmoothingMinRadius, SmoothingMaxRadius);
+
+	const int KernelRadius = int(EffectiveBlurRadius * 0.707f);
+	const float Sigma = EffectiveBlurRadius * 0.707f / 3.0f;
+	const float Threshold = ParticleRadius * NarrowRangeThresholdRatio;
+	const float ClampThreshold = ParticleRadius * NarrowRangeClampRatio;
+
+	float Upper = CenterDepth + Threshold;
+	float Lower = CenterDepth - Threshold;
+	float TotalWeight = 0.0f;
+	float TotalWeightedDepth = 0.0f;
+
+	// Diagonal ↙ direction (+x, -y)
+	for (int Offset = -KernelRadius; Offset <= KernelRadius; ++Offset)
+	{
+		int2 SampleCoord = CenterCoord + int2(Offset, -Offset);
+		SampleCoord = clamp(SampleCoord, int2(0, 0), int2(TextureSize) - 1);
+
+		float SampleDepth = InputTexture.Load(int3(SampleCoord, 0));
+
+		if (SampleDepth > BACKGROUND_DEPTH_THRESH)
+			continue;
+
+		float SpatialDist = abs(float(Offset)) * 1.414f;
+		float SpatialWeight = GetGaussianWeight(SpatialDist, Sigma);
+
+		if (SampleDepth > Upper)
+			continue;
+		else if (SampleDepth < Lower)
+			SampleDepth = max(SampleDepth, CenterDepth - ClampThreshold);
+		else
+		{
+			Upper = max(Upper, SampleDepth + Threshold);
+			Lower = min(Lower, SampleDepth - Threshold);
+		}
+
+		TotalWeightedDepth += SampleDepth * SpatialWeight;
+		TotalWeight += SpatialWeight;
+	}
+
+	OutputTexture[CenterCoord] = (TotalWeight > 0.0f) ? (TotalWeightedDepth / TotalWeight) : CenterDepth;
+}
+
+//=============================================================================
 // Separable Gaussian Blur for Thickness
 //
 // Split into Horizontal + Vertical passes for O(2n) instead of O(n²)
