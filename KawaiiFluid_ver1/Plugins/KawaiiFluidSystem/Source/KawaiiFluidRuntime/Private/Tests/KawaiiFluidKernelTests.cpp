@@ -174,8 +174,8 @@ bool FKawaiiFluidKernelTest_SpikyGradientDirection::RunTest(const FString& Param
 	// Gradient points OPPOSITE to r (toward neighbor) due to negative coefficient
 	// When r = (+X), gradient = (-X)
 	TestTrue(TEXT("Spiky gradient X component points toward neighbor (negative)"), GradW_x.X < 0.0);
-	TestTrue(TEXT("Spiky gradient Y is zero for X-aligned r"), FMath::IsNearlyZero(GradW_x.Y, (double)KINDA_SMALL_NUMBER));
-	TestTrue(TEXT("Spiky gradient Z is zero for X-aligned r"), FMath::IsNearlyZero(GradW_x.Z, (double)KINDA_SMALL_NUMBER));
+	TestTrue(TEXT("Spiky gradient Y is zero for X-aligned r"), FMath::IsNearlyZero(GradW_x.Y, static_cast<double>(KINDA_SMALL_NUMBER)));
+	TestTrue(TEXT("Spiky gradient Z is zero for X-aligned r"), FMath::IsNearlyZero(GradW_x.Z, static_cast<double>(KINDA_SMALL_NUMBER)));
 
 	// Test with r pointing in -Y direction (particle i is below particle j)
 	const FVector r_y = FVector(0.0f, -15.0f, 0.0f);  // 15cm separation
@@ -206,9 +206,9 @@ bool FKawaiiFluidKernelTest_SpikyAtOrigin::RunTest(const FString& Parameters)
 	// Test exact origin
 	const FVector GradW_origin = SPHKernels::SpikyGradient(FVector::ZeroVector, h_cm);
 
-	TestTrue(TEXT("Spiky gradient at origin X is zero"), FMath::IsNearlyZero(GradW_origin.X, (double)KINDA_SMALL_NUMBER));
-	TestTrue(TEXT("Spiky gradient at origin Y is zero"), FMath::IsNearlyZero(GradW_origin.Y, (double)KINDA_SMALL_NUMBER));
-	TestTrue(TEXT("Spiky gradient at origin Z is zero"), FMath::IsNearlyZero(GradW_origin.Z, (double)KINDA_SMALL_NUMBER));
+	TestTrue(TEXT("Spiky gradient at origin X is zero"), FMath::IsNearlyZero(GradW_origin.X, static_cast<double>(KINDA_SMALL_NUMBER)));
+	TestTrue(TEXT("Spiky gradient at origin Y is zero"), FMath::IsNearlyZero(GradW_origin.Y, static_cast<double>(KINDA_SMALL_NUMBER)));
+	TestTrue(TEXT("Spiky gradient at origin Z is zero"), FMath::IsNearlyZero(GradW_origin.Z, static_cast<double>(KINDA_SMALL_NUMBER)));
 
 	// Test very small r (near singularity)
 	const FVector r_tiny = FVector(0.001f, 0.0f, 0.0f);
@@ -239,14 +239,14 @@ bool FKawaiiFluidKernelTest_SpikyAtBoundary::RunTest(const FString& Parameters)
 	const FVector GradW_boundary = SPHKernels::SpikyGradient(r_boundary, h_cm);
 
 	TestTrue(TEXT("Spiky gradient at boundary is zero"),
-		FMath::IsNearlyZero(GradW_boundary.Size(), (double)KINDA_SMALL_NUMBER));
+		FMath::IsNearlyZero(GradW_boundary.Size(), static_cast<double>(KINDA_SMALL_NUMBER)));
 
 	// Test outside boundary
 	const FVector r_outside = FVector(h_cm + 5.0f, 0.0f, 0.0f);
 	const FVector GradW_outside = SPHKernels::SpikyGradient(r_outside, h_cm);
 
 	TestTrue(TEXT("Spiky gradient outside boundary is zero"),
-		FMath::IsNearlyZero(GradW_outside.Size(), (double)KINDA_SMALL_NUMBER));
+		FMath::IsNearlyZero(GradW_outside.Size(), static_cast<double>(KINDA_SMALL_NUMBER)));
 
 	AddInfo(FString::Printf(TEXT("GradW at boundary |r|=h: (%.6f, %.6f, %.6f)"),
 		GradW_boundary.X, GradW_boundary.Y, GradW_boundary.Z));

@@ -109,12 +109,12 @@ void KawaiiScreenSpaceShading::RenderPostProcessShading(
 	{
 		FIntPoint TextureSize = SceneColorTexture->Desc.Extent;
 		SceneUVScale = FVector2f(
-			(float)Output.ViewRect.Width() / (float)TextureSize.X,
-			(float)Output.ViewRect.Height() / (float)TextureSize.Y);
+			static_cast<float>(Output.ViewRect.Width()) / static_cast<float>(TextureSize.X),
+			static_cast<float>(Output.ViewRect.Height()) / static_cast<float>(TextureSize.Y));
 
 		SceneUVOffset = FVector2f(
-			(float)Output.ViewRect.Min.X / (float)TextureSize.X,
-			(float)Output.ViewRect.Min.Y / (float)TextureSize.Y);
+			static_cast<float>(Output.ViewRect.Min.X) / static_cast<float>(TextureSize.X),
+			static_cast<float>(Output.ViewRect.Min.Y) / static_cast<float>(TextureSize.Y));
 	}
 	PassParameters->SceneUVScale = SceneUVScale;
 	PassParameters->SceneUVOffset = SceneUVOffset;
@@ -127,12 +127,12 @@ void KawaiiScreenSpaceShading::RenderPostProcessShading(
 	{
 		FIntPoint TextureSize = IntermediateTextures.SmoothedDepthTexture->Desc.Extent;
 		FluidUVScale = FVector2f(
-			(float)Output.ViewRect.Width() / (float)TextureSize.X,
-			(float)Output.ViewRect.Height() / (float)TextureSize.Y);
+			static_cast<float>(Output.ViewRect.Width()) / static_cast<float>(TextureSize.X),
+			static_cast<float>(Output.ViewRect.Height()) / static_cast<float>(TextureSize.Y));
 		
 		FluidUVOffset = FVector2f(
-			(float)Output.ViewRect.Min.X / (float)TextureSize.X,
-			(float)Output.ViewRect.Min.Y / (float)TextureSize.Y);
+			static_cast<float>(Output.ViewRect.Min.X) / static_cast<float>(TextureSize.X),
+			static_cast<float>(Output.ViewRect.Min.Y) / static_cast<float>(TextureSize.Y));
 	}
 	PassParameters->FluidUVScale = FluidUVScale;
 	PassParameters->FluidUVOffset = FluidUVOffset;

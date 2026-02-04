@@ -170,7 +170,7 @@ void FGPUCollisionFeedbackManager::ProcessFeedbackReadback(FRHICommandListImmedi
 	}
 
 	// Lock entire unified buffer once
-	const uint8* BufferData = (const uint8*)UnifiedFeedbackReadbacks[ReadIdx]->Lock(UNIFIED_BUFFER_SIZE);
+	const uint8* BufferData = reinterpret_cast<const uint8*>(UnifiedFeedbackReadbacks[ReadIdx]->Lock(UNIFIED_BUFFER_SIZE));
 	if (!BufferData)
 	{
 		UnifiedFeedbackReadbacks[ReadIdx]->Unlock();
@@ -178,10 +178,10 @@ void FGPUCollisionFeedbackManager::ProcessFeedbackReadback(FRHICommandListImmedi
 	}
 
 	// Read header (4 counters at offset 0)
-	const uint32* Header = (const uint32*)BufferData;
-	uint32 BoneCount = FMath::Min(Header[0], (uint32)MAX_COLLISION_FEEDBACK);
-	uint32 SMCount = FMath::Min(Header[1], (uint32)MAX_STATICMESH_COLLISION_FEEDBACK);
-	uint32 FISMCount = FMath::Min(Header[2], (uint32)MAX_FLUIDINTERACTION_SM_FEEDBACK);
+	const uint32* Header = reinterpret_cast<const uint32*>(BufferData);
+	uint32 BoneCount = FMath::Min(Header[0], static_cast<uint32>(MAX_COLLISION_FEEDBACK));
+	uint32 SMCount = FMath::Min(Header[1], static_cast<uint32>(MAX_STATICMESH_COLLISION_FEEDBACK));
+	uint32 FISMCount = FMath::Min(Header[2], static_cast<uint32>(MAX_FLUIDINTERACTION_SM_FEEDBACK));
 
 	// Debug logging (every 60 frames)
 	static int32 DebugCounter = 0;
@@ -194,7 +194,7 @@ void FGPUCollisionFeedbackManager::ProcessFeedbackReadback(FRHICommandListImmedi
 	// =====================================================
 	if (BoneCount > 0)
 	{
-		const FGPUCollisionFeedback* BoneFeedback = (const FGPUCollisionFeedback*)(BufferData + BONE_FEEDBACK_OFFSET);
+		const FGPUCollisionFeedback* BoneFeedback = reinterpret_cast<const FGPUCollisionFeedback*>(BufferData + BONE_FEEDBACK_OFFSET);
 		ReadyFeedback.SetNum(BoneCount);
 		FMemory::Memcpy(ReadyFeedback.GetData(), BoneFeedback, BoneCount * sizeof(FGPUCollisionFeedback));
 		ReadyFeedbackCount = BoneCount;
@@ -220,7 +220,7 @@ void FGPUCollisionFeedbackManager::ProcessFeedbackReadback(FRHICommandListImmedi
 	// =====================================================
 	if (SMCount > 0)
 	{
-		const FGPUCollisionFeedback* SMFeedback = (const FGPUCollisionFeedback*)(BufferData + SM_FEEDBACK_OFFSET);
+		const FGPUCollisionFeedback* SMFeedback = reinterpret_cast<const FGPUCollisionFeedback*>(BufferData + SM_FEEDBACK_OFFSET);
 		ReadyStaticMeshFeedback.SetNum(SMCount);
 		FMemory::Memcpy(ReadyStaticMeshFeedback.GetData(), SMFeedback, SMCount * sizeof(FGPUCollisionFeedback));
 		ReadyStaticMeshFeedbackCount = SMCount;
@@ -246,7 +246,7 @@ void FGPUCollisionFeedbackManager::ProcessFeedbackReadback(FRHICommandListImmedi
 	// =====================================================
 	if (FISMCount > 0)
 	{
-		const FGPUCollisionFeedback* FISMFeedback = (const FGPUCollisionFeedback*)(BufferData + FISM_FEEDBACK_OFFSET);
+		const FGPUCollisionFeedback* FISMFeedback = reinterpret_cast<const FGPUCollisionFeedback*>(BufferData + FISM_FEEDBACK_OFFSET);
 		ReadyFluidInteractionSMFeedback.SetNum(FISMCount);
 		FMemory::Memcpy(ReadyFluidInteractionSMFeedback.GetData(), FISMFeedback, FISMCount * sizeof(FGPUCollisionFeedback));
 		ReadyFluidInteractionSMFeedbackCount = FISMCount;

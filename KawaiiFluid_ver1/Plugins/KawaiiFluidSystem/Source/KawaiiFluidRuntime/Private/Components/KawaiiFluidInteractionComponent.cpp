@@ -1664,11 +1664,11 @@ void UKawaiiFluidInteractionComponent::SampleTriangleSurface(const FVector& V0, 
 
 	for (int32 i = 0; i <= NumSamplesU; ++i)
 	{
-		float u = (float)i / (float)NumSamplesU;
+		float u = static_cast<float>(i) / static_cast<float>(NumSamplesU);
 
 		for (int32 j = 0; j <= NumSamplesV; ++j)
 		{
-			float v = (float)j / (float)NumSamplesV;
+			float v = static_cast<float>(j) / static_cast<float>(NumSamplesV);
 
 			// Constraint: u + v <= 1 (inside triangle)
 			if (u + v > 1.0f)
@@ -2040,7 +2040,7 @@ void UKawaiiFluidInteractionComponent::SampleSphereSurface(const FKSphereElem& S
 
 	for (int32 i = 0; i < NumSamples; ++i)
 	{
-		float t = (NumSamples > 1) ? (float)i / (float)(NumSamples - 1) : 0.5f;
+		float t = (NumSamples > 1) ? static_cast<float>(i) / static_cast<float>(NumSamples - 1) : 0.5f;
 		float Phi = FMath::Acos(1.0f - 2.0f * t);
 		float Theta = AngleIncrement * i;
 
@@ -2075,7 +2075,7 @@ void UKawaiiFluidInteractionComponent::SampleHemisphere(const FTransform& Transf
 	for (int32 i = 0; i < NumSamples; ++i)
 	{
 		// Sample hemisphere only
-		float t = (float)i / (float)(NumSamples * 2);
+		float t = static_cast<float>(i) / static_cast<float>(NumSamples * 2);
 		if (ZDirection < 0) t = 1.0f - t;
 
 		// Skip if t is outside hemisphere range
@@ -2135,11 +2135,11 @@ void UKawaiiFluidInteractionComponent::SampleCapsuleSurface(const FKSphylElem& C
 
 	for (int32 Ring = 0; Ring <= NumRings; ++Ring)
 	{
-		float Z = -HalfLength + (CylinderHeight * Ring / FMath::Max(1, NumRings));
+		float Z = -HalfLength + (CylinderHeight * static_cast<float>(Ring) / static_cast<float>(FMath::Max(1, NumRings)));
 
 		for (int32 Seg = 0; Seg < NumSegments; ++Seg)
 		{
-			float Angle = 2.0f * PI * Seg / NumSegments;
+			float Angle = 2.0f * PI * static_cast<float>(Seg) / static_cast<float>(NumSegments);
 
 			FVector LocalPoint(
 				Radius * FMath::Cos(Angle),
@@ -2179,12 +2179,12 @@ void UKawaiiFluidInteractionComponent::SampleBoxSurface(const FKBoxElem& Box, in
 	};
 
 	TArray<FBoxFace> Faces;
-	Faces.Add({ FVector( 1, 0, 0), (float)HalfExtent.X, FVector(0, 1, 0), FVector(0, 0, 1), (float)Box.Y, (float)Box.Z });
-	Faces.Add({ FVector(-1, 0, 0), (float)HalfExtent.X, FVector(0, 1, 0), FVector(0, 0, 1), (float)Box.Y, (float)Box.Z });
-	Faces.Add({ FVector( 0, 1, 0), (float)HalfExtent.Y, FVector(1, 0, 0), FVector(0, 0, 1), (float)Box.X, (float)Box.Z });
-	Faces.Add({ FVector( 0,-1, 0), (float)HalfExtent.Y, FVector(1, 0, 0), FVector(0, 0, 1), (float)Box.X, (float)Box.Z });
-	Faces.Add({ FVector( 0, 0, 1), (float)HalfExtent.Z, FVector(1, 0, 0), FVector(0, 1, 0), (float)Box.X, (float)Box.Y });
-	Faces.Add({ FVector( 0, 0,-1), (float)HalfExtent.Z, FVector(1, 0, 0), FVector(0, 1, 0), (float)Box.X, (float)Box.Y });
+	Faces.Add({ FVector( 1, 0, 0), static_cast<float>(HalfExtent.X), FVector(0, 1, 0), FVector(0, 0, 1), static_cast<float>(Box.Y), static_cast<float>(Box.Z) });
+	Faces.Add({ FVector(-1, 0, 0), static_cast<float>(HalfExtent.X), FVector(0, 1, 0), FVector(0, 0, 1), static_cast<float>(Box.Y), static_cast<float>(Box.Z) });
+	Faces.Add({ FVector( 0, 1, 0), static_cast<float>(HalfExtent.Y), FVector(1, 0, 0), FVector(0, 0, 1), static_cast<float>(Box.X), static_cast<float>(Box.Z) });
+	Faces.Add({ FVector( 0,-1, 0), static_cast<float>(HalfExtent.Y), FVector(1, 0, 0), FVector(0, 0, 1), static_cast<float>(Box.X), static_cast<float>(Box.Z) });
+	Faces.Add({ FVector( 0, 0, 1), static_cast<float>(HalfExtent.Z), FVector(1, 0, 0), FVector(0, 1, 0), static_cast<float>(Box.X), static_cast<float>(Box.Y) });
+	Faces.Add({ FVector( 0, 0,-1), static_cast<float>(HalfExtent.Z), FVector(1, 0, 0), FVector(0, 1, 0), static_cast<float>(Box.X), static_cast<float>(Box.Y) });
 
 	float SpacingSq = BoundaryParticleSpacing * BoundaryParticleSpacing;
 
@@ -2198,8 +2198,8 @@ void UKawaiiFluidInteractionComponent::SampleBoxSurface(const FKBoxElem& Box, in
 		{
 			for (int32 v = 0; v <= NumV; ++v)
 			{
-				float t1 = (NumU > 0) ? ((float)u / (float)NumU - 0.5f) : 0.0f;
-				float t2 = (NumV > 0) ? ((float)v / (float)NumV - 0.5f) : 0.0f;
+				float t1 = (NumU > 0) ? (static_cast<float>(u) / static_cast<float>(NumU) - 0.5f) : 0.0f;
+				float t2 = (NumV > 0) ? (static_cast<float>(v) / static_cast<float>(NumV) - 0.5f) : 0.0f;
 
 				FVector LocalPoint = Face.Normal * Face.Distance
 				                   + Face.Axis1 * (t1 * Face.Size1)

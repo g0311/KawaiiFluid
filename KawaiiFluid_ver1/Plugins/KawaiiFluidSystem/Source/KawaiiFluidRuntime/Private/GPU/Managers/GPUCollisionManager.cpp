@@ -653,7 +653,7 @@ void FGPUCollisionManager::UploadHeightmapTexture(const TArray<float>& HeightDat
 
 			// Upload data to texture
 			uint32 DestStride = 0;
-			float* DestData = (float*)RHILockTexture2D(*TexturePtr, 0, RLM_WriteOnly, DestStride, false);
+			float* DestData = reinterpret_cast<float*>(RHILockTexture2D(*TexturePtr, 0, RLM_WriteOnly, DestStride, false));
 
 			if (DestData)
 			{
@@ -661,7 +661,7 @@ void FGPUCollisionManager::UploadHeightmapTexture(const TArray<float>& HeightDat
 				for (int32 y = 0; y < Height; ++y)
 				{
 					FMemory::Memcpy(
-						(uint8*)DestData + y * DestStride,
+						reinterpret_cast<uint8*>(DestData) + y * DestStride,
 						HeightDataCopy.GetData() + y * Width,
 						SrcRowPitch);
 				}

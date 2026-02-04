@@ -369,8 +369,8 @@ struct FGPUHeightmapCollisionParams
 		}
 		if (TextureWidth > 0 && TextureHeight > 0)
 		{
-			InvTextureWidth = 1.0f / (float)TextureWidth;
-			InvTextureHeight = 1.0f / (float)TextureHeight;
+			InvTextureWidth = 1.0f / static_cast<float>(TextureWidth);
+			InvTextureHeight = 1.0f / static_cast<float>(TextureHeight);
 		}
 	}
 };

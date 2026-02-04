@@ -161,7 +161,7 @@ bool FSpatialHashBuilder::BuildHash(
         PassParameters->CellCounts = Resources.CellCountsUAV;
         PassParameters->ParticleIndices = Resources.ParticleIndicesUAV;
 
-        uint32 NumGroups = FMath::DivideAndRoundUp((uint32)ParticleCount, SPATIAL_HASH_THREAD_GROUP_SIZE);
+        uint32 NumGroups = FMath::DivideAndRoundUp(static_cast<uint32>(ParticleCount), SPATIAL_HASH_THREAD_GROUP_SIZE);
 
         GraphBuilder.AddPass(
             RDG_EVENT_NAME("SpatialHash::BuildSimple"),
@@ -260,7 +260,7 @@ bool FSpatialHashBuilder::CreateAndBuildHash(
         PassParameters->CellCounts = OutResources.CellCountsUAV;
         PassParameters->ParticleIndices = OutResources.ParticleIndicesUAV;
 
-        uint32 NumGroups = FMath::DivideAndRoundUp((uint32)ParticleCount, SPATIAL_HASH_THREAD_GROUP_SIZE);
+        uint32 NumGroups = FMath::DivideAndRoundUp(static_cast<uint32>(ParticleCount), SPATIAL_HASH_THREAD_GROUP_SIZE);
 
         FComputeShaderUtils::AddPass(
             GraphBuilder,
@@ -373,7 +373,7 @@ bool FSpatialHashBuilder::CreateAndBuildHashMultipass(
     }
 
     uint32 NumCellGroups = FMath::DivideAndRoundUp(SPATIAL_HASH_SIZE, SPATIAL_HASH_THREAD_GROUP_SIZE);
-    uint32 NumParticleGroups = FMath::DivideAndRoundUp((uint32)ParticleCount, SPATIAL_HASH_THREAD_GROUP_SIZE);
+    uint32 NumParticleGroups = FMath::DivideAndRoundUp(static_cast<uint32>(ParticleCount), SPATIAL_HASH_THREAD_GROUP_SIZE);
 
     //=========================================================================
     // Pass 1: Clear CellData and CellCounters

@@ -855,7 +855,7 @@ void FGPUSpawnManager::EnsureStreamCompactionBuffers(FRDGBuilder& GraphBuilder, 
 
 	// Use MaxParticleCapacity for fixed-size allocation (no dynamic resize)
 	const int32 Capacity = FMath::Max(RequiredCapacity, MaxParticleCapacity);
-	const int32 BlockCount = FMath::DivideAndRoundUp(Capacity, (int32)FPrefixSumBlockCS_RDG::ThreadGroupSize);
+	const int32 BlockCount = FMath::DivideAndRoundUp(Capacity, static_cast<int32>(FPrefixSumBlockCS_RDG::ThreadGroupSize));
 
 	// Create AliveMask buffer (uint32 × Capacity)
 	FRDGBufferDesc AliveMaskDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), Capacity);

@@ -1524,8 +1524,8 @@ void UKawaiiFluidEmitterComponent::DrawSpawnVolumeVisualization()
 				const int32 NumSegments = 24;
 				for (int32 i = 0; i < NumSegments; ++i)
 				{
-					const float Angle1 = (float)i / NumSegments * 2.0f * PI;
-					const float Angle2 = (float)(i + 1) / NumSegments * 2.0f * PI;
+					const float Angle1 = static_cast<float>(i) / NumSegments * 2.0f * PI;
+					const float Angle2 = static_cast<float>(i + 1) / NumSegments * 2.0f * PI;
 
 					// Calculate local positions
 					const FVector LocalTopP1 = LocalTopCenter + FVector(FMath::Cos(Angle1), FMath::Sin(Angle1), 0) * Radius;
@@ -1546,7 +1546,7 @@ void UKawaiiFluidEmitterComponent::DrawSpawnVolumeVisualization()
 				// Vertical lines (4 lines connecting top and bottom)
 				for (int32 i = 0; i < 4; ++i)
 				{
-					const float Angle = (float)i / 4 * 2.0f * PI;
+					const float Angle = static_cast<float>(i) / 4 * 2.0f * PI;
 					const FVector LocalTopP = LocalTopCenter + FVector(FMath::Cos(Angle), FMath::Sin(Angle), 0) * Radius;
 					const FVector LocalBottomP = LocalBottomCenter + FVector(FMath::Cos(Angle), FMath::Sin(Angle), 0) * Radius;
 
@@ -1573,8 +1573,8 @@ void UKawaiiFluidEmitterComponent::DrawSpawnVolumeVisualization()
 			const int32 NumSegments = 24;
 			for (int32 i = 0; i < NumSegments; ++i)
 			{
-				const float Angle1 = (float)i / NumSegments * 2.0f * PI;
-				const float Angle2 = (float)(i + 1) / NumSegments * 2.0f * PI;
+				const float Angle1 = static_cast<float>(i) / NumSegments * 2.0f * PI;
+				const float Angle2 = static_cast<float>(i + 1) / NumSegments * 2.0f * PI;
 
 				const FVector P1 = Location + (Right * FMath::Cos(Angle1) + Up * FMath::Sin(Angle1)) * StreamRadius;
 				const FVector P2 = Location + (Right * FMath::Cos(Angle2) + Up * FMath::Sin(Angle2)) * StreamRadius;
