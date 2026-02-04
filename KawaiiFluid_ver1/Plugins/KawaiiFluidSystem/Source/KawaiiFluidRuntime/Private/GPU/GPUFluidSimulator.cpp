@@ -1417,10 +1417,11 @@ FSimulationSpatialData FGPUFluidSimulator::BuildSpatialStructures(
 
 	// Pass 3.6: Skinned Boundary Z-Order Sorting (after skinning)
 	// CRITICAL: Set bounds to match fluid simulation bounds for correct cell ID calculation
+	// Use GetEffectiveGridResolutionPreset() - Hybrid mode is preset-independent (always Medium/21-bit)
 	if (BoundarySkinningManager.IsValid() && ZOrderSortManager.IsValid())
 	{
 		BoundarySkinningManager->SetBoundaryZOrderConfig(
-			ZOrderSortManager->GetGridResolutionPreset(),
+			ZOrderSortManager->GetEffectiveGridResolutionPreset(),
 			SimulationBoundsMin,
 			SimulationBoundsMax);
 	}
@@ -1796,11 +1797,10 @@ void FGPUFluidSimulator::ExecutePostSimulation(
 					AnisotropyParams.CellStartSRV = SpatialData.CellStartSRV;
 					AnisotropyParams.CellEndSRV = SpatialData.CellEndSRV;
 					AnisotropyParams.MortonBoundsMin = SimulationBoundsMin;
-					// CRITICAL: Pass GridResolutionPreset for correct Morton code calculation
-					// Without this, shader uses default Medium (7-bit) even when Large (8-bit) is configured
-					AnisotropyParams.GridResolutionPreset = ZOrderSortManager->GetGridResolutionPreset();
-					// CRITICAL: Pass Hybrid mode flag for correct cell ID calculation
-					// Without this, shader uses Classic Morton while CellStart/End uses Hybrid keys
+					// CRITICAL: Use GetEffectiveGridResolutionPreset() - Hybrid mode is preset-independent (always Medium/21-bit)
+					// In Hybrid mode, Morton codes use 21-bit keys regardless of Volume size
+					AnisotropyParams.GridResolutionPreset = ZOrderSortManager->GetEffectiveGridResolutionPreset();
+					// Pass Hybrid mode flag for correct cell ID calculation method selection
 					AnisotropyParams.bUseHybridTiledZOrder = ZOrderSortManager->IsHybridTiledZOrderEnabled();
 				}
 

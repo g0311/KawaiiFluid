@@ -171,10 +171,11 @@ void FGPUFluidSimulator::AddSolveDensityPressurePass(
 	const bool bUseZOrderSorting = ZOrderSortManager.IsValid() && ZOrderSortManager->IsZOrderSortingEnabled();
 
 	// Get GridResolutionPreset for shader permutation (Z-Order neighbor search)
+	// CRITICAL: Use GetEffectiveGridResolutionPreset() - Hybrid mode is preset-independent (always Medium/21-bit)
 	EGridResolutionPreset GridPreset = EGridResolutionPreset::Medium;
 	if (bUseZOrderSorting)
 	{
-		GridPreset = ZOrderSortManager->GetGridResolutionPreset();
+		GridPreset = ZOrderSortManager->GetEffectiveGridResolutionPreset();
 	}
 
 	// Create permutation vector and get shader
@@ -697,10 +698,11 @@ void FGPUFluidSimulator::AddUpdateBoneDeltaAttachmentPass(
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 
 	// Get grid resolution preset for Z-Order search
+	// CRITICAL: Use GetEffectiveGridResolutionPreset() - Hybrid mode is preset-independent (always Medium/21-bit)
 	EGridResolutionPreset GridPreset = EGridResolutionPreset::Medium;
 	if (ZOrderSortManager.IsValid())
 	{
-		GridPreset = ZOrderSortManager->GetGridResolutionPreset();
+		GridPreset = ZOrderSortManager->GetEffectiveGridResolutionPreset();
 	}
 
 	// Create permutation vector

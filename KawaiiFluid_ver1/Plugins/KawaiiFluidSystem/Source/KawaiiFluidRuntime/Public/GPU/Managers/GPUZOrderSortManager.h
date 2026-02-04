@@ -70,9 +70,21 @@ public:
 	void SetZOrderSortingEnabled(bool bEnabled) { bUseZOrderSorting = bEnabled; }
 	bool IsZOrderSortingEnabled() const { return bUseZOrderSorting; }
 
-	/** Set grid resolution preset for shader permutation selection */
+	/** Set grid resolution preset for shader permutation selection (Classic mode only) */
 	void SetGridResolutionPreset(EGridResolutionPreset Preset) { GridResolutionPreset = Preset; }
 	EGridResolutionPreset GetGridResolutionPreset() const { return GridResolutionPreset; }
+
+	/**
+	 * Get the effective grid resolution preset for shader permutation.
+	 * In Hybrid Tiled Z-Order mode, always returns Medium (21-bit keys = 2^21 cells).
+	 * In Classic mode, returns the configured GridResolutionPreset.
+	 * 
+	 * CRITICAL: Always use this instead of GetGridResolutionPreset() for shader permutation selection!
+	 */
+	EGridResolutionPreset GetEffectiveGridResolutionPreset() const
+	{
+		return bUseHybridTiledZOrder ? EGridResolutionPreset::Medium : GridResolutionPreset;
+	}
 
 	/**
 	 * Enable/disable Hybrid Tiled Z-Order mode
