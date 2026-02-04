@@ -62,6 +62,10 @@ static bool GenerateIntermediateTextures(
 	FRDGTextureRef VelocityTexture = nullptr;
 	FRDGTextureRef OcclusionMaskTexture = nullptr;
 	FRDGTextureRef HardwareDepthTexture = nullptr;
+
+	// Cache the depth BEFORE it is updated by the current batch.
+	// This will be used as the background (refraction/transmittance reference) in the shading pass.
+	OutIntermediateTextures.BackgroundDepthTexture = GlobalDepthTexture;
 	
 	RenderFluidDepthPass(GraphBuilder, View, Renderers, GlobalDepthTexture, 
 		DepthTexture, VelocityTexture, OcclusionMaskTexture, HardwareDepthTexture, true);
@@ -325,13 +329,13 @@ void FKawaiiFluidScreenSpacePipeline::ExecuteRender(
 		AddCopyTexturePass(GraphBuilder, SceneColorTexture, CompositeResultTexture);
 
 		// Render fluid composite to intermediate texture
-		// Use GlobalDepthTexture (Hardware) which now contains 벽 + 이전 유체 + 현재 유체 정보
+		// Use BackgroundDepthTexture (Hardware) which contains background + previous fluid info (excluding current fluid)
 		KawaiiScreenSpaceShading::RenderPostProcessShading(
 			GraphBuilder,
 			View,
 			RenderParams,
 			CachedIntermediateTextures,
-			GlobalDepthTexture,
+			CachedIntermediateTextures.BackgroundDepthTexture,
 			SceneColorTexture,
 			IntermediateOutput);
 
@@ -357,13 +361,13 @@ void FKawaiiFluidScreenSpacePipeline::ExecuteRender(
 	else
 	{
 		// Surface Decoration disabled: render directly to output (no overhead)
-		// Use GlobalDepthTexture (Hardware) which now contains 벽 + 이전 유체 + 현재 유체 정보
+		// Use BackgroundDepthTexture (Hardware) which contains background + previous fluid info (excluding current fluid)
 		KawaiiScreenSpaceShading::RenderPostProcessShading(
 			GraphBuilder,
 			View,
 			RenderParams,
 			CachedIntermediateTextures,
-			GlobalDepthTexture,
+			CachedIntermediateTextures.BackgroundDepthTexture,
 			SceneColorTexture,
 			Output);
 	}

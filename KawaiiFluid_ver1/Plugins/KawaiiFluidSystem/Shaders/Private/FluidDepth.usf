@@ -11,7 +11,7 @@
 // Particle data buffer
 StructuredBuffer<float3> ParticlePositions;
 StructuredBuffer<float3> ParticleVelocities;
-StructuredBuffer<float3> RenderOffset;  // 표면 입자 렌더링 오프셋
+StructuredBuffer<float3> RenderOffset;  // Surface particle render offset
 
 // Rendering parameters
 float ParticleRadius;
@@ -84,7 +84,7 @@ FVertexOutput MainVS(FVertexInput Input)
 {
 	FVertexOutput Output;
 
-	// Get particle world position + render offset (표면 입자는 이웃 방향으로 당겨서 렌더링)
+	// Get particle world position + render offset (Surface particles are pulled toward neighbors)
 	float3 ParticleWorldPosition = ParticlePositions[Input.InstanceId] + RenderOffset[Input.InstanceId];
 
 	// Transform to view space

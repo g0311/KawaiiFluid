@@ -1257,7 +1257,7 @@ private:
 	TRefCountPtr<FRDGPooledBuffer> PersistentAnisotropyAxis1Buffer;
 	TRefCountPtr<FRDGPooledBuffer> PersistentAnisotropyAxis2Buffer;
 	TRefCountPtr<FRDGPooledBuffer> PersistentAnisotropyAxis3Buffer;
-	TRefCountPtr<FRDGPooledBuffer> PersistentRenderOffsetBuffer;  // 표면 입자 렌더링 오프셋
+	TRefCountPtr<FRDGPooledBuffer> PersistentRenderOffsetBuffer;  // Surface particle render offset
 	int32 AnisotropyFrameCounter = 0;  // Frame counter for UpdateInterval optimization
 
 	// Critical section for thread-safe buffer access

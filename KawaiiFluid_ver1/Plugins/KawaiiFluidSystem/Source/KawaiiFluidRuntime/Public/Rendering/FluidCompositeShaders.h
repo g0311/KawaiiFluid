@@ -37,6 +37,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
     // UV scaling for SceneColor/SceneDepth (ViewRect / TextureSize)
     // Needed when texture size differs from ViewRect (e.g., Screen Percentage)
     SHADER_PARAMETER(FVector2f, SceneUVScale)
+    SHADER_PARAMETER(FVector2f, SceneUVOffset)
     SHADER_PARAMETER(FVector2f, FluidUVScale)
     SHADER_PARAMETER(FVector2f, FluidUVOffset)
 

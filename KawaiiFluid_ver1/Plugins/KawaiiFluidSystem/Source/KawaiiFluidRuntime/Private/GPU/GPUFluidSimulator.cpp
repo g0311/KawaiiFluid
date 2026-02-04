@@ -1778,7 +1778,7 @@ void FGPUFluidSimulator::ExecutePostSimulation(
 				AnisotropyParams.OutAxis3UAV = GraphBuilder.CreateUAV(Axis3Buffer);
 				AnisotropyParams.ParticleCount = CurrentParticleCount;
 
-				// Render offset for surface particles (이웃 방향으로 당겨서 렌더링)
+				// Render offset for surface particles (pulled toward neighbors)
 				FRDGBufferRef RenderOffsetBuffer = GraphBuilder.CreateBuffer(
 					FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector3f), CurrentParticleCount),
 					TEXT("FluidRenderOffset"));
@@ -2124,7 +2124,7 @@ FRDGBufferRef FGPUFluidSimulator::ExecuteParticleIDSortPipeline(
 	FRDGBufferDesc SortedParticlesDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(FGPUFluidParticle), ParticleCount);
 	FRDGBufferRef SortedParticleBuffer = GraphBuilder.CreateBuffer(SortedParticlesDesc, TEXT("ParticleIDSort.SortedParticles"));
 
-	// ParticleID 정렬에서는 Attachment 버퍼 재정렬 불필요 - 더미 버퍼 생성
+	// Reordering attachment buffers not needed for ParticleID sort - create dummy buffer
 	FRDGBufferDesc DummyAttachmentDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(FGPUBoneDeltaAttachment), 1);
 	FRDGBufferRef DummyAttachmentBuffer = GraphBuilder.CreateBuffer(DummyAttachmentDesc, TEXT("ParticleIDSort.DummyAttachment"));
 
@@ -2137,10 +2137,10 @@ FRDGBufferRef FGPUFluidSimulator::ExecuteParticleIDSortPipeline(
 		Params->OldParticles = GraphBuilder.CreateSRV(InParticleBuffer);
 		Params->SortedIndices = GraphBuilder.CreateSRV(SortedIndices);
 		Params->SortedParticles = GraphBuilder.CreateUAV(SortedParticleBuffer);
-		// 더미 버퍼 바인딩 (RDG는 nullptr 허용 안함)
+		// Dummy buffer binding (RDG does not allow nullptr)
 		Params->OldBoneDeltaAttachments = GraphBuilder.CreateSRV(DummyAttachmentBuffer);
 		Params->SortedBoneDeltaAttachments = GraphBuilder.CreateUAV(DummyAttachmentBuffer);
-		Params->bReorderAttachments = 0;  // 실제로 재정렬하지 않음
+		Params->bReorderAttachments = 0;  // Do not actually reorder
 		Params->ParticleCount = ParticleCount;
 
 		const int32 NumGroups = FMath::DivideAndRoundUp(ParticleCount, FReorderParticlesCS::ThreadGroupSize);

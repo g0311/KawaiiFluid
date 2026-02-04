@@ -366,8 +366,8 @@ void BoundaryAdhesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	//=========================================================================
 	// Position-Based Follow: Move particles with bone movement
 	// Directly adjusts position by bone delta (not force-based)
-	// [DISABLED FOR TESTING] - 회전 시 탈락 문제 테스트
-	//=========================================================================
+	// [DISABLED FOR TESTING] - Test for detachment issues during rotation
+	// =========================================================================
 	// if (totalDeltaWeight > SMALL_NUMBER)
 	// {
 	// 	float3 avgBoneDelta = totalBoneDelta / totalDeltaWeight;

@@ -237,19 +237,19 @@ void UpdateBoneDeltaAttachmentCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	//=========================================================================
 	// Step 1: Detach Check (if already attached)
 	// Detach if:
-	//   1. Particle moved more than DetachDistance from previous position (급격한 이동)
-	//   2. LocalOffset exceeds AttachRadius * 5 (Boundary에서 너무 멀어짐)
+	//   1. Particle moved more than DetachDistance from previous position (Sudden movement)
+	//   2. LocalOffset exceeds AttachRadius * 5 (Too far from Boundary)
 	//=========================================================================
 	if (attachment.BoundaryParticleIndex >= 0)
 	{
 		float moveDist = length(pos - attachment.PreviousPosition);
 
-		// LocalOffset 거리 체크 (물리에 의해 누적된 Boundary로부터의 거리)
+		// Check LocalOffset distance (distance from Boundary accumulated by physics)
 		float3 localOffset = attachment.LocalOffset;
 		float offsetDist = length(localOffset);
 
-		// 조건 1: 프레임 간 급격한 이동 (DetachDistance = BoundaryAttachRadius * 5)
-		// 조건 2: LocalOffset이 AttachRadius의 5배 초과 (Boundary에서 너무 멀어짐)
+		// Condition 1: Sudden movement between frames (DetachDistance = BoundaryAttachRadius * 5)
+		// Condition 2: LocalOffset exceeds 5x AttachRadius (Too far from Boundary)
 		if (moveDist > DetachDistance || offsetDist > AttachRadius * 5.0f)
 		{
 			// Detach! Distance exceeded threshold

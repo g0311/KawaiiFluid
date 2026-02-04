@@ -493,7 +493,7 @@ void FFluidSceneViewExtension::PrePostProcessPass_RenderThread(
 					BatchParams,
 					Renderers,
 					SceneDepthTexture,
-					CombinedHardwareDepth, // SHADER READS THIS: contains 벽 + 모든 이전 유체 + 현재 유체
+					CombinedHardwareDepth, // SHADER READS THIS: contains environment + all previous fluid + current fluid
 					LitSceneColorCopy,
 					Output);
 			}

@@ -30,6 +30,9 @@ struct FMetaballIntermediateTextures
 	/** Accumulated flow UV offset texture (RG16F: accumulated offset.xy) */
 	FRDGTextureRef AccumulatedFlowTexture = nullptr;
 
+	/** Background depth texture (Hardware Depth: Scene + Previous Fluids) */
+	FRDGTextureRef BackgroundDepthTexture = nullptr;
+
 	/** GBuffer textures (optional, for GBuffer shading mode) */
 	FRDGTextureRef GBufferATexture = nullptr;
 	FRDGTextureRef GBufferBTexture = nullptr;
@@ -51,6 +54,7 @@ struct FMetaballIntermediateTextures
 		VelocityTexture = nullptr;
 		OcclusionMaskTexture = nullptr;
 		AccumulatedFlowTexture = nullptr;
+		BackgroundDepthTexture = nullptr;
 		GBufferATexture = nullptr;
 		GBufferBTexture = nullptr;
 		GBufferCTexture = nullptr;

@@ -1290,7 +1290,7 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	float Scale1, Scale2, Scale3;
 	int NeighborCount = 0;
 	float3 SmoothedCenter = float3(0, 0, 0);  // weighted average position of neighbors
-	float3 renderOffset = float3(0, 0, 0);    // 표면 입자 렌더링 오프셋
+	float3 renderOffset = float3(0, 0, 0);    // Surface particle render offset
 
 	// Read particle data (SOA)
 	uint idx3 = Idx * 3;
@@ -1356,7 +1356,7 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			Scale2 *= lerp(1.0f, VelStretch, Proj2);
 			Scale3 *= lerp(1.0f, VelStretch, Proj3);
 
-			// Clamp 적용
+			// Apply clamp
 			Scale1 = clamp(Scale1, AnisotropyMin, AnisotropyMax);
 			Scale2 = clamp(Scale2, AnisotropyMin, AnisotropyMax);
 			Scale3 = clamp(Scale3, AnisotropyMin, AnisotropyMax);

@@ -40,7 +40,7 @@ struct FGPUBoneDeltaAttachment
 
 // Detach distance threshold in cm
 // If particle moves more than this distance from previous position, it detaches
-#define BONE_DELTA_DETACH_DISTANCE 100000.0f  // 100000cm = 1km (테스트용: 거의 탈락 안함)
+#define BONE_DELTA_DETACH_DISTANCE 100000.0f  // 100000cm = 1km (For testing: almost never detaches)
 
 // Invalid boundary particle index (not attached)
 #define BONE_DELTA_INVALID_INDEX -1

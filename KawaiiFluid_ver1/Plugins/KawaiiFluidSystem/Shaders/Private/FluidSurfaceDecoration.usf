@@ -143,7 +143,6 @@ float3 ReconstructViewPosition(float2 ScreenUV, float LinearDepth)
 	// Convert texture UV to NDC (Clip Space)
 	// Texture UV: (0,0) = top-left, (1,1) = bottom-right
 	// NDC: (-1,-1) = bottom-left, (1,1) = top-right
-	// Therefore Y must be flipped: ClipY = 1 - UV.y * 2
 	float2 ClipXY = float2(ScreenUV.x * 2.0 - 1.0, 1.0 - ScreenUV.y * 2.0);
 	float4 ClipPosition = float4(ClipXY, 0.5, 1.0);
 
@@ -447,15 +446,16 @@ void SurfaceDecorationCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	}
 
 	// Map output pixel to SSFR texture coordinate
-	// OutputPixel in ViewRect -> SSFR coordinate
+	// SSFR textures are same size as output and data is at the same pixel location
+	int2 SSFRPixelCoord = PixelCoord;
 	int2 SSFRSize = int2(SSFRTextureSize);
-	float2 ViewRectUV = float2(PixelCoord - ViewRectMin) / float2(ViewRectSize);
-	int2 SSFRPixelCoord = int2(ViewRectUV * float2(SSFRSize));
-	// Clamp to valid range
-	SSFRPixelCoord = clamp(SSFRPixelCoord, int2(0, 0), SSFRSize - int2(1, 1));
 
-	// UV normalized to 0-1 range within ViewRect (for decoration textures)
+	// UV normalized to 0-1 range within ViewRect (for decoration textures projection)
+	float2 ViewRectUV = float2(PixelCoord - ViewRectMin) / float2(ViewRectSize);
 	float2 UV = ViewRectUV;
+
+	// SSFR texture coordinate (normalized [0,1] for the entire texture)
+	float2 SSFRTexcoord = (float2(PixelCoord) + 0.5) / float2(SSFRSize);
 
 	// Sample SSFR outputs using SSFR coordinates
 	float Depth = DepthTexture.Load(int3(SSFRPixelCoord, 0));
@@ -486,14 +486,11 @@ void SurfaceDecorationCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	float3 WorldNormal = normalize(mul(ViewNormal, ViewToWorld));
 
 	// Reconstruct world position for camera-independent texturing
-	float3 WorldPos = ReconstructWorldPosition(UV, Depth);
+	float3 WorldPos = ReconstructWorldPosition(SSFRTexcoord, Depth);
 
 	// Fixed Z-axis projection (XY plane) - texture always projected from above
 	// This ensures consistent appearance regardless of viewing angle
 	float2 WorldUV = WorldPos.xy;
-
-	// SSFR texture coordinate (normalized [0,1] for SSFR-sized textures like Velocity, AccumulatedFlow)
-	float2 SSFRTexcoord = (float2(SSFRPixelCoord) + 0.5) / float2(SSFRSize);
 
 	// Sample velocity for flow and foam (use SSFR coordinates for screen-space textures)
 	float2 Velocity = VelocityMapTexture.SampleLevel(BilinearClampSampler, SSFRTexcoord, 0).xy;

@@ -104,14 +104,20 @@ void KawaiiScreenSpaceShading::RenderPostProcessShading(
 	// UV scaling for SceneColor/SceneDepth sampling
 	// When Screen Percentage < 100%, ViewRect is smaller than texture size
 	FVector2f SceneUVScale(1.0f, 1.0f);
+	FVector2f SceneUVOffset(0.0f, 0.0f);
 	if (SceneColorTexture)
 	{
 		FIntPoint TextureSize = SceneColorTexture->Desc.Extent;
 		SceneUVScale = FVector2f(
 			(float)Output.ViewRect.Width() / (float)TextureSize.X,
 			(float)Output.ViewRect.Height() / (float)TextureSize.Y);
+
+		SceneUVOffset = FVector2f(
+			(float)Output.ViewRect.Min.X / (float)TextureSize.X,
+			(float)Output.ViewRect.Min.Y / (float)TextureSize.Y);
 	}
 	PassParameters->SceneUVScale = SceneUVScale;
+	PassParameters->SceneUVOffset = SceneUVOffset;
 
 	// UV scaling and offset for Fluid textures (Depth, Normal, Thickness)
 	// These textures are sized to SceneDepth extent but only contain data in ViewRect.

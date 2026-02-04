@@ -20,6 +20,7 @@ SamplerState PointClampSampler;  // Point sampling for depth textures to avoid e
 // UV scaling for SceneColor/SceneDepth (ViewRect / TextureSize)
 // Needed when texture size differs from ViewRect (e.g., Screen Percentage)
 float2 SceneUVScale;
+float2 SceneUVOffset;
 float2 FluidUVScale;
 float2 FluidUVOffset;
 
@@ -851,7 +852,7 @@ void CalculateRefraction(
 	out float  OutRefractedDepth,
 	out float  OutRefractionValidity)
 {
-	float2 SceneUV = UV * SceneUVScale;
+	float2 SceneUV = UV * SceneUVScale + SceneUVOffset;
 
 	if (!bEnableRefraction)
 	{
@@ -1211,7 +1212,7 @@ void MainPS(
 	out float4 OutColor : SV_Target0)
 {
 	float2 UV = Input.UV;
-	float2 SceneUV = UV * SceneUVScale;
+	float2 SceneUV = UV * SceneUVScale + SceneUVOffset;
 	float2 FluidUV = UV * FluidUVScale + FluidUVOffset;
 
 	// Sample fluid surface properties

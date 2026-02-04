@@ -727,7 +727,7 @@ void FGPUFluidSimulator::AddUpdateBoneDeltaAttachmentPass(
 
 	// Attachment parameters
 	PassParameters->AttachRadius = Params.BoundaryAttachRadius;  // Use BoundaryAttachRadius from preset
-	// DetachDistance = BoundaryAttachRadius * 5.0 (파티클이 AttachRadius의 5배 이상 급격히 이동하면 detach)
+	// DetachDistance = BoundaryAttachRadius * 5.0 (Detach if particle moves more than 5x AttachRadius suddenly)
 	PassParameters->DetachDistance = Params.BoundaryAttachRadius * 5.0f;
 	// AdhesionStrength: if 0, no attachment allowed
 	PassParameters->AdhesionStrength = Params.BoundaryAdhesionStrength;
