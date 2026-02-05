@@ -147,11 +147,6 @@ void UKawaiiFluidSimulationModule::SyncGPUParticlesToCPU()
 
 void UKawaiiFluidSimulationModule::UploadCPUParticlesToGPU()
 {
-	if (Particles.Num() == 0)
-	{
-		return;
-	}
-
 	TSharedPtr<FGPUFluidSimulator> GPUSim = WeakGPUSimulator.Pin();
 	if (!GPUSim || !GPUSim->IsReady())
 	{
@@ -160,22 +155,27 @@ void UKawaiiFluidSimulationModule::UploadCPUParticlesToGPU()
 	}
 
 	const int32 UploadCount = Particles.Num();
+	int32 StartID = 0;
 
-	// Atomic ID assignment: ignore stored IDs and assign new ones (prevent multi-module collision + overflow reset)
-	const int32 StartID = GPUSim->AllocateParticleIDs(UploadCount);
-	for (int32 i = 0; i < UploadCount; ++i)
+	// Upload particles if any
+	if (UploadCount > 0)
 	{
-		Particles[i].ParticleID = StartID + i;
-		Particles[i].SourceID = CachedSourceID;
+		// Atomic ID assignment: ignore stored IDs and assign new ones (prevent multi-module collision + overflow reset)
+		StartID = GPUSim->AllocateParticleIDs(UploadCount);
+		for (int32 i = 0; i < UploadCount; ++i)
+		{
+			Particles[i].ParticleID = StartID + i;
+			Particles[i].SourceID = CachedSourceID;
+		}
+
+		// Upload from CPU to GPU (bAppend=true: preserve particles from other components in batching environment)
+		GPUSim->UploadParticles(Particles, /*bAppend=*/true);
+
+		// After all appends, create/update GPU buffer + reset SpawnManager state
+		GPUSim->FinalizeUpload();
 	}
 
-	// Upload from CPU to GPU (bAppend=true: preserve particles from other components in batching environment)
-	GPUSim->UploadParticles(Particles, /*bAppend=*/true);
-
-	// After all appends, create/update GPU buffer + reset SpawnManager state
-	GPUSim->FinalizeUpload();
-
-	// Run initialization simulation to stabilize particle positions (full simulation with colliders)
+	// Run initialization simulation to preload collision/landscape data (runs even with 0 particles)
 	if (UKawaiiFluidSimulationContext* Context = GetSimulationContext())
 	{
 		FSpatialHash* Hash = GetSpatialHash();
@@ -195,17 +195,25 @@ void UKawaiiFluidSimulationModule::UploadCPUParticlesToGPU()
 			TArray<FFluidParticle> EmptyParticles;  // GPU-only mode doesn't need CPU particles
 			float TempAccumulatedTime = 0.0f;
 
-			// Run one simulation frame (1 substep) to stabilize particles + calculate anisotropy
-			// DeltaTime = SubstepDeltaTime ensures exactly 1 substep is executed
+			// Run one simulation frame (1 substep) to:
+			// - Upload collision primitives to GPU
+			// - Upload landscape heightmap to GPU
+			// - Stabilize particles + calculate anisotropy (if any)
 			Context->Simulate(EmptyParticles, Preset, Params, *Hash, Preset->SubstepDeltaTime, TempAccumulatedTime);
 		}
 	}
 
 	// Clear CPU array after uploading to GPU (prevent duplicate uploads + save memory)
-	Particles.Empty();
-
-	UE_LOG(LogTemp, Log, TEXT("UploadCPUParticlesToGPU: Uploaded %d particles (SourceID=%d, IDs=%d~%d) to GPU"),
-		UploadCount, CachedSourceID, StartID, StartID + UploadCount - 1);
+	if (UploadCount > 0)
+	{
+		Particles.Empty();
+		UE_LOG(LogTemp, Log, TEXT("UploadCPUParticlesToGPU: Uploaded %d particles (SourceID=%d, IDs=%d~%d) to GPU"),
+			UploadCount, CachedSourceID, StartID, StartID + UploadCount - 1);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Log, TEXT("UploadCPUParticlesToGPU: No particles to upload, ran initialization simulation for collision/landscape preload"));
+	}
 }
 
 void UKawaiiFluidSimulationModule::BeginDestroy()
