@@ -1709,6 +1709,19 @@ int32 AKawaiiFluidVolume::RemoveParticlesInRadius(const FVector& WorldCenter, fl
 		GPUSimulator->AddDespawnByIDRequests(ParticleIDsToRemove);
 	}
 
+	// Also remove oldest particles if exceeding max count
+	if (VolumeComponent)
+	{
+		const int32 MaxCount = VolumeComponent->MaxParticleCount;
+		const int32 CurrentCount = SimulationModule->GetParticleCount();
+		const int32 CountAfterRemoval = CurrentCount - ParticleIDsToRemove.Num();
+		if (MaxCount > 0 && CountAfterRemoval > MaxCount)
+		{
+			const int32 ExcessCount = CountAfterRemoval - MaxCount;
+			SimulationModule->RemoveOldestParticles(ExcessCount);
+		}
+	}
+
 	return ParticleIDsToRemove.Num();
 }
 
