@@ -1,5 +1,6 @@
 site_name: Kawaii Fluid
 site_description: A custom SPH fluid simulation plugin for Unreal Engine 5.7
+use_directory_urls: false
 theme:
   name: material
   palette:
