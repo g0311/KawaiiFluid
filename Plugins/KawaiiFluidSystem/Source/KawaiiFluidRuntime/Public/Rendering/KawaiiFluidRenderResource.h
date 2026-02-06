@@ -203,6 +203,19 @@ public:
 	TRefCountPtr<FRDGPooledBuffer>* GetPooledVelocityBufferPtr() { return &PooledVelocityBuffer; }
 
 	//========================================
+	// GPU Particle Count Buffer (for DrawPrimitiveIndirect)
+	//========================================
+
+	/** Set persistent particle count buffer (called from ViewExtension after registering) */
+	void SetPersistentParticleCountBuffer(TRefCountPtr<FRDGPooledBuffer> InBuffer) { PooledParticleCountBuffer = InBuffer; }
+
+	/** Get persistent particle count buffer (for DrawPrimitiveIndirect in Depth/Thickness passes) */
+	TRefCountPtr<FRDGPooledBuffer> GetPooledParticleCountBuffer() const { return PooledParticleCountBuffer; }
+
+	/** Check if particle count buffer is valid */
+	bool HasValidParticleCountBuffer() const { return PooledParticleCountBuffer.IsValid(); }
+
+	//========================================
 	// Z-Order buffer access
 	//========================================
 
@@ -256,6 +269,9 @@ private:
 
 	/** FKawaiiRenderParticle buffer */
 	TRefCountPtr<FRDGPooledBuffer> PooledRenderParticleBuffer;
+
+	/** GPU particle count buffer (for DrawPrimitiveIndirect in rendering) */
+	TRefCountPtr<FRDGPooledBuffer> PooledParticleCountBuffer;
 
 	/** Current particle count stored in buffer */
 	int32 ParticleCount;

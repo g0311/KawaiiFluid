@@ -173,9 +173,9 @@ void FFluidSceneViewExtension::PreRenderViewFamily_RenderThread(
 		}
 
 		TRefCountPtr<FRDGPooledBuffer> PhysicsPooledBuffer = GPUSimulator->GetPersistentParticleBuffer();
-		const int32 ParticleCount = GPUSimulator->GetParticleCount();
+		TRefCountPtr<FRDGPooledBuffer> CountPooledBuffer = GPUSimulator->GetPersistentParticleCountBuffer();
 
-		if (!PhysicsPooledBuffer.IsValid() || ParticleCount <= 0)
+		if (!PhysicsPooledBuffer.IsValid() || !CountPooledBuffer.IsValid() || !GPUSimulator->HasEverHadParticles())
 		{
 			continue;
 		}
@@ -188,6 +188,15 @@ void FFluidSceneViewExtension::PreRenderViewFamily_RenderThread(
 			TEXT("PhysicsParticles_Extract")
 		);
 		FRDGBufferSRVRef PhysicsBufferSRV = GraphBuilder.CreateSRV(PhysicsBuffer);
+
+		// Register ParticleCountBuffer (GPU-authoritative count)
+		FRDGBufferRef CountBuffer = GraphBuilder.RegisterExternalBuffer(
+			CountPooledBuffer,
+			TEXT("ParticleCountBuffer_Extract")
+		);
+		FRDGBufferSRVRef CountBufferSRV = GraphBuilder.CreateSRV(CountBuffer);
+
+		const int32 MaxParticleCount = GPUSimulator->GetMaxParticleCount();
 
 		// Get Pooled buffers
 		TRefCountPtr<FRDGPooledBuffer> PositionPooledBuffer = RenderResource->GetPooledPositionBuffer();
@@ -213,7 +222,7 @@ void FFluidSceneViewExtension::PreRenderViewFamily_RenderThread(
 				PhysicsBufferSRV,
 				RenderParticleUAV,
 				BoundsBufferUAV,
-				ParticleCount,
+				CountBufferSRV,
 				ParticleRadius,
 				BoundsMargin
 			);
@@ -249,10 +258,14 @@ void FFluidSceneViewExtension::PreRenderViewFamily_RenderThread(
 				PhysicsBufferSRV,
 				PositionUAV,
 				VelocityUAV,
-				ParticleCount,
+				CountBufferSRV,
+				MaxParticleCount,
 				ParticleRadius
 			);
 		}
+
+		// Store CountBuffer reference in RenderResource for rendering passes
+		RenderResource->SetPersistentParticleCountBuffer(CountPooledBuffer);
 
 		// Buffer preparation complete
 		RenderResource->SetBufferReadyForRendering(true);

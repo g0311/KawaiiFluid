@@ -32,6 +32,8 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidDepthParameters, )
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, AnisotropyAxis1)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, AnisotropyAxis2)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, AnisotropyAxis3)
+	// DrawPrimitiveIndirect args buffer (RDG dependency tracking)
+	RDG_BUFFER_ACCESS(IndirectArgsBuffer, ERHIAccess::IndirectArgs)
 	RENDER_TARGET_BINDING_SLOTS()
 END_SHADER_PARAMETER_STRUCT()
 

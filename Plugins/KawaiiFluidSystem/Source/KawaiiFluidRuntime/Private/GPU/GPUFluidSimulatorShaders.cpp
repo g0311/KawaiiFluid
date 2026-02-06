@@ -330,10 +330,11 @@ void FGPUFluidSimulatorPassBuilder::AddExtractRenderDataPass(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferSRVRef PhysicsParticlesSRV,
 	FRDGBufferUAVRef RenderParticlesUAV,
-	int32 ParticleCount,
+	FRDGBufferSRVRef ParticleCountBufferSRV,
+	int32 MaxParticleCount,
 	float ParticleRadius)
 {
-	if (ParticleCount <= 0 || !PhysicsParticlesSRV || !RenderParticlesUAV)
+	if (MaxParticleCount <= 0 || !PhysicsParticlesSRV || !RenderParticlesUAV || !ParticleCountBufferSRV)
 	{
 		return;
 	}
@@ -346,15 +347,16 @@ void FGPUFluidSimulatorPassBuilder::AddExtractRenderDataPass(
 
 	PassParameters->PhysicsParticles = PhysicsParticlesSRV;
 	PassParameters->RenderParticles = RenderParticlesUAV;
-	PassParameters->ParticleCount = ParticleCount;
+	PassParameters->ParticleCountBuffer = ParticleCountBufferSRV;
 	PassParameters->ParticleRadius = ParticleRadius;
 
+	// Dispatch enough groups to cover max capacity; shader reads GPU count for bounds check
 	const int32 ThreadGroupSize = FExtractRenderDataCS::ThreadGroupSize;
-	const int32 NumGroups = FMath::DivideAndRoundUp(ParticleCount, ThreadGroupSize);
+	const int32 NumGroups = FMath::DivideAndRoundUp(MaxParticleCount, ThreadGroupSize);
 
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
-		RDG_EVENT_NAME("GPUFluid::ExtractRenderData(%d)", ParticleCount),
+		RDG_EVENT_NAME("GPUFluid::ExtractRenderData(max=%d)", MaxParticleCount),
 		ComputeShader,
 		PassParameters,
 		FIntVector(NumGroups, 1, 1));
@@ -365,11 +367,11 @@ void FGPUFluidSimulatorPassBuilder::AddExtractRenderDataWithBoundsPass(
 	FRDGBufferSRVRef PhysicsParticlesSRV,
 	FRDGBufferUAVRef RenderParticlesUAV,
 	FRDGBufferUAVRef BoundsBufferUAV,
-	int32 ParticleCount,
+	FRDGBufferSRVRef ParticleCountBufferSRV,
 	float ParticleRadius,
 	float BoundsMargin)
 {
-	if (ParticleCount <= 0 || !PhysicsParticlesSRV || !RenderParticlesUAV || !BoundsBufferUAV)
+	if (!PhysicsParticlesSRV || !RenderParticlesUAV || !BoundsBufferUAV || !ParticleCountBufferSRV)
 	{
 		return;
 	}
@@ -383,14 +385,14 @@ void FGPUFluidSimulatorPassBuilder::AddExtractRenderDataWithBoundsPass(
 	PassParameters->PhysicsParticles = PhysicsParticlesSRV;
 	PassParameters->RenderParticles = RenderParticlesUAV;
 	PassParameters->OutputBounds = BoundsBufferUAV;
-	PassParameters->ParticleCount = ParticleCount;
+	PassParameters->ParticleCountBuffer = ParticleCountBufferSRV;
 	PassParameters->ParticleRadius = ParticleRadius;
 	PassParameters->BoundsMargin = BoundsMargin;
 
-	// Single group of 256 threads with grid-stride loop (same as BoundsReduction)
+	// Single group of 256 threads with grid-stride loop (reads GPU count internally)
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
-		RDG_EVENT_NAME("GPUFluid::ExtractRenderDataWithBounds(%d)", ParticleCount),
+		RDG_EVENT_NAME("GPUFluid::ExtractRenderDataWithBounds"),
 		ComputeShader,
 		PassParameters,
 		FIntVector(1, 1, 1));
@@ -401,10 +403,11 @@ void FGPUFluidSimulatorPassBuilder::AddExtractRenderDataSoAPass(
 	FRDGBufferSRVRef PhysicsParticlesSRV,
 	FRDGBufferUAVRef RenderPositionsUAV,
 	FRDGBufferUAVRef RenderVelocitiesUAV,
-	int32 ParticleCount,
+	FRDGBufferSRVRef ParticleCountBufferSRV,
+	int32 MaxParticleCount,
 	float ParticleRadius)
 {
-	if (ParticleCount <= 0 || !PhysicsParticlesSRV || !RenderPositionsUAV || !RenderVelocitiesUAV)
+	if (MaxParticleCount <= 0 || !PhysicsParticlesSRV || !RenderPositionsUAV || !RenderVelocitiesUAV || !ParticleCountBufferSRV)
 	{
 		return;
 	}
@@ -418,15 +421,16 @@ void FGPUFluidSimulatorPassBuilder::AddExtractRenderDataSoAPass(
 	PassParameters->PhysicsParticles = PhysicsParticlesSRV;
 	PassParameters->RenderPositions = RenderPositionsUAV;
 	PassParameters->RenderVelocities = RenderVelocitiesUAV;
-	PassParameters->ParticleCount = ParticleCount;
+	PassParameters->ParticleCountBuffer = ParticleCountBufferSRV;
 	PassParameters->ParticleRadius = ParticleRadius;
 
+	// Dispatch enough groups to cover max capacity; shader reads GPU count for bounds check
 	const int32 ThreadGroupSize = FExtractRenderDataSoACS::ThreadGroupSize;
-	const int32 NumGroups = FMath::DivideAndRoundUp(ParticleCount, ThreadGroupSize);
+	const int32 NumGroups = FMath::DivideAndRoundUp(MaxParticleCount, ThreadGroupSize);
 
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
-		RDG_EVENT_NAME("GPUFluid::ExtractRenderDataSoA(%d)", ParticleCount),
+		RDG_EVENT_NAME("GPUFluid::ExtractRenderDataSoA(max=%d)", MaxParticleCount),
 		ComputeShader,
 		PassParameters,
 		FIntVector(NumGroups, 1, 1));

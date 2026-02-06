@@ -24,7 +24,7 @@ struct FRenderParticle
 
 StructuredBuffer<FGPUFluidParticle> PhysicsParticles;
 RWStructuredBuffer<FRenderParticle> RenderParticles;
-int ParticleCount;
+StructuredBuffer<uint> ParticleCountBuffer;
 float ParticleRadius;
 
 // SoA (Structure of Arrays) output buffers - Memory bandwidth optimization
@@ -40,7 +40,8 @@ RWStructuredBuffer<float3> RenderVelocities;  // 12B per particle (for motion bl
 void ExtractRenderDataCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
 	uint idx = DispatchThreadId.x;
-	if (idx >= (uint)ParticleCount)
+	uint ParticleCount = ParticleCountBuffer[6];
+	if (idx >= ParticleCount)
 	{
 		return;
 	}
@@ -79,7 +80,8 @@ void ExtractRenderDataCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 void ExtractRenderDataSoACS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
 	uint idx = DispatchThreadId.x;
-	if (idx >= (uint)ParticleCount)
+	uint ParticleCount = ParticleCountBuffer[6];
+	if (idx >= ParticleCount)
 	{
 		return;
 	}

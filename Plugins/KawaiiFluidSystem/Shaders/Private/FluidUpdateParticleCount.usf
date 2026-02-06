@@ -9,12 +9,12 @@
 // WriteAliveCountAfterCompactionCS
 // Runs with [numthreads(1,1,1)] after stream compaction
 // Reads PrefixSums[OldCount-1] + AliveMask[OldCount-1] to get exact alive count
-// Updates the full 28-byte PersistentParticleCountBuffer
+// Updates the full 44-byte PersistentParticleCountBuffer
 //=============================================================================
 
 StructuredBuffer<uint> PrefixSums;
 StructuredBuffer<uint> AliveMask;
-RWStructuredBuffer<uint> ParticleCountBuffer;  // 7 elements (28 bytes)
+RWStructuredBuffer<uint> ParticleCountBuffer;  // 11 elements (44 bytes)
 int OldParticleCount;
 
 [numthreads(1, 1, 1)]
@@ -36,17 +36,23 @@ void WriteAliveCountAfterCompactionCS(uint3 DTid : SV_DispatchThreadID)
 	ParticleCountBuffer[4] = 1;
 	ParticleCountBuffer[5] = 1;
 	ParticleCountBuffer[6] = AliveCount;                 // Raw particle count
+
+	// DrawInstancedIndirect args
+	ParticleCountBuffer[7]  = 4;           // VertexCountPerInstance (tri-strip quad)
+	ParticleCountBuffer[8]  = AliveCount;  // InstanceCount
+	ParticleCountBuffer[9]  = 0;           // StartVertexLocation
+	ParticleCountBuffer[10] = 0;           // StartInstanceLocation
 }
 
 //=============================================================================
 // UpdateCountAfterSpawnCS
 // Runs with [numthreads(1,1,1)] after SpawnParticlesCS
 // Reads the atomic SpawnCounter to get exact final count
-// Updates the full 28-byte PersistentParticleCountBuffer
+// Updates the full 44-byte PersistentParticleCountBuffer
 //=============================================================================
 
 StructuredBuffer<uint> SpawnCounter;  // Atomic counter value after spawn
-RWStructuredBuffer<uint> SpawnParticleCountBuffer;  // 7 elements (28 bytes)
+RWStructuredBuffer<uint> SpawnParticleCountBuffer;  // 11 elements (44 bytes)
 
 [numthreads(1, 1, 1)]
 void UpdateCountAfterSpawnCS(uint3 DTid : SV_DispatchThreadID)
@@ -61,4 +67,10 @@ void UpdateCountAfterSpawnCS(uint3 DTid : SV_DispatchThreadID)
 	SpawnParticleCountBuffer[4] = 1;
 	SpawnParticleCountBuffer[5] = 1;
 	SpawnParticleCountBuffer[6] = FinalCount;                 // Raw particle count
+
+	// DrawInstancedIndirect args
+	SpawnParticleCountBuffer[7]  = 4;            // VertexCountPerInstance (tri-strip quad)
+	SpawnParticleCountBuffer[8]  = FinalCount;   // InstanceCount
+	SpawnParticleCountBuffer[9]  = 0;            // StartVertexLocation
+	SpawnParticleCountBuffer[10] = 0;            // StartInstanceLocation
 }

@@ -720,7 +720,7 @@ public:
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUFluidParticle>, PhysicsParticles)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FRenderParticle>, RenderParticles)
-		SHADER_PARAMETER(int32, ParticleCount)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleCountBuffer)
 		SHADER_PARAMETER(float, ParticleRadius)
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -758,7 +758,7 @@ public:
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUFluidParticle>, PhysicsParticles)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FVector3f>, RenderPositions)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FVector3f>, RenderVelocities)
-		SHADER_PARAMETER(int32, ParticleCount)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleCountBuffer)
 		SHADER_PARAMETER(float, ParticleRadius)
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -803,7 +803,7 @@ public:
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUFluidParticle>, PhysicsParticles)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FRenderParticle>, RenderParticles)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FVector3f>, OutputBounds)
-		SHADER_PARAMETER(int32, ParticleCount)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleCountBuffer)
 		SHADER_PARAMETER(float, ParticleRadius)
 		SHADER_PARAMETER(float, BoundsMargin)
 	END_SHADER_PARAMETER_STRUCT()
@@ -1299,7 +1299,8 @@ public:
 		FRDGBuilder& GraphBuilder,
 		FRDGBufferSRVRef PhysicsParticlesSRV,
 		FRDGBufferUAVRef RenderParticlesUAV,
-		int32 ParticleCount,
+		FRDGBufferSRVRef ParticleCountBufferSRV,
+		int32 MaxParticleCount,
 		float ParticleRadius);
 
 	/** Add merged extract render data + bounds calculation pass (Optimized) */
@@ -1308,7 +1309,7 @@ public:
 		FRDGBufferSRVRef PhysicsParticlesSRV,
 		FRDGBufferUAVRef RenderParticlesUAV,
 		FRDGBufferUAVRef BoundsBufferUAV,
-		int32 ParticleCount,
+		FRDGBufferSRVRef ParticleCountBufferSRV,
 		float ParticleRadius,
 		float BoundsMargin);
 
@@ -1318,7 +1319,8 @@ public:
 	   FRDGBufferSRVRef PhysicsParticlesSRV,
 	   FRDGBufferUAVRef RenderPositionsUAV,
 	   FRDGBufferUAVRef RenderVelocitiesUAV,
-	   int32 ParticleCount,
+	   FRDGBufferSRVRef ParticleCountBufferSRV,
+	   int32 MaxParticleCount,
 	   float ParticleRadius);
 
 };

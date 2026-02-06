@@ -385,6 +385,12 @@ public:
 	TRefCountPtr<FRDGPooledBuffer> GetPersistentAnisotropyAxis3Buffer() const { return PersistentAnisotropyAxis3Buffer; }
 	TRefCountPtr<FRDGPooledBuffer> GetPersistentRenderOffsetBuffer() const { return PersistentRenderOffsetBuffer; }
 
+	/** Get persistent particle count buffer (for DrawPrimitiveIndirect in rendering) */
+	TRefCountPtr<FRDGPooledBuffer> GetPersistentParticleCountBuffer() const { return PersistentParticleCountBuffer; }
+
+	/** Check if GPU has ever had particles (for rendering early-out) */
+	bool HasEverHadParticles() const { return bEverHadParticles; }
+
 	/** Access anisotropy buffers for writing (compute shader output) */
 	TRefCountPtr<FRDGPooledBuffer>& AccessPersistentAnisotropyAxis1Buffer() { return PersistentAnisotropyAxis1Buffer; }
 	TRefCountPtr<FRDGPooledBuffer>& AccessPersistentAnisotropyAxis2Buffer() { return PersistentAnisotropyAxis2Buffer; }
@@ -1287,10 +1293,11 @@ private:
 
 	//=============================================================================
 	// Indirect Dispatch Infrastructure
-	// PersistentParticleCountBuffer: 28 bytes (7 x uint32)
-	//   [0-2]: IndirectArgs for TG=256 (GroupX, 1, 1)
-	//   [3-5]: IndirectArgs for TG=512 (GroupX, 1, 1)
-	//   [6]:   Raw particle count
+	// PersistentParticleCountBuffer: 44 bytes (11 x uint32)
+	//   [0-2]:  IndirectArgs for TG=256 (GroupX, 1, 1)
+	//   [3-5]:  IndirectArgs for TG=512 (GroupX, 1, 1)
+	//   [6]:    Raw particle count
+	//   [7-10]: DrawInstancedIndirect args (VertexCount=4, InstanceCount, StartVertex=0, StartInstance=0)
 	//=============================================================================
 
 	/** GPU-authoritative particle count buffer for DispatchIndirect */

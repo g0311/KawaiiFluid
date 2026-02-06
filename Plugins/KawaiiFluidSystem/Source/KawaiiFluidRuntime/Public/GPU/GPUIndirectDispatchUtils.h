@@ -12,7 +12,7 @@
 #include "RHICommandList.h"
 
 /**
- * PersistentParticleCountBuffer Layout (28 bytes = 7 x uint32)
+ * PersistentParticleCountBuffer Layout (44 bytes = 11 x uint32)
  *
  * Offset  0: uint32 GroupCountX_256  // ceil(Count / 256)
  * Offset  4: uint32 1               // GroupCountY
@@ -21,10 +21,15 @@
  * Offset 16: uint32 1
  * Offset 20: uint32 1
  * Offset 24: uint32 ParticleCount   // raw count
+ * Offset 28: uint32 4               // VertexCountPerInstance (tri-strip quad)
+ * Offset 32: uint32 InstanceCount   // = ParticleCount
+ * Offset 36: uint32 0               // StartVertexLocation
+ * Offset 40: uint32 0               // StartInstanceLocation
  *
  * TG=256 IndirectArgs at offset 0 (bytes 0-11)
  * TG=512 IndirectArgs at offset 12 (bytes 12-23)
  * Raw count at offset 24 (element index 6)
+ * DrawInstancedIndirect args at offset 28 (bytes 28-43)
  */
 namespace GPUIndirectDispatch
 {
@@ -40,18 +45,21 @@ namespace GPUIndirectDispatch
 	/** Byte offset for raw particle count */
 	static constexpr uint32 ParticleCountByteOffset = 24;
 
+	/** Byte offset for DrawInstancedIndirect args (4 x uint32) */
+	static constexpr uint32 DrawIndirectArgsOffset = 28;
+
 	/** Total buffer size in bytes */
-	static constexpr uint32 BufferSizeBytes = 28;
+	static constexpr uint32 BufferSizeBytes = 44;
 
 	/** Total buffer size in uint32 elements */
-	static constexpr uint32 BufferSizeElements = 7;
+	static constexpr uint32 BufferSizeElements = 11;
 
 	/**
 	 * Create initial data for PersistentParticleCountBuffer
 	 * @param ParticleCount - Current particle count
-	 * @param OutData - Output array (must have 7 elements)
+	 * @param OutData - Output array (must have 11 elements)
 	 */
-	inline void BuildInitData(uint32 ParticleCount, uint32 OutData[7])
+	inline void BuildInitData(uint32 ParticleCount, uint32 OutData[BufferSizeElements])
 	{
 		OutData[0] = FMath::DivideAndRoundUp(ParticleCount, 256u);  // GroupCountX_256
 		OutData[1] = 1;                                              // GroupCountY
@@ -60,17 +68,22 @@ namespace GPUIndirectDispatch
 		OutData[4] = 1;                                              // GroupCountY
 		OutData[5] = 1;                                              // GroupCountZ
 		OutData[6] = ParticleCount;                                  // Raw count
+		OutData[7] = 4;                                              // VertexCountPerInstance (tri-strip quad)
+		OutData[8] = ParticleCount;                                  // InstanceCount
+		OutData[9] = 0;                                              // StartVertexLocation
+		OutData[10] = 0;                                             // StartInstanceLocation
 	}
 
 	/**
 	 * Build zero-count initial data (for ClearCachedParticles)
 	 * GroupCountX = 0, GroupCountY/Z = 1
 	 */
-	inline void BuildZeroData(uint32 OutData[7])
+	inline void BuildZeroData(uint32 OutData[BufferSizeElements])
 	{
 		OutData[0] = 0; OutData[1] = 1; OutData[2] = 1;
 		OutData[3] = 0; OutData[4] = 1; OutData[5] = 1;
 		OutData[6] = 0;
+		OutData[7] = 4; OutData[8] = 0; OutData[9] = 0; OutData[10] = 0;
 	}
 
 	/**

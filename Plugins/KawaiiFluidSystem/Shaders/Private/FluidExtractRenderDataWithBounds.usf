@@ -26,7 +26,7 @@ struct FRenderParticle
 StructuredBuffer<FGPUFluidParticle> PhysicsParticles;
 RWStructuredBuffer<FRenderParticle> RenderParticles;
 RWStructuredBuffer<float3> OutputBounds; // [0] = Min, [1] = Max
-int ParticleCount;
+StructuredBuffer<uint> ParticleCountBuffer;
 float ParticleRadius;
 float BoundsMargin;
 
@@ -43,6 +43,9 @@ groupshared float3 SharedMax[BOUNDS_THREAD_GROUP_SIZE];
 [numthreads(BOUNDS_THREAD_GROUP_SIZE, 1, 1)]
 void ExtractRenderDataWithBoundsCS(uint3 GroupId : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint GI : SV_GroupIndex)
 {
+	// Read GPU-authoritative particle count
+	uint ParticleCount = ParticleCountBuffer[6];
+
 	// Initialize bounds with extreme values
 	float3 localMin = float3(1e10, 1e10, 1e10);
 	float3 localMax = float3(-1e10, -1e10, -1e10);
@@ -61,7 +64,7 @@ void ExtractRenderDataWithBoundsCS(uint3 GroupId : SV_GroupID, uint3 DTid : SV_D
 	// Grid-stride loop: each thread processes particles at indices GI, GI+256, GI+512, ...
 	const float MAX_VALID_COORD = 100000.0f;
 
-	for (uint i = GI; i < (uint)ParticleCount; i += BOUNDS_THREAD_GROUP_SIZE)
+	for (uint i = GI; i < ParticleCount; i += BOUNDS_THREAD_GROUP_SIZE)
 	{
 		FGPUFluidParticle physics = PhysicsParticles[i];
 		float3 pos = physics.Position;
