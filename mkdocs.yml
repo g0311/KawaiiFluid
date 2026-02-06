@@ -28,7 +28,6 @@ theme:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
-  - Easy Start Rules: easy-start-rules.md
   - User Guides:
       - Volume & Emitter Guide: volume-emitter-guide.md
       - Brush Tool: brush.md
