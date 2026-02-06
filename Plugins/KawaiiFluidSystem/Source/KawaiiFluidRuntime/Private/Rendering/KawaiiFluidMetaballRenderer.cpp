@@ -184,13 +184,13 @@ void UKawaiiFluidMetaballRenderer::UpdateRendering(const IKawaiiFluidDataProvide
 	// Cache radius for shader parameters
 	CachedParticleRadius = RenderRadius;
 
-	// Debug logging
-	static int32 FrameCounter = 0;
-	if (++FrameCounter % 60 == 0)
-	{
-		UE_LOG(LogTemp, Log, TEXT("MetaballRenderer: GPU mode - Set simulator reference in RenderResource (%d particles, radius: %.2f)"),
-			GPUParticleCount, RenderRadius);
-	}
+	// // Debug logging
+	// static int32 FrameCounter = 0;
+	// if (++FrameCounter % 60 == 0)
+	// {
+	// 	UE_LOG(LogTemp, Log, TEXT("MetaballRenderer: GPU mode - Set simulator reference in RenderResource (%d particles, radius: %.2f)"),
+	// 		GPUParticleCount, RenderRadius);
+	// }
 }
 
 FKawaiiFluidRenderResource* UKawaiiFluidMetaballRenderer::GetFluidRenderResource() const

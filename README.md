@@ -1,51 +1,48 @@
-# KawaiiFluidSystem
+# Kawaii Fluid System
 
-**KawaiiFluidSystem** is a GPU-based PBF (Position Based Fluids) viscous fluid simulation system for Unreal Engine 5.  
-It simulates tens of thousands of particles in real-time using high-performance GPU computing, implementing various physical phenomena such as viscosity, adhesion, and surface tension.
+**Kawaii Fluid** is a high-performance, **2-way interactive viscous fluid system** for Unreal Engine 5.7. It simulates complex liquid dynamics in real-time by leveraging advanced GPU-based physics solvers and optimized data structures.
 
-## ✨ Key Features
+![Fluid Interaction](docs/media/main-logo.png)
 
-*   **GPU-Based PBF Simulation**: High-performance physics engine capable of processing tens of thousands of particles in real-time.
-*   **Advanced Physical Properties**:
-    *   **Viscosity**: Realistic representation of thick fluids like honey or lava.
-    *   **Adhesion**: Particle-to-surface sticking effects.
-    *   **Density Constraints**: Volume preservation and pressure solving.
-    *   **Stack Pressure**: Stable pressure simulation in deep fluid layers.
-*   **Robust Collision System**:
-    *   Support for primitive colliders (Box, Capsule).
-    *   Static Mesh and **Skeletal Mesh (BVH-based)** collision support.
-*   **High-Quality Rendering**:
-    *   **Anisotropy**: Smooth fluid surfaces by rendering particles as ellipsoids.
-    *   Support for Metaballs and Instanced Static Mesh (ISM) rendering.
-*   **Data-Asset Driven Presets**: Manage various fluid settings (Water, Lava, Honey, Slime, etc.) via reusable data assets.
-*   **Editor Workflow**: Particle placement/removal using brush tools and real-time debug visualization.
+## [Documentation](https://gtlbruteforce.github.io/KawaiiFluid/)
 
-## 🏗️ System Architecture
+## Project Overview
 
-1.  **Kawaii Fluid Volume**: The fundamental simulation unit and solver. All physics calculations and particle data are managed within the volume.
-2.  **Kawaii Fluid Emitter**: An actor that generates fluid particles and supplies them to a specific volume.
-3.  **Kawaii Fluid Collider**: Handles interaction between fluids and objects (static or dynamic).
-4.  **Preset System**: Decouples physical properties (viscosity, spacing, mass, etc.) and rendering settings into assets for high reusability.
+Kawaii Fluid provides seamless interaction between fluids and dynamic actors. It achieves realistic viscosity and two-way coupling (force feedback) using state-of-the-art simulation techniques.
 
-## 🚀 Getting Started
+### Core Highlights:
+*   **XPBD & XSPH Hybrid Solver**: Stable pressure and realistic internal friction.
+*   **Massive Particle Count**: Tens of thousands of particles at real-time frame rates.
+*   **Dynamic Interaction**: Real-time collision with Skeletal Meshes and character attachment.
 
-### Installation
-1. Copy the `KawaiiFluidSystem` folder into your project's `Plugins` directory.
-2. Right-click your `.uproject` file and select `Generate Visual Studio project files`.
-3. Build the project and launch Unreal Engine.
+## System Architecture
 
-### Basic Usage
-1. Place a **Kawaii Fluid Volume** actor in your level.
-2. Assign a `Fluid Preset` in the `VolumeComponent` of the volume actor.
-3. Place a **Kawaii Fluid Emitter** inside the volume to start generating particles.
-4. Add a **Kawaii Fluid Collider** component to any object that needs to interact with the fluid.
+### KawaiiFluidRuntime
+Responsible for the core physics simulation and rendering pipeline.
 
-## 🛠️ Technical Details
+*   **Simulation Context**: Pure stateless solver logic for viscosity, surface tension, and density.
+*   **GPU Pipeline**: Optimized Compute Shader architecture featuring **SoA (Structure of Arrays)** conversion for maximum bandwidth efficiency.
+*   **Physics Solvers**: Hybrid **XPBD** and **XSPH** for stability and realism.
+*   **Collision System**: Advanced 2-way dynamic interaction supporting **Bone Colliders** and **Character Attachment**.
+*   **Rendering Pipeline**: High-quality Screen Space Fluid Rendering (SSFR).
 
-*   **Solver**: Position Based Fluids (PBF)
-*   **Neighbor Search**: GPU Spatial Hashing (Z-Order based)
-*   **Shaders**: Custom HLSL (USF/USH)
-*   **Minimum Specs**: DirectX 12 compatible GPU (Windows 64-bit)
+## Core Technologies
 
-## 📄 License
+### 1. Performance Optimization
+*   **Bandwidth Efficiency**: Reduces memory overhead through SoA and Half-Precision packing.
+*   **Z-Order Spatial Sorting**: Maximizes GPU cache hits by aligning spatial data with memory layout.
+
+### 2. Screen Space Fluid Rendering
+Features anisotropic smoothing to prevent "jaggies" on fluid surfaces and realistic optical effects like refraction and Jacobian caustics.
+
+### 3. Dynamic 2-Way Interaction
+Real-time feedback loop where actors receive impulses and fluid particles respond to skeletal movement using specialized **Boundary Tagging**.
+
+## Technical Specs
+*   **Solvers**: XPBD (Macklin 2016), XSPH (Macklin & Müller 2013).
+*   **Rendering**: SSFR (Yu & Turk 2013).
+*   **Optimization**: SoA, Half-Precision, Z-order Sorting.
+*   **Engine**: Unreal Engine 5.7 (DirectX 12).
+
+## License
 Copyright 2026 Team_Bruteforce. All Rights Reserved.

@@ -486,8 +486,8 @@ void UMeshFluidCollider::CacheStaticMeshCollision(UStaticMeshComponent* StaticMe
 		// BoneIndex stays at default value (-1) for StaticMesh
 
 		// [Debug] Verify StaticMesh box BoneIndex at cache time
-		UE_LOG(LogTemp, Warning, TEXT("[StaticMeshCache] Box: BoneIndex=%d (should be -1), Extent=(%.1f,%.1f,%.1f)"),
-			CachedBx.BoneIndex, CachedBx.Extent.X, CachedBx.Extent.Y, CachedBx.Extent.Z);
+		// UE_LOG(LogTemp, Warning, TEXT("[StaticMeshCache] Box: BoneIndex=%d (should be -1), Extent=(%.1f,%.1f,%.1f)"),
+		// 	CachedBx.BoneIndex, CachedBx.Extent.X, CachedBx.Extent.Y, CachedBx.Extent.Z);
 
 		CachedBoxes.Add(CachedBx);
 

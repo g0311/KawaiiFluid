@@ -26,12 +26,12 @@ theme:
     - content.code.copy
 
 nav:
-  - Home: index.md
+  - Overview: index.md
   - Getting Started: getting-started.md
   - User Guides:
-      - Volume & Emitter Guide: volume-emitter-guide.md
-      - Brush Tool: brush.md
-      - Interaction Examples: interaction-bp-example.md
+      - Fluid Brush Tool: brush-tool-guide.md
+      - Rendering Options: rendering-option-guide.md
+      - Interaction Blueprint Examples: interaction-blueprint-examples.md
 
 markdown_extensions:
   - admonition
