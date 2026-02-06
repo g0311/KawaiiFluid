@@ -41,6 +41,7 @@ RWBuffer<uint2> PackedVelocities;       // B plan: half3 packed as uint2
 float UniformParticleMass;              // B plan: uniform mass (same for all particles)
 RWBuffer<uint> Flags;                   // uint
 int ParticleCount;
+StructuredBuffer<uint> ParticleCountBuffer;
 
 // Boundary particles
 StructuredBuffer<FGPUBoundaryParticle> BoundaryParticles;
@@ -182,7 +183,7 @@ void BuildBoundaryHashCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 void BoundaryAdhesionCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
 	uint idx = DispatchThreadId.x;
-	if (idx >= (uint)ParticleCount)
+	if (idx >= ParticleCountBuffer[6])
 	{
 		return;
 	}

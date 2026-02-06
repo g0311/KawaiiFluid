@@ -6,6 +6,7 @@
 #include <GPU/GPUFluidSpatialData.h>
 
 #include "GPU/GPUFluidSimulatorShaders.h"
+#include "GPU/GPUIndirectDispatchUtils.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -1130,7 +1131,8 @@ void FGPUBoundarySkinningManager::AddBoundaryAdhesionPass(
 	int32 InSameFrameBoundaryCount,
 	FRDGBufferSRVRef InZOrderSortedSRV,
 	FRDGBufferSRVRef InZOrderCellStartSRV,
-	FRDGBufferSRVRef InZOrderCellEndSRV)
+	FRDGBufferSRVRef InZOrderCellEndSRV,
+	FRDGBufferRef IndirectArgsBuffer)
 {
 	// =========================================================================
 	// DISPATCH-LEVEL EARLY-OUT: Skip entire pass if boundary AABB doesn't overlap volume
@@ -1233,6 +1235,10 @@ void FGPUBoundarySkinningManager::AddBoundaryAdhesionPass(
 		PassParameters->UniformParticleMass = Params.ParticleMass;
 		PassParameters->Flags = GraphBuilder.CreateUAV(SpatialData.SoA_Flags, PF_R32_UINT);
 		PassParameters->ParticleCount = CurrentParticleCount;
+		if (IndirectArgsBuffer)
+		{
+			PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+		}
 		PassParameters->BoundaryParticles = BoundaryParticlesSRV;
 		PassParameters->BoundaryParticleCount = BoundaryParticleCount;
 		// Legacy Spatial Hash mode
@@ -1356,15 +1362,28 @@ void FGPUBoundarySkinningManager::AddBoundaryAdhesionPass(
 		// 		CurrentParticleCount);
 		// }
 
-		const uint32 NumGroups = FMath::DivideAndRoundUp(CurrentParticleCount, FBoundaryAdhesionCS::ThreadGroupSize);
-
-		FComputeShaderUtils::AddPass(
-			GraphBuilder,
-			RDG_EVENT_NAME("GPUFluid::BoundaryAdhesion%s", bCanUseZOrder ? TEXT(" (Z-Order)") : TEXT("")),
-			AdhesionShader,
-			PassParameters,
-			FIntVector(NumGroups, 1, 1)
-		);
+		if (IndirectArgsBuffer)
+		{
+			GPUIndirectDispatch::AddIndirectComputePass(
+				GraphBuilder,
+				RDG_EVENT_NAME("GPUFluid::BoundaryAdhesion%s", bCanUseZOrder ? TEXT(" (Z-Order)") : TEXT("")),
+				AdhesionShader,
+				PassParameters,
+				IndirectArgsBuffer,
+				GPUIndirectDispatch::IndirectArgsOffset_TG256
+			);
+		}
+		else
+		{
+			const uint32 NumGroups = FMath::DivideAndRoundUp(CurrentParticleCount, FBoundaryAdhesionCS::ThreadGroupSize);
+			FComputeShaderUtils::AddPass(
+				GraphBuilder,
+				RDG_EVENT_NAME("GPUFluid::BoundaryAdhesion%s", bCanUseZOrder ? TEXT(" (Z-Order)") : TEXT("")),
+				AdhesionShader,
+				PassParameters,
+				FIntVector(NumGroups, 1, 1)
+			);
+		}
 
 		// Note: IS_ATTACHED particles are visually debugged via cyan color in rendering
 		// See particle rendering shader for visual debugging

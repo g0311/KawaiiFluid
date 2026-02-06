@@ -1525,6 +1525,7 @@ public:
 		SHADER_PARAMETER(float, UniformParticleMass)  // B plan: uniform mass
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, Flags)
 		SHADER_PARAMETER(int32, ParticleCount)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleCountBuffer)
 		// Legacy boundary particles (unsorted)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoundaryParticle>, BoundaryParticles)
 		SHADER_PARAMETER(int32, BoundaryParticleCount)

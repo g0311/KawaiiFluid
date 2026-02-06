@@ -263,7 +263,8 @@ public:
 		int32 InSameFrameBoundaryCount = 0,
 		FRDGBufferSRVRef InZOrderSortedSRV = nullptr,
 		FRDGBufferSRVRef InZOrderCellStartSRV = nullptr,
-		FRDGBufferSRVRef InZOrderCellEndSRV = nullptr);
+		FRDGBufferSRVRef InZOrderCellEndSRV = nullptr,
+		FRDGBufferRef IndirectArgsBuffer = nullptr);
 
 	/** Get world boundary buffer for other passes */
 	TRefCountPtr<FRDGPooledBuffer>& GetWorldBoundaryBuffer() { return PersistentWorldBoundaryBuffer; }

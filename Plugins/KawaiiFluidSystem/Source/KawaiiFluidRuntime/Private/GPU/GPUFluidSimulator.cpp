@@ -2771,7 +2771,8 @@ void FGPUFluidSimulator::AddBoundaryAdhesionPass(FRDGBuilder& GraphBuilder, cons
 			BoundarySkinningManager->AddBoundaryAdhesionPass(
 				GraphBuilder, SpatialData, CurrentParticleCount, Params,
 				BoundaryBuffer, BoundaryCount,
-				ZOrderSortedSRV, ZOrderCellStartSRV, ZOrderCellEndSRV);
+				ZOrderSortedSRV, ZOrderCellStartSRV, ZOrderCellEndSRV,
+				CurrentIndirectArgsBuffer);
 		}
 	}
 }
