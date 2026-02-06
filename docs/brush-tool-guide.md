@@ -1,6 +1,4 @@
-# Brush
-
-## Fluid Brush Tool
+# Fluid Brush Tool Guide
 
 The Fluid Brush Tool allows you to interactively paint or erase fluid particles directly in the editor viewport. This is useful for:
 
@@ -28,7 +26,7 @@ In the Details panel, find the Brush Editor category and click the "Start Brush"
 
 Expand the Brush Settings section to customize:
 
-| **Setting** | **Description** | **Range** |
+| Setting | Description | Range |
 | --- | --- | --- |
 | **Mode** | Add - Paint new particles / Remove - Erase particles | Add, Remove |
 | **Radius** | Size of the brush circle | 10 ~ 500 |
@@ -47,9 +45,9 @@ Expand the Brush Settings section to customize:
 
 ---
 
-Keyboard Shortcuts
+### Keyboard Shortcuts
 
-| **Key** | **Action** |
+| Key | Action |
 | --- | --- |
 | **[** | Decrease brush size |
 | **]** | Increase brush size |
@@ -66,7 +64,7 @@ Press ESC or click the "Stop Brush" button in the Details panel.
 
 ---
 
-Tips
+### Tips
 
 - The HUD displays current mode, radius, and particle count
 - Brush only works within the Volume bounds
