@@ -5,6 +5,7 @@ DerivedDataCache/
 Intermediate/
 Saved/
 Content/
+!Plugins/KawaiiFluidSystem/Content/
 
 # Plugins - Binaries and Intermediate folders within plugins
 Plugins/*/Binaries/
