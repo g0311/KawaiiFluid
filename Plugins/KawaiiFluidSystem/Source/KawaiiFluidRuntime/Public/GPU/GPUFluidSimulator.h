@@ -153,7 +153,7 @@ public:
 		bEverHadParticles = false;
 		PersistentParticleCountBuffer = nullptr;
 
-		// Also reset SpawnManager state (NextParticleID, AlreadyRequestedIDs, etc.)
+		// Also reset SpawnManager state (NextParticleID, despawn queues, etc.)
 		if (SpawnManager)
 		{
 			SpawnManager->Reset();
@@ -384,6 +384,12 @@ public:
 	TRefCountPtr<FRDGPooledBuffer> GetPersistentAnisotropyAxis2Buffer() const { return PersistentAnisotropyAxis2Buffer; }
 	TRefCountPtr<FRDGPooledBuffer> GetPersistentAnisotropyAxis3Buffer() const { return PersistentAnisotropyAxis3Buffer; }
 	TRefCountPtr<FRDGPooledBuffer> GetPersistentRenderOffsetBuffer() const { return PersistentRenderOffsetBuffer; }
+
+	/** Get persistent particle count buffer (for DrawPrimitiveIndirect in rendering) */
+	TRefCountPtr<FRDGPooledBuffer> GetPersistentParticleCountBuffer() const { return PersistentParticleCountBuffer; }
+
+	/** Check if GPU has ever had particles (for rendering early-out) */
+	bool HasEverHadParticles() const { return bEverHadParticles; }
 
 	/** Access anisotropy buffers for writing (compute shader output) */
 	TRefCountPtr<FRDGPooledBuffer>& AccessPersistentAnisotropyAxis1Buffer() { return PersistentAnisotropyAxis1Buffer; }
@@ -713,20 +719,25 @@ public:
 	void AddSpawnRequests(const TArray<FGPUSpawnRequest>& Requests);
 
 	/**
-	 * Add despawn requests by particle IDs (thread-safe)
-	 * Uses binary search on GPU for O(log n) matching per particle
-	 * CleanupCompletedRequests is called from ProcessStatsReadback when readback completes
-	 * @param ParticleIDs - Array of particle IDs to despawn
+	 * Add GPU brush despawn request - removes particles within radius (thread-safe)
+	 * @param Center - World position of brush center
+	 * @param Radius - Brush radius
 	 */
-	void AddDespawnByIDRequests(const TArray<int32>& ParticleIDs);
+	void AddGPUDespawnBrushRequest(const FVector3f& Center, float Radius);
 
 	/**
-	 * Add despawn requests, filtering out already requested IDs
-	 * @param CandidateIDs - Sorted array of candidate particle IDs
-	 * @param MaxCount - Maximum number of new IDs to add
-	 * @return Number of new IDs actually added
+	 * Add GPU source despawn request - removes all particles with SourceID (thread-safe)
+	 * @param SourceID - Source component ID to despawn
 	 */
-	int32 AddDespawnByIDRequestsFiltered(const TArray<int32>& CandidateIDs, int32 MaxCount);
+	void AddGPUDespawnSourceRequest(int32 SourceID);
+
+	/**
+	 * Set per-source emitter max for GPU-driven recycling (thread-safe)
+	 * GPU automatically removes oldest particles to keep each source under its limit
+	 * @param SourceID - Source component ID (0 to MaxSourceCount-1)
+	 * @param MaxCount - Max particles for this source (0 = no limit / disable)
+	 */
+	void SetSourceEmitterMax(int32 SourceID, int32 MaxCount);
 
 	/**
 	 * Lightweight API for despawn operations - returns positions, IDs and source IDs
@@ -1113,19 +1124,6 @@ private:
 	// ParticleID Sorting for Readback Optimization
 	//=============================================================================
 
-	/**
-	 * Execute ParticleID sort pipeline - sorts particles by ParticleID (oldest first)
-	 * Used for CPU readback optimization: enables O(1) oldest particle removal
-	 * @param GraphBuilder - RDG builder
-	 * @param InParticleBuffer - Input particle buffer (Z-Order sorted)
-	 * @param ParticleCount - Number of particles
-	 * @return Sorted particle buffer (transient, valid within RDG scope)
-	 */
-	FRDGBufferRef ExecuteParticleIDSortPipeline(
-		FRDGBuilder& GraphBuilder,
-		FRDGBufferRef InParticleBuffer,
-		int32 ParticleCount);
-
 private:
 	//=============================================================================
 	// GPU Buffers
@@ -1290,10 +1288,11 @@ private:
 
 	//=============================================================================
 	// Indirect Dispatch Infrastructure
-	// PersistentParticleCountBuffer: 28 bytes (7 x uint32)
-	//   [0-2]: IndirectArgs for TG=256 (GroupX, 1, 1)
-	//   [3-5]: IndirectArgs for TG=512 (GroupX, 1, 1)
-	//   [6]:   Raw particle count
+	// PersistentParticleCountBuffer: 44 bytes (11 x uint32)
+	//   [0-2]:  IndirectArgs for TG=256 (GroupX, 1, 1)
+	//   [3-5]:  IndirectArgs for TG=512 (GroupX, 1, 1)
+	//   [6]:    Raw particle count
+	//   [7-10]: DrawInstancedIndirect args (VertexCount=4, InstanceCount, StartVertex=0, StartInstance=0)
 	//=============================================================================
 
 	/** GPU-authoritative particle count buffer for DispatchIndirect */

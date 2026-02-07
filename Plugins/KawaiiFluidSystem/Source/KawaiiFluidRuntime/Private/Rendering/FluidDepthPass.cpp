@@ -5,6 +5,7 @@
 #include "Rendering/KawaiiFluidRenderResource.h"
 #include "Modules/KawaiiFluidRenderingModule.h"
 #include "Rendering/KawaiiFluidMetaballRenderer.h"
+#include "GPU/GPUIndirectDispatchUtils.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "SceneView.h"
@@ -153,7 +154,6 @@ void RenderFluidDepthPass(
 		ProcessedResources.Add(RR);
 
 		FRDGBufferSRVRef ParticleBufferSRV = nullptr;
-		int32 ParticleCount = 0;
 
 		// Anisotropy state
 		bool bUseAnisotropy = false;
@@ -163,11 +163,12 @@ void RenderFluidDepthPass(
 
 		// =====================================================
 		// Unified path: unified data access from RenderResource
-		// Both GPU/CPU use same buffer
+		// Check GPU count buffer first (accurate), fall back to CPU count
 		// =====================================================
-		ParticleCount = RR->GetUnifiedParticleCount();
-		if (ParticleCount <= 0)
+		TRefCountPtr<FRDGPooledBuffer> CountPooledBuffer = RR->GetPooledParticleCountBuffer();
+		if (!CountPooledBuffer.IsValid())
 		{
+			// No GPU count buffer means no valid render data
 			continue;
 		}
 
@@ -218,14 +219,20 @@ void RenderFluidDepthPass(
 			RenderOffsetSRV = GraphBuilder.CreateSRV(DummyOffsetBuffer);
 		}
 
-		// Skip if no valid particles
-		if (!ParticleBufferSRV || ParticleCount == 0)
+		// Skip if no valid buffer
+		if (!ParticleBufferSRV)
 		{
 			continue;
 		}
 
+		// Register indirect args buffer for DrawPrimitiveIndirect
+		FRDGBufferRef IndirectArgsRDGBuffer = GraphBuilder.RegisterExternalBuffer(
+			CountPooledBuffer,
+			TEXT("DepthPass_IndirectArgs"));
+
 		// Shader Parameters (matrices pre-computed outside loop)
 		auto* PassParameters = GraphBuilder.AllocParameters<FFluidDepthParameters>();
+		PassParameters->IndirectArgsBuffer = IndirectArgsRDGBuffer;
 		PassParameters->ParticlePositions = ParticleBufferSRV;
 		PassParameters->ParticleRadius = ParticleRadius;
 		PassParameters->ViewMatrix = FMatrix44f(ViewMatrix);
@@ -288,8 +295,8 @@ void RenderFluidDepthPass(
 		GraphBuilder.AddPass(
 			RDG_EVENT_NAME("DepthDraw_Batched%s", bUseAnisotropy ? TEXT("_Anisotropic") : TEXT("")),
 			PassParameters,
-			ERDGPassFlags::Raster,
-			[VertexShader, PixelShader, PassParameters, ParticleCount, ViewRect](
+			ERDGPassFlags::Raster | ERDGPassFlags::NeverCull,
+			[VertexShader, PixelShader, PassParameters, IndirectArgsRDGBuffer, ViewRect](
 			FRHICommandList& RHICmdList)
 			{
 				FGraphicsPipelineStateInitializer GraphicsPSOInit;
@@ -318,7 +325,8 @@ void RenderFluidDepthPass(
 				SetShaderParameters(RHICmdList, PixelShader, PixelShader.GetPixelShader(),
 				                    *PassParameters);
 
-				RHICmdList.DrawPrimitive(0, 2, ParticleCount);
+				// DrawPrimitiveIndirect: GPU reads instance count from ParticleCountBuffer
+				RHICmdList.DrawPrimitiveIndirect(IndirectArgsRDGBuffer->GetRHI(), GPUIndirectDispatch::DrawIndirectArgsOffset);
 			});
 	}
 }

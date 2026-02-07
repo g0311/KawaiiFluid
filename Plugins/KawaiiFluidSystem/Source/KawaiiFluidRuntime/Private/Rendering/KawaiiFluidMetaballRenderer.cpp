@@ -168,18 +168,20 @@ void UKawaiiFluidMetaballRenderer::UpdateRendering(const IKawaiiFluidDataProvide
 	// Update anisotropy parameters to GPU simulator
 	Simulator->SetAnisotropyParams(GetLocalParameters().AnisotropyParams);
 
-	// Get particle count (atomic, thread-safe read)
-	const int32 GPUParticleCount = Simulator->GetParticleCount();
+	// Use MaxParticleCount for buffer sizing (immune to CPU/GPU count desync)
+	const int32 MaxParticleCount = Simulator->GetMaxParticleCount();
 
 	// Access GPU buffers through RenderResource on render thread
 	if (FKawaiiFluidRenderResource* RR = GetFluidRenderResource())
 	{
-		RR->SetGPUSimulatorReference(Simulator, GPUParticleCount, RenderRadius);
+		RR->SetGPUSimulatorReference(Simulator, MaxParticleCount, RenderRadius);
 	}
 
-	// Update stats
-	LastRenderedParticleCount = FMath::Min(GPUParticleCount, MaxRenderParticles);
-	bIsRenderingActive = (GPUParticleCount > 0);
+	// Update stats (stale CPU count is fine for UI display)
+	LastRenderedParticleCount = FMath::Min(Simulator->GetParticleCount(), MaxRenderParticles);
+	// Use bEverHadParticles instead of stale CPU count — GPU DrawPrimitiveIndirect
+	// handles zero-particle case via InstanceCount=0, no rendering artifacts
+	bIsRenderingActive = Simulator->HasEverHadParticles();
 
 	// Cache radius for shader parameters
 	CachedParticleRadius = RenderRadius;

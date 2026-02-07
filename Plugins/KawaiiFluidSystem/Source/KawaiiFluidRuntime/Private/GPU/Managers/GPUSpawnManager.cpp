@@ -3,10 +3,10 @@
 
 #include "GPU/Managers/GPUSpawnManager.h"
 #include "GPU/GPUFluidSimulatorShaders.h"
+#include "GPU/GPUIndirectDispatchUtils.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "RHIGPUReadback.h"
-#include <algorithm>  // std::set_intersection, std::set_difference, std::merge, std::lower_bound
 
 DECLARE_LOG_CATEGORY_EXTERN(LogGPUSpawnManager, Log, All);
 DEFINE_LOG_CATEGORY(LogGPUSpawnManager);
@@ -44,6 +44,11 @@ void FGPUSpawnManager::Initialize(int32 InMaxParticleCount)
 	// Initialize source counter cache
 	CachedSourceCounts.SetNumZeroed(EGPUParticleSource::MaxSourceCount);
 
+	// Initialize per-source emitter max counts
+	EmitterMaxCountsCPU.SetNumZeroed(EGPUParticleSource::MaxSourceCount);
+	ActiveEmitterMaxCount = 0;
+	bEmitterMaxCountsDirty = false;
+
 	// Create source counter readback ring buffer
 	SourceCounterReadbacks.SetNum(SourceCounterRingBufferSize);
 	for (int32 i = 0; i < SourceCounterRingBufferSize; ++i)
@@ -68,11 +73,12 @@ void FGPUSpawnManager::Release()
 	}
 
 	{
-		FScopeLock Lock(&DespawnByIDLock);
-		PendingDespawnByIDs.Empty();
-		ActiveDespawnByIDs.Empty();
-		AlreadyRequestedIDs.Empty();
-		bHasPendingDespawnByIDRequests.store(false);
+		FScopeLock Lock(&GPUDespawnLock);
+		PendingGPUBrushDespawns.Empty();
+		ActiveGPUBrushDespawns.Empty();
+		PendingGPUSourceDespawns.Empty();
+		ActiveGPUSourceDespawns.Empty();
+		bHasPendingGPUDespawnRequests.store(false);
 	}
 
 	// Release source counter resources
@@ -101,6 +107,18 @@ void FGPUSpawnManager::Release()
 	PersistentCompactedBuffer[1].SafeRelease();
 	CompactedBufferIndex = 0;
 	StreamCompactionCapacity = 0;
+
+	// Release oldest despawn histogram buffers
+	PersistentIDHistogramBuffer.SafeRelease();
+	PersistentOldestThresholdBuffer.SafeRelease();
+	PersistentBoundaryCounterBuffer.SafeRelease();
+
+	// Release per-source recycle buffers
+	PersistentEmitterMaxCountsBuffer.SafeRelease();
+	PersistentPerSourceExcessBuffer.SafeRelease();
+	EmitterMaxCountsCPU.Empty();
+	ActiveEmitterMaxCount = 0;
+	bEmitterMaxCountsDirty = false;
 
 	NextParticleID.store(0);
 	bIsInitialized = false;
@@ -188,188 +206,503 @@ int32 FGPUSpawnManager::CancelPendingSpawnsForSource(int32 SourceID)
 }
 
 //=============================================================================
-// ID-Based Despawn API
+// GPU-Driven Despawn API
 //=============================================================================
 
-void FGPUSpawnManager::AddDespawnByIDRequest(int32 ParticleID)
+void FGPUSpawnManager::AddGPUDespawnBrushRequest(const FVector3f& Center, float Radius)
 {
-	FScopeLock Lock(&DespawnByIDLock);
-
-	// Check for duplicates using binary search O(log n)
-	auto It = std::lower_bound(AlreadyRequestedIDs.GetData(),
-		AlreadyRequestedIDs.GetData() + AlreadyRequestedIDs.Num(), ParticleID);
-
-	if (It != AlreadyRequestedIDs.GetData() + AlreadyRequestedIDs.Num() && *It == ParticleID)
-	{
-		return;  // Already requested
-	}
-
-	// Insert at sorted position
-	const int32 InsertIdx = It - AlreadyRequestedIDs.GetData();
-	AlreadyRequestedIDs.Insert(ParticleID, InsertIdx);
-
-	PendingDespawnByIDs.Add(ParticleID);
-	bHasPendingDespawnByIDRequests.store(true);
+	FScopeLock Lock(&GPUDespawnLock);
+	PendingGPUBrushDespawns.Emplace(Center, Radius);
+	bHasPendingGPUDespawnRequests.store(true);
 }
 
-void FGPUSpawnManager::CleanupCompletedRequests(const TArray<int32>& AliveParticleIDs)
+void FGPUSpawnManager::AddGPUDespawnSourceRequest(int32 SourceID)
 {
-	FScopeLock Lock(&DespawnByIDLock);
-
-	if (AlreadyRequestedIDs.Num() == 0)
+	if (SourceID < 0 || SourceID >= EGPUParticleSource::MaxSourceCount)
 	{
 		return;
 	}
 
-	if (AliveParticleIDs.Num() == 0)
+	FScopeLock Lock(&GPUDespawnLock);
+
+	// Deduplicate SourceIDs within same frame
+	if (!PendingGPUSourceDespawns.Contains(SourceID))
 	{
-		// If no particles exist, all requests are completed
-		AlreadyRequestedIDs.Empty();
-		return;
+		PendingGPUSourceDespawns.Add(SourceID);
 	}
-
-	// Both arrays are sorted → std::set_intersection O(n+m)
-	// AlreadyRequestedIDs ∩ AliveParticleIDs = IDs that are still alive
-	TArray<int32> StillPending;
-	StillPending.SetNumUninitialized(AlreadyRequestedIDs.Num());  // Allocate maximum size
-
-	int32* OutEnd = std::set_intersection(
-		AlreadyRequestedIDs.GetData(), AlreadyRequestedIDs.GetData() + AlreadyRequestedIDs.Num(),
-		AliveParticleIDs.GetData(), AliveParticleIDs.GetData() + AliveParticleIDs.Num(),
-		StillPending.GetData());
-
-	const int32 ResultCount = OutEnd - StillPending.GetData();
-	StillPending.SetNum(ResultCount);  // Adjust to actual size
-
-	const int32 RemovedCount = AlreadyRequestedIDs.Num() - ResultCount;
-	AlreadyRequestedIDs = MoveTemp(StillPending);
-
-	if (RemovedCount > 0)
-	{
-		UE_LOG(LogGPUSpawnManager, Verbose, TEXT("CleanupCompletedRequests: Cleared %d IDs"), RemovedCount);
-	}
+	bHasPendingGPUDespawnRequests.store(true);
 }
 
-void FGPUSpawnManager::AddDespawnByIDRequests(const TArray<int32>& ParticleIDs)
+void FGPUSpawnManager::SetSourceEmitterMax(int32 SourceID, int32 MaxCount)
 {
-	if (ParticleIDs.Num() == 0)
+	if (SourceID < 0 || SourceID >= EGPUParticleSource::MaxSourceCount)
 	{
 		return;
 	}
 
-	FScopeLock Lock(&DespawnByIDLock);
+	FScopeLock Lock(&GPUDespawnLock);
 
-	const int32 OriginalCount = ParticleIDs.Num();
-
-	// ParticleIDs are already sorted (using sorted readback from RemoveOldestParticles)
-	// Extract only new IDs using std::set_difference O(n+m)
-	TArray<int32> NewIDs;
-	NewIDs.SetNumUninitialized(OriginalCount);  // Allocate maximum size
-
-	int32* DiffEnd = std::set_difference(
-		ParticleIDs.GetData(), ParticleIDs.GetData() + ParticleIDs.Num(),
-		AlreadyRequestedIDs.GetData(), AlreadyRequestedIDs.GetData() + AlreadyRequestedIDs.Num(),
-		NewIDs.GetData());
-
-	const int32 FilteredCount = DiffEnd - NewIDs.GetData();
-	NewIDs.SetNum(FilteredCount);  // Adjust to actual size
-
-	if (FilteredCount > 0)
+	if (EmitterMaxCountsCPU.Num() == 0)
 	{
-		// Add new IDs to PendingDespawnByIDs
-		PendingDespawnByIDs.Append(NewIDs);
-
-		// Merge into AlreadyRequestedIDs (maintaining sorted order)
-		TArray<int32> Merged;
-		Merged.SetNumUninitialized(AlreadyRequestedIDs.Num() + FilteredCount);
-
-		std::merge(
-			AlreadyRequestedIDs.GetData(), AlreadyRequestedIDs.GetData() + AlreadyRequestedIDs.Num(),
-			NewIDs.GetData(), NewIDs.GetData() + FilteredCount,
-			Merged.GetData());
-
-		AlreadyRequestedIDs = MoveTemp(Merged);
-		bHasPendingDespawnByIDRequests.store(true);
+		EmitterMaxCountsCPU.SetNumZeroed(EGPUParticleSource::MaxSourceCount);
 	}
 
-	UE_LOG(LogGPUSpawnManager, Log, TEXT("AddDespawnByIDRequests: %d requested, %d new, %d duplicates (pending: %d)"),
-		OriginalCount, FilteredCount, OriginalCount - FilteredCount, PendingDespawnByIDs.Num());
+	const int32 OldValue = EmitterMaxCountsCPU[SourceID];
+	if (OldValue == MaxCount)
+	{
+		return;
+	}
+
+	EmitterMaxCountsCPU[SourceID] = MaxCount;
+	bEmitterMaxCountsDirty = true;
+
+	// Track active count
+	if (OldValue == 0 && MaxCount > 0)
+	{
+		++ActiveEmitterMaxCount;
+	}
+	else if (OldValue > 0 && MaxCount == 0)
+	{
+		--ActiveEmitterMaxCount;
+	}
+
+	UE_LOG(LogGPUSpawnManager, Verbose, TEXT("SetSourceEmitterMax: SourceID=%d, Max=%d (active=%d)"),
+		SourceID, MaxCount, ActiveEmitterMaxCount);
 }
 
-int32 FGPUSpawnManager::AddDespawnByIDRequestsFiltered(const TArray<int32>& CandidateIDs, int32 MaxCount)
+bool FGPUSpawnManager::SwapGPUDespawnBuffers()
 {
-	if (CandidateIDs.Num() == 0 || MaxCount <= 0)
+	FScopeLock Lock(&GPUDespawnLock);
+
+	ActiveGPUBrushDespawns = MoveTemp(PendingGPUBrushDespawns);
+	PendingGPUBrushDespawns.Empty();
+
+	ActiveGPUSourceDespawns = MoveTemp(PendingGPUSourceDespawns);
+	PendingGPUSourceDespawns.Empty();
+
+	bHasPendingGPUDespawnRequests.store(false);
+
+	const bool bHasAny = (ActiveGPUBrushDespawns.Num() > 0 ||
+		ActiveGPUSourceDespawns.Num() > 0 ||
+		HasPerSourceRecycle());
+
+	if (bHasAny)
 	{
-		return 0;
+		UE_LOG(LogGPUSpawnManager, Verbose, TEXT("SwapGPUDespawnBuffers: Brush=%d, Source=%d, PerSourceRecycle=%s"),
+			ActiveGPUBrushDespawns.Num(), ActiveGPUSourceDespawns.Num(), HasPerSourceRecycle() ? TEXT("Yes") : TEXT("No"));
 	}
 
-	FScopeLock Lock(&DespawnByIDLock);
-
-	// Filter out already requested IDs using set_difference O(n+m)
-	TArray<int32> NewIDs;
-	NewIDs.SetNumUninitialized(CandidateIDs.Num());
-
-	int32* DiffEnd = std::set_difference(
-		CandidateIDs.GetData(), CandidateIDs.GetData() + CandidateIDs.Num(),
-		AlreadyRequestedIDs.GetData(), AlreadyRequestedIDs.GetData() + AlreadyRequestedIDs.Num(),
-		NewIDs.GetData());
-
-	const int32 AvailableCount = DiffEnd - NewIDs.GetData();
-	const int32 ActualCount = FMath::Min(AvailableCount, MaxCount);
-
-	if (ActualCount <= 0)
-	{
-		UE_LOG(LogGPUSpawnManager, Log, TEXT("AddDespawnByIDRequestsFiltered: %d candidates, 0 available (all already requested)"), CandidateIDs.Num());
-		return 0;
-	}
-
-	// Take only the first ActualCount IDs
-	NewIDs.SetNum(ActualCount);
-
-	// Add to pending
-	PendingDespawnByIDs.Append(NewIDs);
-
-	// Merge into AlreadyRequestedIDs (maintaining sorted order)
-	TArray<int32> Merged;
-	Merged.SetNumUninitialized(AlreadyRequestedIDs.Num() + ActualCount);
-
-	std::merge(
-		AlreadyRequestedIDs.GetData(), AlreadyRequestedIDs.GetData() + AlreadyRequestedIDs.Num(),
-		NewIDs.GetData(), NewIDs.GetData() + ActualCount,
-		Merged.GetData());
-
-	AlreadyRequestedIDs = MoveTemp(Merged);
-	bHasPendingDespawnByIDRequests.store(true);
-
-	UE_LOG(LogGPUSpawnManager, Log, TEXT("AddDespawnByIDRequestsFiltered: %d candidates, %d available, %d added (pending: %d)"),
-		CandidateIDs.Num(), AvailableCount, ActualCount, PendingDespawnByIDs.Num());
-
-	return ActualCount;
+	return bHasAny;
 }
 
-int32 FGPUSpawnManager::SwapDespawnByIDBuffers()
+void FGPUSpawnManager::AddGPUDespawnPass(
+	FRDGBuilder& GraphBuilder,
+	FRDGBufferRef& InOutParticleBuffer,
+	int32& InOutParticleCount,
+	int32 NextParticleIDHint,
+	FRDGBufferRef ParticleCountBuffer)
 {
-	FScopeLock Lock(&DespawnByIDLock);
-	ActiveDespawnByIDs = MoveTemp(PendingDespawnByIDs);
-	PendingDespawnByIDs.Empty();
-	bHasPendingDespawnByIDRequests.store(false);
-
-	const int32 Count = ActiveDespawnByIDs.Num();
-
-	// Sort for binary search optimization in shader
-	if (Count > 0)
+	// Safety: no particles to process
+	if (InOutParticleCount <= 0)
 	{
-		ActiveDespawnByIDs.Sort();
-		UE_LOG(LogGPUSpawnManager, Verbose, TEXT("SwapDespawnByIDBuffers: %d IDs ready for processing"), Count);
+		ActiveGPUBrushDespawns.Empty();
+		ActiveGPUSourceDespawns.Empty();
+		return;
 	}
 
-	return Count;
-}
+	const bool bHasBrush = ActiveGPUBrushDespawns.Num() > 0;
+	const bool bHasSource = ActiveGPUSourceDespawns.Num() > 0;
+	const bool bHasPerSourceRecycle = HasPerSourceRecycle();
+	const bool bHasOldest = bHasPerSourceRecycle;
 
-int32 FGPUSpawnManager::GetPendingDespawnByIDCount() const
-{
-	FScopeLock Lock(&DespawnByIDLock);
-	return PendingDespawnByIDs.Num();
+	if (!bHasBrush && !bHasSource && !bHasOldest)
+	{
+		return;
+	}
+
+	// Mark passes use indirect dispatch (GPU-accurate particle count from ParticleCountBuffer).
+	// PrefixSum/Compact still use MaxParticleCapacity (single-pass, correct with ClearUAV(0)).
+	const int32 CompactionElementCount = MaxParticleCapacity;
+
+	FRDGBufferRef AliveMaskBuffer;
+	FRDGBufferRef PrefixSumsBuffer;
+	FRDGBufferRef BlockSumsBuffer;
+	FRDGBufferUAVRef SourceCounterUAV;
+	FGlobalShaderMap* ShaderMap;
+	FRDGBufferSRVRef ParticleCountSRV;
+
+	{
+		RDG_EVENT_SCOPE(GraphBuilder, "GPUDespawn_Setup");
+
+		EnsureStreamCompactionBuffers(GraphBuilder, CompactionElementCount);
+		ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
+
+		AliveMaskBuffer = GraphBuilder.RegisterExternalBuffer(PersistentAliveMaskBuffer, TEXT("AliveMask"));
+		PrefixSumsBuffer = GraphBuilder.RegisterExternalBuffer(PersistentPrefixSumsBuffer, TEXT("PrefixSums"));
+		BlockSumsBuffer = GraphBuilder.RegisterExternalBuffer(PersistentBlockSumsBuffer, TEXT("BlockSums"));
+		SourceCounterUAV = RegisterSourceCounterUAV(GraphBuilder);
+
+		// ParticleCountBuffer SRV for bounds checking in all mark shaders
+		ParticleCountSRV = GraphBuilder.CreateSRV(ParticleCountBuffer);
+
+		// Step 1: Clear AliveMask to 0 (all dead), then InitAliveMask sets valid particles to 1
+		AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(AliveMaskBuffer), 0u);
+
+		TShaderMapRef<FInitAliveMaskCS> InitCS(ShaderMap);
+		FInitAliveMaskCS::FParameters* InitParams = GraphBuilder.AllocParameters<FInitAliveMaskCS::FParameters>();
+		InitParams->OutAliveMask = GraphBuilder.CreateUAV(AliveMaskBuffer);
+		InitParams->ParticleCountBuffer = ParticleCountSRV;
+
+		GPUIndirectDispatch::AddIndirectComputePass(GraphBuilder,
+			RDG_EVENT_NAME("GPUFluid::InitAliveMask"),
+			InitCS, InitParams, ParticleCountBuffer,
+			GPUIndirectDispatch::IndirectArgsOffset_TG256);
+	}
+
+	// Step 2: Brush mark pass
+	if (bHasBrush)
+	{
+		RDG_EVENT_SCOPE(GraphBuilder, "GPUDespawn_MarkBrush");
+
+		FRDGBufferRef BrushRequestBuffer = CreateStructuredBuffer(
+			GraphBuilder,
+			TEXT("GPUDespawnBrushRequests"),
+			sizeof(FGPUDespawnBrushRequest),
+			ActiveGPUBrushDespawns.Num(),
+			ActiveGPUBrushDespawns.GetData(),
+			ActiveGPUBrushDespawns.Num() * sizeof(FGPUDespawnBrushRequest),
+			ERDGInitialDataFlags::None
+		);
+
+		TShaderMapRef<FMarkDespawnByBrushCS> BrushCS(ShaderMap);
+		FMarkDespawnByBrushCS::FParameters* BrushParams = GraphBuilder.AllocParameters<FMarkDespawnByBrushCS::FParameters>();
+		BrushParams->BrushRequests = GraphBuilder.CreateSRV(BrushRequestBuffer);
+		BrushParams->Particles = GraphBuilder.CreateSRV(InOutParticleBuffer);
+		BrushParams->OutAliveMask = GraphBuilder.CreateUAV(AliveMaskBuffer);
+		BrushParams->ParticleCountBuffer = ParticleCountSRV;
+		BrushParams->BrushRequestCount = ActiveGPUBrushDespawns.Num();
+
+		GPUIndirectDispatch::AddIndirectComputePass(GraphBuilder,
+			RDG_EVENT_NAME("GPUFluid::DespawnBrush(%d brushes)", ActiveGPUBrushDespawns.Num()),
+			BrushCS, BrushParams, ParticleCountBuffer,
+			GPUIndirectDispatch::IndirectArgsOffset_TG256);
+	}
+
+	// Step 3: Source mark pass
+	if (bHasSource)
+	{
+		RDG_EVENT_SCOPE(GraphBuilder, "GPUDespawn_MarkSource");
+
+		FRDGBufferRef SourceIDBuffer = CreateStructuredBuffer(
+			GraphBuilder,
+			TEXT("GPUDespawnSourceIDs"),
+			sizeof(int32),
+			ActiveGPUSourceDespawns.Num(),
+			ActiveGPUSourceDespawns.GetData(),
+			ActiveGPUSourceDespawns.Num() * sizeof(int32),
+			ERDGInitialDataFlags::None
+		);
+
+		TShaderMapRef<FMarkDespawnBySourceCS> SourceCS(ShaderMap);
+		FMarkDespawnBySourceCS::FParameters* SourceParams = GraphBuilder.AllocParameters<FMarkDespawnBySourceCS::FParameters>();
+		SourceParams->DespawnSourceIDs = GraphBuilder.CreateSRV(SourceIDBuffer);
+		SourceParams->Particles = GraphBuilder.CreateSRV(InOutParticleBuffer);
+		SourceParams->OutAliveMask = GraphBuilder.CreateUAV(AliveMaskBuffer);
+		SourceParams->ParticleCountBuffer = ParticleCountSRV;
+		SourceParams->DespawnSourceIDCount = ActiveGPUSourceDespawns.Num();
+
+		GPUIndirectDispatch::AddIndirectComputePass(GraphBuilder,
+			RDG_EVENT_NAME("GPUFluid::DespawnSource(%d sources)", ActiveGPUSourceDespawns.Num()),
+			SourceCS, SourceParams, ParticleCountBuffer,
+			GPUIndirectDispatch::IndirectArgsOffset_TG256);
+	}
+
+	// Shared: Compute IDShiftBits (used by both per-source and global oldest)
+	const int32 MaxID = FMath::Max(1, NextParticleIDHint);
+	const int32 Log2MaxID = FMath::FloorLog2(MaxID);
+	const int32 IDShiftBits = FMath::Max(0, Log2MaxID - 7);
+
+	// Shared: Ensure histogram buffers exist (reused by per-source loop and global oldest)
+	FRDGBufferRef IDHistogramBuffer = nullptr;
+	FRDGBufferRef OldestThresholdBuffer = nullptr;
+	FRDGBufferRef BoundaryCounterBuffer = nullptr;
+
+	if (bHasOldest)
+	{
+		if (!PersistentIDHistogramBuffer.IsValid())
+		{
+			FRDGBufferDesc HistDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 256);
+			IDHistogramBuffer = GraphBuilder.CreateBuffer(HistDesc, TEXT("IDHistogram"));
+			PersistentIDHistogramBuffer = GraphBuilder.ConvertToExternalBuffer(IDHistogramBuffer);
+		}
+		else
+		{
+			IDHistogramBuffer = GraphBuilder.RegisterExternalBuffer(PersistentIDHistogramBuffer, TEXT("IDHistogram"));
+		}
+
+		if (!PersistentOldestThresholdBuffer.IsValid())
+		{
+			FRDGBufferDesc ThreshDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 2);
+			OldestThresholdBuffer = GraphBuilder.CreateBuffer(ThreshDesc, TEXT("OldestThreshold"));
+			PersistentOldestThresholdBuffer = GraphBuilder.ConvertToExternalBuffer(OldestThresholdBuffer);
+		}
+		else
+		{
+			OldestThresholdBuffer = GraphBuilder.RegisterExternalBuffer(PersistentOldestThresholdBuffer, TEXT("OldestThreshold"));
+		}
+
+		if (!PersistentBoundaryCounterBuffer.IsValid())
+		{
+			FRDGBufferDesc CounterDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 1);
+			BoundaryCounterBuffer = GraphBuilder.CreateBuffer(CounterDesc, TEXT("BoundaryCounter"));
+			PersistentBoundaryCounterBuffer = GraphBuilder.ConvertToExternalBuffer(BoundaryCounterBuffer);
+		}
+		else
+		{
+			BoundaryCounterBuffer = GraphBuilder.RegisterExternalBuffer(PersistentBoundaryCounterBuffer, TEXT("BoundaryCounter"));
+		}
+	}
+
+	// Step 3.5: Per-source recycle — compute PerSourceExcess[64] and run oldest 3-pass per source
+	if (bHasPerSourceRecycle)
+	{
+		RDG_EVENT_SCOPE(GraphBuilder, "GPUDespawn_PerSourceRecycle");
+
+		// Ensure PerSourceExcess buffer exists
+		FRDGBufferRef PerSourceExcessBuffer;
+		if (!PersistentPerSourceExcessBuffer.IsValid())
+		{
+			FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), EGPUParticleSource::MaxSourceCount);
+			PerSourceExcessBuffer = GraphBuilder.CreateBuffer(Desc, TEXT("PerSourceExcess"));
+			PersistentPerSourceExcessBuffer = GraphBuilder.ConvertToExternalBuffer(PerSourceExcessBuffer);
+		}
+		else
+		{
+			PerSourceExcessBuffer = GraphBuilder.RegisterExternalBuffer(PersistentPerSourceExcessBuffer, TEXT("PerSourceExcess"));
+		}
+
+		// Ensure EmitterMaxCounts buffer exists and upload if dirty
+		FRDGBufferRef EmitterMaxCountsBuffer;
+		if (!PersistentEmitterMaxCountsBuffer.IsValid() || bEmitterMaxCountsDirty)
+		{
+			TArray<uint32> MaxCountsUint32;
+			MaxCountsUint32.SetNumUninitialized(EGPUParticleSource::MaxSourceCount);
+			for (int32 i = 0; i < EGPUParticleSource::MaxSourceCount; ++i)
+			{
+				MaxCountsUint32[i] = static_cast<uint32>(FMath::Max(0, EmitterMaxCountsCPU.IsValidIndex(i) ? EmitterMaxCountsCPU[i] : 0));
+			}
+
+			EmitterMaxCountsBuffer = CreateStructuredBuffer(
+				GraphBuilder,
+				TEXT("EmitterMaxCounts"),
+				sizeof(uint32),
+				EGPUParticleSource::MaxSourceCount,
+				MaxCountsUint32.GetData(),
+				MaxCountsUint32.Num() * sizeof(uint32),
+				ERDGInitialDataFlags::None
+			);
+			PersistentEmitterMaxCountsBuffer = GraphBuilder.ConvertToExternalBuffer(EmitterMaxCountsBuffer);
+			bEmitterMaxCountsDirty = false;
+		}
+		else
+		{
+			EmitterMaxCountsBuffer = GraphBuilder.RegisterExternalBuffer(PersistentEmitterMaxCountsBuffer, TEXT("EmitterMaxCounts"));
+		}
+
+		// Build per-source incoming spawn counts from ActiveSpawnRequests
+		TArray<uint32> IncomingCounts;
+		IncomingCounts.SetNumZeroed(EGPUParticleSource::MaxSourceCount);
+		for (const FGPUSpawnRequest& Req : ActiveSpawnRequests)
+		{
+			if (Req.SourceID >= 0 && Req.SourceID < EGPUParticleSource::MaxSourceCount)
+			{
+				IncomingCounts[Req.SourceID]++;
+			}
+		}
+
+		FRDGBufferRef IncomingSpawnCountsBuffer = CreateStructuredBuffer(
+			GraphBuilder,
+			TEXT("IncomingSpawnCounts"),
+			sizeof(uint32),
+			EGPUParticleSource::MaxSourceCount,
+			IncomingCounts.GetData(),
+			IncomingCounts.Num() * sizeof(uint32),
+			ERDGInitialDataFlags::None
+		);
+
+		// Register SourceCounters as SRV for reading
+		FRDGBufferRef SourceCounterRDG = GraphBuilder.RegisterExternalBuffer(SourceCounterBuffer, TEXT("SourceCountersForRecycle"));
+
+		// Clear PerSourceExcess before compute
+		AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(PerSourceExcessBuffer), 0u);
+
+		// Dispatch ComputePerSourceRecycleCS → PerSourceExcess[64]
+		{
+			TShaderMapRef<FComputePerSourceRecycleCS> RecycleCS(ShaderMap);
+			FComputePerSourceRecycleCS::FParameters* RecycleParams = GraphBuilder.AllocParameters<FComputePerSourceRecycleCS::FParameters>();
+			RecycleParams->SourceCounters = GraphBuilder.CreateSRV(SourceCounterRDG);
+			RecycleParams->EmitterMaxCounts = GraphBuilder.CreateSRV(EmitterMaxCountsBuffer);
+			RecycleParams->IncomingSpawnCounts = GraphBuilder.CreateSRV(IncomingSpawnCountsBuffer);
+			RecycleParams->PerSourceExcess = GraphBuilder.CreateUAV(PerSourceExcessBuffer);
+			RecycleParams->ActiveSourceCount = EGPUParticleSource::MaxSourceCount;
+
+			FComputeShaderUtils::AddPass(GraphBuilder,
+				RDG_EVENT_NAME("GPUFluid::ComputePerSourceExcess"),
+				RecycleCS, RecycleParams, FIntVector(1, 1, 1));
+		}
+
+		FRDGBufferSRVRef PerSourceExcessSRV = GraphBuilder.CreateSRV(PerSourceExcessBuffer);
+
+		// Step 3.6: Per-source oldest 3-pass — loop over each source with EmitterMax set
+		for (int32 s = 0; s < EGPUParticleSource::MaxSourceCount; ++s)
+		{
+			if (!EmitterMaxCountsCPU.IsValidIndex(s) || EmitterMaxCountsCPU[s] <= 0)
+			{
+				continue;
+			}
+
+			// Clear histogram and boundary counter for this source
+			AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(IDHistogramBuffer), 0u);
+			AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(BoundaryCounterBuffer), 0u);
+
+			// Pass 1: BuildIDHistogramCS (filtered to SourceID == s)
+			{
+				TShaderMapRef<FBuildIDHistogramCS> HistCS(ShaderMap);
+				FBuildIDHistogramCS::FParameters* HistParams = GraphBuilder.AllocParameters<FBuildIDHistogramCS::FParameters>();
+				HistParams->Particles = GraphBuilder.CreateSRV(InOutParticleBuffer);
+				HistParams->IDHistogram = GraphBuilder.CreateUAV(IDHistogramBuffer);
+				HistParams->ParticleCountBuffer = ParticleCountSRV;
+				HistParams->PerSourceExcess = PerSourceExcessSRV;
+				HistParams->FilterSourceID = s;
+				HistParams->IDShiftBits = IDShiftBits;
+
+				GPUIndirectDispatch::AddIndirectComputePass(GraphBuilder,
+					RDG_EVENT_NAME("GPUFluid::PerSourceOldest_Histogram(src=%d)", s),
+					HistCS, HistParams, ParticleCountBuffer,
+					GPUIndirectDispatch::IndirectArgsOffset_TG256);
+			}
+
+			// Pass 2: FindOldestThresholdCS (removeCount = PerSourceExcess[s], read on GPU)
+			{
+				TShaderMapRef<FFindOldestThresholdCS> ThreshCS(ShaderMap);
+				FFindOldestThresholdCS::FParameters* ThreshParams = GraphBuilder.AllocParameters<FFindOldestThresholdCS::FParameters>();
+				ThreshParams->IDHistogram = GraphBuilder.CreateUAV(IDHistogramBuffer);
+				ThreshParams->OldestThreshold = GraphBuilder.CreateUAV(OldestThresholdBuffer);
+				ThreshParams->ParticleCountBuffer = ParticleCountSRV;
+				ThreshParams->PerSourceExcess = PerSourceExcessSRV;
+				ThreshParams->FilterSourceID = s;
+
+				FComputeShaderUtils::AddPass(GraphBuilder,
+					RDG_EVENT_NAME("GPUFluid::PerSourceOldest_Threshold(src=%d)", s),
+					ThreshCS, ThreshParams, FIntVector(1, 1, 1));
+			}
+
+			// Pass 3: MarkOldestParticlesCS (filtered to SourceID == s)
+			{
+				TShaderMapRef<FMarkOldestParticlesCS> MarkCS(ShaderMap);
+				FMarkOldestParticlesCS::FParameters* MarkParams = GraphBuilder.AllocParameters<FMarkOldestParticlesCS::FParameters>();
+				MarkParams->Particles = GraphBuilder.CreateSRV(InOutParticleBuffer);
+				MarkParams->OldestThreshold = GraphBuilder.CreateUAV(OldestThresholdBuffer);
+				MarkParams->OutAliveMask = GraphBuilder.CreateUAV(AliveMaskBuffer);
+				MarkParams->BoundaryCounter = GraphBuilder.CreateUAV(BoundaryCounterBuffer);
+				MarkParams->ParticleCountBuffer = ParticleCountSRV;
+				MarkParams->PerSourceExcess = PerSourceExcessSRV;
+				MarkParams->FilterSourceID = s;
+				MarkParams->IDShiftBits = IDShiftBits;
+
+				GPUIndirectDispatch::AddIndirectComputePass(GraphBuilder,
+					RDG_EVENT_NAME("GPUFluid::PerSourceOldest_Mark(src=%d)", s),
+					MarkCS, MarkParams, ParticleCountBuffer,
+					GPUIndirectDispatch::IndirectArgsOffset_TG256);
+			}
+		}
+	}
+
+	// Step 4: UpdateSourceCountersDespawnCS
+	{
+		RDG_EVENT_SCOPE(GraphBuilder, "GPUDespawn_UpdateSourceCounters");
+
+		TShaderMapRef<FUpdateSourceCountersDespawnCS> UpdateCS(ShaderMap);
+		FUpdateSourceCountersDespawnCS::FParameters* UpdateParams = GraphBuilder.AllocParameters<FUpdateSourceCountersDespawnCS::FParameters>();
+		UpdateParams->AliveMask = GraphBuilder.CreateSRV(AliveMaskBuffer);
+		UpdateParams->Particles = GraphBuilder.CreateSRV(InOutParticleBuffer);
+		UpdateParams->SourceCounters = SourceCounterUAV;
+		UpdateParams->ParticleCountBuffer = ParticleCountSRV;
+		UpdateParams->MaxSourceCount = EGPUParticleSource::MaxSourceCount;
+
+		GPUIndirectDispatch::AddIndirectComputePass(GraphBuilder,
+			RDG_EVENT_NAME("GPUFluid::DespawnUpdateSourceCounters"),
+			UpdateCS, UpdateParams, ParticleCountBuffer,
+			GPUIndirectDispatch::IndirectArgsOffset_TG256);
+	}
+
+	// Step 5-6: PrefixSum + Compact (reuse existing stream compaction pipeline)
+	const int32 PrefixSumBlockNumGroups = FMath::DivideAndRoundUp(CompactionElementCount, FPrefixSumBlockCS_RDG::ThreadGroupSize);
+
+	{
+		RDG_EVENT_SCOPE(GraphBuilder, "GPUDespawn_PrefixSum");
+
+		TShaderMapRef<FPrefixSumBlockCS_RDG> PrefixSumBlock(ShaderMap);
+		FPrefixSumBlockCS_RDG::FParameters* PrefixSumBlockParameters = GraphBuilder.AllocParameters<FPrefixSumBlockCS_RDG::FParameters>();
+		PrefixSumBlockParameters->MarkedFlags = GraphBuilder.CreateSRV(AliveMaskBuffer);
+		PrefixSumBlockParameters->PrefixSums = GraphBuilder.CreateUAV(PrefixSumsBuffer);
+		PrefixSumBlockParameters->BlockSums = GraphBuilder.CreateUAV(BlockSumsBuffer);
+		PrefixSumBlockParameters->ElementCount = CompactionElementCount;
+
+		FComputeShaderUtils::AddPass(GraphBuilder,
+			RDG_EVENT_NAME("GPUFluid::GPUDespawn_PrefixSumBlock"),
+			PrefixSumBlock, PrefixSumBlockParameters,
+			FIntVector(PrefixSumBlockNumGroups, 1, 1));
+
+		TShaderMapRef<FScanBlockSumsCS_RDG> ScanBlockSums(ShaderMap);
+		FScanBlockSumsCS_RDG::FParameters* ScanBlockSumsParameters = GraphBuilder.AllocParameters<FScanBlockSumsCS_RDG::FParameters>();
+		ScanBlockSumsParameters->BlockSums = GraphBuilder.CreateUAV(BlockSumsBuffer);
+		ScanBlockSumsParameters->BlockCount = PrefixSumBlockNumGroups;
+
+		const int32 ScanBlockSumsNumGroups = FMath::DivideAndRoundUp(PrefixSumBlockNumGroups, FScanBlockSumsCS_RDG::ThreadGroupSize);
+		FComputeShaderUtils::AddPass(GraphBuilder,
+			RDG_EVENT_NAME("GPUFluid::GPUDespawn_ScanBlockSums"),
+			ScanBlockSums, ScanBlockSumsParameters,
+			FIntVector(ScanBlockSumsNumGroups, 1, 1));
+
+		TShaderMapRef<FAddBlockOffsetsCS_RDG> AddBlockOffsets(ShaderMap);
+		FAddBlockOffsetsCS_RDG::FParameters* AddBlockOffsetsParameters = GraphBuilder.AllocParameters<FAddBlockOffsetsCS_RDG::FParameters>();
+		AddBlockOffsetsParameters->PrefixSums = GraphBuilder.CreateUAV(PrefixSumsBuffer);
+		AddBlockOffsetsParameters->BlockSums = GraphBuilder.CreateUAV(BlockSumsBuffer);
+		AddBlockOffsetsParameters->ElementCount = CompactionElementCount;
+
+		FComputeShaderUtils::AddPass(GraphBuilder,
+			RDG_EVENT_NAME("GPUFluid::GPUDespawn_AddBlockOffsets"),
+			AddBlockOffsets, AddBlockOffsetsParameters,
+			FIntVector(PrefixSumBlockNumGroups, 1, 1));
+	}
+
+	{
+		RDG_EVENT_SCOPE(GraphBuilder, "GPUDespawn_Compact");
+
+		FRDGBufferRef CompactedParticlesBuffer = GraphBuilder.RegisterExternalBuffer(
+			PersistentCompactedBuffer[CompactedBufferIndex], TEXT("CompactedParticlesGPU"));
+		CompactedBufferIndex = 1 - CompactedBufferIndex;
+
+		TShaderMapRef<FCompactParticlesCS_RDG> Compact(ShaderMap);
+		FCompactParticlesCS_RDG::FParameters* CompactParameters = GraphBuilder.AllocParameters<FCompactParticlesCS_RDG::FParameters>();
+		CompactParameters->Particles = GraphBuilder.CreateSRV(InOutParticleBuffer);
+		CompactParameters->MarkedFlags = GraphBuilder.CreateSRV(AliveMaskBuffer);
+		CompactParameters->PrefixSums = GraphBuilder.CreateSRV(PrefixSumsBuffer);
+		CompactParameters->CompactedParticles = GraphBuilder.CreateUAV(CompactedParticlesBuffer);
+		CompactParameters->ParticleCount = CompactionElementCount;
+
+		FComputeShaderUtils::AddPass(GraphBuilder,
+			RDG_EVENT_NAME("GPUFluid::GPUDespawn_Compact"),
+			Compact, CompactParameters,
+			FIntVector(PrefixSumBlockNumGroups, 1, 1));
+
+		InOutParticleBuffer = CompactedParticlesBuffer;
+	}
+
+	// Clear active requests
+	ActiveGPUBrushDespawns.Empty();
+	ActiveGPUSourceDespawns.Empty();
 }
 
 //=============================================================================
@@ -442,162 +775,6 @@ void FGPUSpawnManager::AddSpawnParticlesPass(
 	// 	ActiveSpawnRequests.Num(), NextParticleID.load());
 }
 
-void FGPUSpawnManager::AddDespawnByIDPass(FRDGBuilder& GraphBuilder, FRDGBufferRef& InOutParticleBuffer,
-	int32& InOutParticleCount)
-{
-	if (ActiveDespawnByIDs.Num() == 0)
-	{
-		return;
-	}
-
-	FRDGBufferRef AliveMaskBuffer;
-	FRDGBufferRef PrefixSumsBuffer;
-	FRDGBufferRef BlockSumsBuffer;
-	FRDGBufferRef DespawnIDsBuffer;
-	FRDGBufferUAVRef SourceCounterUAV;
-	FGlobalShaderMap* ShaderMap;
-
-	{
-		RDG_EVENT_SCOPE(GraphBuilder, "Despawn_Setup");
-
-		// Ensure persistent stream compaction buffers are allocated
-		EnsureStreamCompactionBuffers(GraphBuilder, InOutParticleCount);
-
-		ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
-
-		// Create sorted ID buffer for GPU binary search (small, varies per frame)
-		DespawnIDsBuffer = CreateStructuredBuffer(
-			GraphBuilder,
-			TEXT("GPUFluidDespawnByIDs"),
-			sizeof(int32),
-			ActiveDespawnByIDs.Num(),
-			ActiveDespawnByIDs.GetData(),
-			ActiveDespawnByIDs.Num() * sizeof(int32),
-			ERDGInitialDataFlags::None
-		);
-
-		// Use persistent buffers for stream compaction (avoid per-frame allocation)
-		AliveMaskBuffer = GraphBuilder.RegisterExternalBuffer(PersistentAliveMaskBuffer, TEXT("AliveMask"));
-		PrefixSumsBuffer = GraphBuilder.RegisterExternalBuffer(PersistentPrefixSumsBuffer, TEXT("PrefixSums"));
-		BlockSumsBuffer = GraphBuilder.RegisterExternalBuffer(PersistentBlockSumsBuffer, TEXT("BlockSums"));
-
-		// Get or create source counter buffer UAV for decrementing
-		SourceCounterUAV = RegisterSourceCounterUAV(GraphBuilder);
-	}
-
-	{
-		RDG_EVENT_SCOPE(GraphBuilder, "Despawn_MarkPass");
-
-		TShaderMapRef<FMarkDespawnByIDCS> MarkDespawnByIDCS(ShaderMap);
-
-		// Mark particles for removal by ID matching (binary search)
-		FMarkDespawnByIDCS::FParameters* MarkPassParameters = GraphBuilder.AllocParameters<FMarkDespawnByIDCS::FParameters>();
-		MarkPassParameters->DespawnIDs = GraphBuilder.CreateSRV(DespawnIDsBuffer);
-		MarkPassParameters->Particles = GraphBuilder.CreateSRV(InOutParticleBuffer);
-		MarkPassParameters->OutAliveMask = GraphBuilder.CreateUAV(AliveMaskBuffer);
-		MarkPassParameters->SourceCounters = SourceCounterUAV;
-		MarkPassParameters->DespawnIDCount = ActiveDespawnByIDs.Num();
-		MarkPassParameters->ParticleCount = InOutParticleCount;
-		MarkPassParameters->MaxSourceCount = EGPUParticleSource::MaxSourceCount;
-
-		const uint32 MarkPassNumGroups = FMath::DivideAndRoundUp(InOutParticleCount, FMarkDespawnByIDCS::ThreadGroupSize);
-		FComputeShaderUtils::AddPass(
-			GraphBuilder,
-			RDG_EVENT_NAME("GPUFluid::DespawnByID_Mark(%d IDs)", ActiveDespawnByIDs.Num()),
-			MarkDespawnByIDCS,
-			MarkPassParameters,
-			FIntVector(MarkPassNumGroups, 1, 1)
-		);
-	}
-
-	// === Stream Compaction Pipeline (reuse existing shaders) ===
-	const int32 PrefixSumBlockNumGroups = FMath::DivideAndRoundUp(InOutParticleCount, FPrefixSumBlockCS_RDG::ThreadGroupSize);
-
-	{
-		RDG_EVENT_SCOPE(GraphBuilder, "Despawn_PrefixSum");
-
-		// Block-wise prefix sum
-		TShaderMapRef<FPrefixSumBlockCS_RDG> PrefixSumBlock(ShaderMap);
-		FPrefixSumBlockCS_RDG::FParameters* PrefixSumBlockParameters = GraphBuilder.AllocParameters<FPrefixSumBlockCS_RDG::FParameters>();
-		PrefixSumBlockParameters->MarkedFlags = GraphBuilder.CreateSRV(AliveMaskBuffer);
-		PrefixSumBlockParameters->PrefixSums = GraphBuilder.CreateUAV(PrefixSumsBuffer);
-		PrefixSumBlockParameters->BlockSums = GraphBuilder.CreateUAV(BlockSumsBuffer);
-		PrefixSumBlockParameters->ElementCount = InOutParticleCount;
-
-		FComputeShaderUtils::AddPass(
-			GraphBuilder,
-			RDG_EVENT_NAME("GPUFluid::DespawnByID_PrefixSumBlock"),
-			PrefixSumBlock,
-			PrefixSumBlockParameters,
-			FIntVector(PrefixSumBlockNumGroups, 1, 1)
-		);
-
-		// Scan block sums
-		TShaderMapRef<FScanBlockSumsCS_RDG> ScanBlockSums(ShaderMap);
-		FScanBlockSumsCS_RDG::FParameters* ScanBlockSumsParameters = GraphBuilder.AllocParameters<FScanBlockSumsCS_RDG::FParameters>();
-		ScanBlockSumsParameters->BlockSums = GraphBuilder.CreateUAV(BlockSumsBuffer);
-		ScanBlockSumsParameters->BlockCount = PrefixSumBlockNumGroups;
-
-		const int32 ScanBlockSumsNumGroups = FMath::DivideAndRoundUp(PrefixSumBlockNumGroups, FScanBlockSumsCS_RDG::ThreadGroupSize);
-		FComputeShaderUtils::AddPass(
-			GraphBuilder,
-			RDG_EVENT_NAME("GPUFluid::DespawnByID_ScanBlockSums"),
-			ScanBlockSums,
-			ScanBlockSumsParameters,
-			FIntVector(ScanBlockSumsNumGroups, 1, 1)
-		);
-
-		// Add block offsets
-		TShaderMapRef<FAddBlockOffsetsCS_RDG> AddBlockOffsets(ShaderMap);
-		FAddBlockOffsetsCS_RDG::FParameters* AddBlockOffsetsParameters = GraphBuilder.AllocParameters<FAddBlockOffsetsCS_RDG::FParameters>();
-		AddBlockOffsetsParameters->PrefixSums = GraphBuilder.CreateUAV(PrefixSumsBuffer);
-		AddBlockOffsetsParameters->BlockSums = GraphBuilder.CreateUAV(BlockSumsBuffer);
-		AddBlockOffsetsParameters->ElementCount = InOutParticleCount;
-
-		const int32 AddBlockOffsetsNumGroups = FMath::DivideAndRoundUp(InOutParticleCount, FPrefixSumBlockCS_RDG::ThreadGroupSize);
-		FComputeShaderUtils::AddPass(
-			GraphBuilder,
-			RDG_EVENT_NAME("GPUFluid::DespawnByID_AddBlockOffsets"),
-			AddBlockOffsets,
-			AddBlockOffsetsParameters,
-			FIntVector(AddBlockOffsetsNumGroups, 1, 1)
-		);
-	}
-
-	{
-		RDG_EVENT_SCOPE(GraphBuilder, "Despawn_Compact");
-
-		// Use persistent double-buffered output (avoid per-frame allocation)
-		FRDGBufferRef CompactedParticlesBuffer = GraphBuilder.RegisterExternalBuffer(
-			PersistentCompactedBuffer[CompactedBufferIndex], TEXT("CompactedParticlesByID"));
-		CompactedBufferIndex = 1 - CompactedBufferIndex;  // Toggle for next frame
-
-		// Compact particles
-		TShaderMapRef<FCompactParticlesCS_RDG> Compact(ShaderMap);
-		FCompactParticlesCS_RDG::FParameters* CompactParameters = GraphBuilder.AllocParameters<FCompactParticlesCS_RDG::FParameters>();
-		CompactParameters->Particles = GraphBuilder.CreateSRV(InOutParticleBuffer);
-		CompactParameters->MarkedFlags = GraphBuilder.CreateSRV(AliveMaskBuffer);
-		CompactParameters->PrefixSums = GraphBuilder.CreateSRV(PrefixSumsBuffer);
-		CompactParameters->CompactedParticles = GraphBuilder.CreateUAV(CompactedParticlesBuffer);
-		CompactParameters->ParticleCount = InOutParticleCount;
-
-		const int32 CompactCSNumGroups = FMath::DivideAndRoundUp(InOutParticleCount, FPrefixSumBlockCS_RDG::ThreadGroupSize);
-		FComputeShaderUtils::AddPass(
-			GraphBuilder,
-			RDG_EVENT_NAME("GPUFluid::DespawnByID_Compact"),
-			Compact,
-			CompactParameters,
-			FIntVector(CompactCSNumGroups, 1, 1)
-		);
-
-		// Update buffer reference
-		InOutParticleBuffer = CompactedParticlesBuffer;
-	}
-
-	// Clear active IDs after processing
-	// AlreadyRequestedIDs is cleaned up via readback in AddDespawnByIDRequests
-	ActiveDespawnByIDs.Empty();
-}
 
 void FGPUSpawnManager::OnSpawnComplete(int32 SpawnedCount)
 {

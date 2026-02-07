@@ -5,6 +5,7 @@
 #include "Rendering/KawaiiFluidRenderResource.h"
 #include "Modules/KawaiiFluidRenderingModule.h"
 #include "Rendering/KawaiiFluidMetaballRenderer.h"
+#include "GPU/GPUIndirectDispatchUtils.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "SceneView.h"
@@ -75,15 +76,15 @@ void RenderFluidThicknessPass(
 		ProcessedResources.Add(RR);
 
 		FRDGBufferSRVRef ParticleBufferSRV = nullptr;
-		int32 ParticleCount = 0;
 
 		// =====================================================
 		// Unified path: unified data access from RenderResource
-		// Both GPU/CPU use same buffer
+		// Check GPU count buffer first (accurate)
 		// =====================================================
-		ParticleCount = RR->GetUnifiedParticleCount();
-		if (ParticleCount <= 0)
+		TRefCountPtr<FRDGPooledBuffer> CountPooledBuffer = RR->GetPooledParticleCountBuffer();
+		if (!CountPooledBuffer.IsValid())
 		{
+			// No GPU count buffer means no valid render data
 			continue;
 		}
 
@@ -100,16 +101,22 @@ void RenderFluidThicknessPass(
 			TEXT("SSFRThicknessPositions"));
 		ParticleBufferSRV = GraphBuilder.CreateSRV(PositionBuffer);
 
-		// Skip if no valid particles
-		if (!ParticleBufferSRV || ParticleCount == 0)
+		// Skip if no valid buffer
+		if (!ParticleBufferSRV)
 		{
 			continue;
 		}
+
+		// Register indirect args buffer for DrawPrimitiveIndirect
+		FRDGBufferRef IndirectArgsRDGBuffer = GraphBuilder.RegisterExternalBuffer(
+			CountPooledBuffer,
+			TEXT("ThicknessPass_IndirectArgs"));
 
 		FMatrix ViewMatrix = View.ViewMatrices.GetViewMatrix();
 		FMatrix ProjectionMatrix = View.ViewMatrices.GetProjectionMatrix();
 
 		auto* PassParameters = GraphBuilder.AllocParameters<FFluidThicknessParameters>();
+		PassParameters->IndirectArgsBuffer = IndirectArgsRDGBuffer;
 		PassParameters->ParticlePositions = ParticleBufferSRV;
 		PassParameters->ParticleRadius = ParticleRadius;
 		PassParameters->ViewMatrix = FMatrix44f(ViewMatrix);
@@ -138,8 +145,8 @@ void RenderFluidThicknessPass(
 		GraphBuilder.AddPass(
 			RDG_EVENT_NAME("ThicknessDraw_Batched"),
 			PassParameters,
-			ERDGPassFlags::Raster,
-			[VertexShader, PixelShader, PassParameters, ParticleCount, ViewRect](
+			ERDGPassFlags::Raster | ERDGPassFlags::NeverCull,
+			[VertexShader, PixelShader, PassParameters, IndirectArgsRDGBuffer, ViewRect](
 			FRHICommandList& RHICmdList)
 			{
 				FGraphicsPipelineStateInitializer GraphicsPSOInit;
@@ -171,7 +178,8 @@ void RenderFluidThicknessPass(
 				SetShaderParameters(RHICmdList, PixelShader, PixelShader.GetPixelShader(),
 				                    *PassParameters);
 
-				RHICmdList.DrawPrimitive(0, 2, ParticleCount);
+				// DrawPrimitiveIndirect: GPU reads instance count from ParticleCountBuffer
+				RHICmdList.DrawPrimitiveIndirect(IndirectArgsRDGBuffer->GetRHI(), GPUIndirectDispatch::DrawIndirectArgsOffset);
 			});
 	}
 }

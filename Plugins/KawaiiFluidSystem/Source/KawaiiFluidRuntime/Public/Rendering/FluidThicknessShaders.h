@@ -20,6 +20,8 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidThicknessParameters, )
 	SHADER_PARAMETER_SAMPLER(SamplerState, SceneDepthSampler)
 	SHADER_PARAMETER(FVector2f, SceneViewRect)
 	SHADER_PARAMETER(FVector2f, SceneTextureSize)
+	// DrawPrimitiveIndirect args buffer (RDG dependency tracking)
+	RDG_BUFFER_ACCESS(IndirectArgsBuffer, ERHIAccess::IndirectArgs)
 	RENDER_TARGET_BINDING_SLOTS()
 END_SHADER_PARAMETER_STRUCT()
 

@@ -180,21 +180,21 @@ void FKawaiiFluidRenderResource::ResizeBuffer(FRHICommandListBase& RHICmdList, i
 
 void FKawaiiFluidRenderResource::SetGPUSimulatorReference(
 	FGPUFluidSimulator* InSimulator,
-	int32 InParticleCount,
+	int32 InMaxParticleCount,
 	float InParticleRadius)
 {
 	CachedGPUSimulator.store(InSimulator);
-	CachedGPUParticleCount.store(InParticleCount);
 	CachedParticleRadius.store(InParticleRadius);
 
 	if (InSimulator)
 	{
-		// Call ResizeBuffer on render thread if buffer resize needed
-		const bool bNeedsResizeNow = NeedsResize(InParticleCount);
+		// Use MaxParticleCount for buffer sizing — immune to CPU/GPU count desync.
+		// This guarantees the buffer is always large enough for any GPU-side particle count.
+		const bool bNeedsResizeNow = NeedsResize(InMaxParticleCount);
 		if (bNeedsResizeNow)
 		{
 			FKawaiiFluidRenderResource* RenderResource = this;
-			const int32 NewCount = InParticleCount;
+			const int32 NewCount = InMaxParticleCount;
 
 			ENQUEUE_RENDER_COMMAND(ResizeBufferForGPUMode)(
 				[RenderResource, NewCount](FRHICommandListImmediate& RHICmdList)
@@ -210,17 +210,6 @@ void FKawaiiFluidRenderResource::SetGPUSimulatorReference(
 void FKawaiiFluidRenderResource::ClearGPUSimulatorReference()
 {
 	CachedGPUSimulator.store(nullptr);
-	CachedGPUParticleCount.store(0);
-}
-
-int32 FKawaiiFluidRenderResource::GetUnifiedParticleCount() const
-{
-	FGPUFluidSimulator* Simulator = CachedGPUSimulator.load();
-	if (Simulator)
-	{
-		return Simulator->GetParticleCount();
-	}
-	return 0;
 }
 
 FRDGBufferSRVRef FKawaiiFluidRenderResource::GetPhysicsBufferSRV(FRDGBuilder& GraphBuilder) const

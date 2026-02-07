@@ -397,16 +397,6 @@ void FFluidPreviewScene::SpawnParticles(float DeltaTime)
 	// Update accumulator with residual distance
 	SpawnAccumulatedTime = ResidualDistance;
 
-	// Recycle (Stream mode only): After spawning, remove oldest particles if over MaxParticleCount
-	if (Settings.bContinuousSpawn && Settings.MaxParticleCount > 0)
-	{
-		const int32 CurrentCount = GPUSimulator->GetParticleCount();
-		if (CurrentCount > Settings.MaxParticleCount)
-		{
-			const int32 ToRemove = CurrentCount - Settings.MaxParticleCount;
-			SimulationModule->RemoveOldestParticlesForSource(0, ToRemove);
-		}
-	}
 }
 
 void FFluidPreviewScene::TickSimulation(float DeltaTime)
