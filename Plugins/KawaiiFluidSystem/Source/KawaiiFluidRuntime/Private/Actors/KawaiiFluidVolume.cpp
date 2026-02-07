@@ -418,6 +418,22 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 			}
 		}
 
+		// Filter NaN/Inf positions (stale readback after despawn compaction)
+		{
+			const bool bHasVel = (CachedShadowVelocities.Num() == NumParticles);
+			const bool bHasNbr = (CachedNeighborCounts.Num() == NumParticles);
+			int32 Out = 0;
+			for (int32 i = 0; i < NumParticles; ++i)
+			{
+				if (Positions[i].ContainsNaN()) continue;
+				Positions[Out] = Positions[i];
+				if (bHasVel) CachedShadowVelocities[Out] = CachedShadowVelocities[i];
+				if (bHasNbr) CachedNeighborCounts[Out] = CachedNeighborCounts[i];
+				Out++;
+			}
+			NumParticles = Out;
+		}
+
 		if (NumParticles > 0)
 		{
 			// Calculate fluid bounds from positions (Parallel Reduction)

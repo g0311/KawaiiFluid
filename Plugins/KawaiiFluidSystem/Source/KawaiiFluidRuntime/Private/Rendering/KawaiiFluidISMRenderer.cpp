@@ -171,9 +171,17 @@ void UKawaiiFluidISMRenderer::UpdateRendering(const IKawaiiFluidDataProvider* Da
 	const bool bHasVelocities = Velocities.Num() == Positions.Num();
 
 	// Add each particle as instance
+	int32 InstanceIndex = 0;
 	for (int32 i = 0; i < NumInstances; ++i)
 	{
 		const FVector3f& Position = Positions[i];
+
+		// Skip NaN/Inf positions (can occur from stale readback after despawn compaction)
+		if (!FMath::IsFinite(Position.X) || !FMath::IsFinite(Position.Y) || !FMath::IsFinite(Position.Z))
+		{
+			continue;
+		}
+
 		const FVector3f Velocity = bHasVelocities ? Velocities[i] : FVector3f::ZeroVector;
 
 		// Create transform
@@ -199,11 +207,13 @@ void UKawaiiFluidISMRenderer::UpdateRendering(const IKawaiiFluidDataProvider* Da
 			FLinearColor Color = FMath::Lerp(MinVelocityColor, MaxVelocityColor, T);
 
 			// Pass color as custom data (available in material)
-			ISMComponent->SetCustomDataValue(i, 0, Color.R, false);
-			ISMComponent->SetCustomDataValue(i, 1, Color.G, false);
-			ISMComponent->SetCustomDataValue(i, 2, Color.B, false);
-			ISMComponent->SetCustomDataValue(i, 3, Color.A, false);
+			ISMComponent->SetCustomDataValue(InstanceIndex, 0, Color.R, false);
+			ISMComponent->SetCustomDataValue(InstanceIndex, 1, Color.G, false);
+			ISMComponent->SetCustomDataValue(InstanceIndex, 2, Color.B, false);
+			ISMComponent->SetCustomDataValue(InstanceIndex, 3, Color.A, false);
 		}
+
+		++InstanceIndex;
 	}
 
 	// Update bounds and render state - essential for Virtual Shadow Maps (VSM) and Cascaded Shadow coverage
