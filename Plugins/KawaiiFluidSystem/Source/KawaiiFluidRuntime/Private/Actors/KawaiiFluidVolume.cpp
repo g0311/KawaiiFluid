@@ -1692,20 +1692,6 @@ void AKawaiiFluidVolume::RemoveParticlesBySourceGPU(int32 SourceID)
 	}
 }
 
-void AKawaiiFluidVolume::RemoveOldestParticlesGPU(int32 Count)
-{
-	if (!SimulationModule || Count <= 0)
-	{
-		return;
-	}
-
-	FGPUFluidSimulator* GPUSimulator = SimulationModule->GetGPUSimulator();
-	if (GPUSimulator)
-	{
-		GPUSimulator->AddGPUExplicitRemoveOldestRequest(Count);
-	}
-}
-
 void AKawaiiFluidVolume::ClearAllParticles()
 {
 	if (SimulationModule)

@@ -52,10 +52,7 @@ void MarkDespawnByBrushCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	const uint Count = ParticleCountBuffer[6];
 
 	if (Index >= Count)
-	{
-		OutAliveMask[Index] = 0;
 		return;
-	}
 
 	float3 Pos = Particles[Index].Position;
 

@@ -128,10 +128,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Brush")
 	void RemoveParticlesBySourceGPU(int32 SourceID);
 
-	/** Remove N oldest particles (GPU-driven) */
-	UFUNCTION(BlueprintCallable, Category = "Brush")
-	void RemoveOldestParticlesGPU(int32 Count);
-
 	/** Remove all particles + clear rendering */
 	UFUNCTION(BlueprintCallable, Category = "Brush")
 	void ClearAllParticles();

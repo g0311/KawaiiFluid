@@ -76,6 +76,10 @@ IMPLEMENT_GLOBAL_SHADER(FSpawnParticlesCS,
 	"/Plugin/KawaiiFluidSystem/Private/FluidSpawnParticles.usf",
 	"SpawnParticlesCS", SF_Compute);
 
+IMPLEMENT_GLOBAL_SHADER(FInitAliveMaskCS,
+	"/Plugin/KawaiiFluidSystem/Private/FluidInitAliveMask.usf",
+	"InitAliveMaskCS", SF_Compute);
+
 IMPLEMENT_GLOBAL_SHADER(FMarkDespawnByBrushCS,
 	"/Plugin/KawaiiFluidSystem/Private/FluidDespawnByBrush.usf",
 	"MarkDespawnByBrushCS", SF_Compute);
@@ -95,6 +99,10 @@ IMPLEMENT_GLOBAL_SHADER(FFindOldestThresholdCS,
 IMPLEMENT_GLOBAL_SHADER(FMarkOldestParticlesCS,
 	"/Plugin/KawaiiFluidSystem/Private/FluidDespawnOldest.usf",
 	"MarkOldestParticlesCS", SF_Compute);
+
+IMPLEMENT_GLOBAL_SHADER(FComputePerSourceRecycleCS,
+	"/Plugin/KawaiiFluidSystem/Private/FluidComputePerSourceRecycle.usf",
+	"ComputePerSourceRecycleCS", SF_Compute);
 
 IMPLEMENT_GLOBAL_SHADER(FUpdateSourceCountersDespawnCS,
 	"/Plugin/KawaiiFluidSystem/Private/FluidUpdateSourceCountersDespawn.usf",

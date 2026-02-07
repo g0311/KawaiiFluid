@@ -114,6 +114,13 @@ FRDGBufferRef FGPUZOrderSortManager::ExecuteZOrderSortingPipeline(
 		SortIndicesTempRDG = GraphBuilder.CreateBuffer(MortonDesc, TEXT("GPUFluid.SortIndicesTemp"));
 	}
 
+	// Pre-fill Morton codes with 0xFFFFFFFF so that OOB entries (beyond GPU-accurate count)
+	// sort to the end of the buffer. Radix sort uses stale CPU CurrentParticleCount which may
+	// exceed the actual GPU count after despawn compaction. Without this, uninitialized Morton
+	// codes at indices [GPU_Count..CurrentParticleCount-1] get sorted into the valid range,
+	// corrupting particle data during the Reorder pass.
+	AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(MortonCodesRDG), 0xFFFFFFFFu);
+
 	// Cell Start/End
 	{
 		FRDGBufferDesc CellDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), CellCount);

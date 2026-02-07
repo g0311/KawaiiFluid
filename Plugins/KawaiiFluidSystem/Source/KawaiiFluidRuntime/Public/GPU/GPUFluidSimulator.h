@@ -732,17 +732,12 @@ public:
 	void AddGPUDespawnSourceRequest(int32 SourceID);
 
 	/**
-	 * Add GPU oldest despawn request for recycling (thread-safe, cumulative)
-	 * GPU computes actual removal: max(0, GPU_Count + IncomingSpawnCount - MaxParticleCount)
-	 * @param IncomingSpawnCount - Number of particles about to be spawned
+	 * Set per-source emitter max for GPU-driven recycling (thread-safe)
+	 * GPU automatically removes oldest particles to keep each source under its limit
+	 * @param SourceID - Source component ID (0 to MaxSourceCount-1)
+	 * @param MaxCount - Max particles for this source (0 = no limit / disable)
 	 */
-	void AddGPUDespawnOldestRequest(int32 IncomingSpawnCount);
-
-	/**
-	 * Add explicit oldest removal - removes exactly N oldest particles (thread-safe, cumulative)
-	 * @param RemoveCount - Exact number to remove (CPU specifies count)
-	 */
-	void AddGPUExplicitRemoveOldestRequest(int32 RemoveCount);
+	void SetSourceEmitterMax(int32 SourceID, int32 MaxCount);
 
 	/**
 	 * Lightweight API for despawn operations - returns positions, IDs and source IDs

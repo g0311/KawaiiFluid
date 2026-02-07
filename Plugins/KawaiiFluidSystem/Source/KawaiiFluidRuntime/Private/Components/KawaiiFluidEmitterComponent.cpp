@@ -137,6 +137,19 @@ void UKawaiiFluidEmitterComponent::BeginPlay()
 
 	RegisterToVolume();
 
+	// Set per-source emitter max for GPU-driven recycling (no readback dependency)
+	if (bRecycleOldestParticles && MaxParticleCount > 0 && CachedSourceID >= 0)
+	{
+		UKawaiiFluidSimulationModule* Module = GetSimulationModule();
+		if (Module)
+		{
+			if (FGPUFluidSimulator* GPUSim = Module->GetGPUSimulator())
+			{
+				GPUSim->SetSourceEmitterMax(CachedSourceID, MaxParticleCount);
+			}
+		}
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("UKawaiiFluidEmitterComponent [%s]: BeginPlay - TargetVolume=%s"),
 		*GetName(), TargetVolume ? *TargetVolume->GetName() : TEXT("None"));
 
@@ -210,6 +223,19 @@ void UKawaiiFluidEmitterComponent::BeginPlay()
 
 void UKawaiiFluidEmitterComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	// Clear per-source emitter max before unregistering (stop GPU recycling for this source)
+	if (CachedSourceID >= 0)
+	{
+		UKawaiiFluidSimulationModule* Module = GetSimulationModule();
+		if (Module)
+		{
+			if (FGPUFluidSimulator* GPUSim = Module->GetGPUSimulator())
+			{
+				GPUSim->SetSourceEmitterMax(CachedSourceID, 0);
+			}
+		}
+	}
+
 	UnregisterFromVolume();
 
 	// Release SourceID back to Subsystem
@@ -646,48 +672,10 @@ void UKawaiiFluidEmitterComponent::ProcessStreamEmitter(float DeltaTime)
 		QueueSpawnRequest(AllPositions, AllVelocities);
 	}
 
-	// === Recycle (Stream mode only): After spawning, remove oldest particles if over MaxParticleCount ===
-	// TODO: Implement Quota system for multiple emitters sharing a Volume
-	//       - Currently each emitter recycles its own particles when Volume is near limit
-	//       - Problem: If Emitter A spawns more aggressively, it dominates the Volume
-	//       - Solution: Per-emitter quota based on (EmitterMax / Sum of all EmitterMax) * VolumeMax
-	//       - Or priority-based quota allocation
-	if (bRecycleOldestParticles && MaxParticleCount > 0)
-	{
-		UKawaiiFluidSimulationModule* Module = GetSimulationModule();
-		if (Module && CachedSourceID >= 0)
-		{
-			const int32 CurrentCount = Module->GetParticleCountForSource(CachedSourceID);
-			// -1 = readback not ready, skip recycle this frame
-			if (CurrentCount >= 0)
-			{
-				const int32 SpawnedThisFrame = AllPositions.Num();
-				const int32 Margin = SpawnedThisFrame * 3;
-
-				// Check Volume total particle count
-				FGPUFluidSimulator* GPUSim = Module->GetGPUSimulator();
-				int32 VolumeMax = MaxParticleCount;
-				int32 VolumeTotalCount = CurrentCount;
-				if (GPUSim)
-				{
-					VolumeMax = GPUSim->GetMaxParticleCount();
-					VolumeTotalCount = GPUSim->GetParticleCount();
-				}
-
-				// Recycle if approaching either limit:
-				// 1. This emitter's particle count near EmitterMax
-				// 2. Volume total particle count near VolumeMax
-				const bool bEmitterNearLimit = (CurrentCount >= MaxParticleCount - Margin);
-				const bool bVolumeNearLimit = (VolumeTotalCount >= VolumeMax - Margin);
-
-				if ((bEmitterNearLimit || bVolumeNearLimit) && GPUSim)
-				{
-					const int32 ToRemove = SpawnedThisFrame;
-					GPUSim->AddGPUExplicitRemoveOldestRequest(ToRemove);
-				}
-			}
-		}
-	}
+	// === Recycle (Stream mode only): GPU-driven per-source recycling ===
+	// SetSourceEmitterMax is called in BeginPlay/EndPlay — GPU autonomously removes
+	// oldest particles when SourceCounters[SourceID] + IncomingSpawn > EmitterMax.
+	// No readback dependency, no per-frame CPU logic needed here.
 }
 
 int32 UKawaiiFluidEmitterComponent::SpawnParticlesSphereHexagonal(FVector Center, FQuat Rotation, float Radius, float Spacing, FVector InInitialVelocity)

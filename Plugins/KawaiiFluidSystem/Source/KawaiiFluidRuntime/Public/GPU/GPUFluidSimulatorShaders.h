@@ -917,6 +917,32 @@ public:
 // Marks particles for removal by brush, source, or oldest criteria
 //=============================================================================
 
+// Initialize AliveMask: sets AliveMask[i] = 1 for valid particles (indirect dispatch)
+class FInitAliveMaskCS : public FGlobalShader
+{
+public:
+	DECLARE_GLOBAL_SHADER(FInitAliveMaskCS);
+	SHADER_USE_PARAMETER_STRUCT(FInitAliveMaskCS, FGlobalShader);
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, OutAliveMask)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleCountBuffer)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static constexpr int32 ThreadGroupSize = 256;
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+	}
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
+	}
+};
+
 // Brush-based despawn: marks particles within spherical brush radius
 class FMarkDespawnByBrushCS : public FGlobalShader
 {
@@ -986,6 +1012,8 @@ public:
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUFluidParticle>, Particles)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, IDHistogram)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleCountBuffer)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, PerSourceExcess)
+		SHADER_PARAMETER(int32, FilterSourceID)
 		SHADER_PARAMETER(int32, IDShiftBits)
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -1015,9 +1043,8 @@ public:
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, IDHistogram)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, OldestThreshold)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleCountBuffer)
-		SHADER_PARAMETER(int32, IncomingSpawnCount)
-		SHADER_PARAMETER(int32, MaxParticleCount)
-		SHADER_PARAMETER(int32, ExplicitRemoveCount)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, PerSourceExcess)
+		SHADER_PARAMETER(int32, FilterSourceID)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
@@ -1026,7 +1053,7 @@ public:
 	}
 };
 
-// Oldest despawn Pass 3: Mark particles below threshold + atomic boundary
+// Per-source oldest despawn Pass 3: Mark particles below threshold + atomic boundary
 class FMarkOldestParticlesCS : public FGlobalShader
 {
 public:
@@ -1040,6 +1067,8 @@ public:
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, OutAliveMask)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, BoundaryCounter)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleCountBuffer)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, PerSourceExcess)
+		SHADER_PARAMETER(int32, FilterSourceID)
 		SHADER_PARAMETER(int32, IDShiftBits)
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -1054,6 +1083,27 @@ public:
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
+	}
+};
+
+// Per-source recycle: computes per-source excess for sources with emitter max limits
+class FComputePerSourceRecycleCS : public FGlobalShader
+{
+public:
+	DECLARE_GLOBAL_SHADER(FComputePerSourceRecycleCS);
+	SHADER_USE_PARAMETER_STRUCT(FComputePerSourceRecycleCS, FGlobalShader);
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, SourceCounters)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, EmitterMaxCounts)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, IncomingSpawnCounts)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, PerSourceExcess)
+		SHADER_PARAMETER(int32, ActiveSourceCount)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
 	}
 };
 

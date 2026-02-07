@@ -3,6 +3,7 @@
 
 #include "GPU/Managers/GPUSpawnManager.h"
 #include "GPU/GPUFluidSimulatorShaders.h"
+#include "GPU/GPUIndirectDispatchUtils.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "RHIGPUReadback.h"
@@ -43,6 +44,11 @@ void FGPUSpawnManager::Initialize(int32 InMaxParticleCount)
 	// Initialize source counter cache
 	CachedSourceCounts.SetNumZeroed(EGPUParticleSource::MaxSourceCount);
 
+	// Initialize per-source emitter max counts
+	EmitterMaxCountsCPU.SetNumZeroed(EGPUParticleSource::MaxSourceCount);
+	ActiveEmitterMaxCount = 0;
+	bEmitterMaxCountsDirty = false;
+
 	// Create source counter readback ring buffer
 	SourceCounterReadbacks.SetNum(SourceCounterRingBufferSize);
 	for (int32 i = 0; i < SourceCounterRingBufferSize; ++i)
@@ -72,10 +78,6 @@ void FGPUSpawnManager::Release()
 		ActiveGPUBrushDespawns.Empty();
 		PendingGPUSourceDespawns.Empty();
 		ActiveGPUSourceDespawns.Empty();
-		PendingGPUOldestSpawnCount = 0;
-		ActiveGPUOldestSpawnCount = 0;
-		PendingGPUExplicitRemoveCount = 0;
-		ActiveGPUExplicitRemoveCount = 0;
 		bHasPendingGPUDespawnRequests.store(false);
 	}
 
@@ -110,6 +112,13 @@ void FGPUSpawnManager::Release()
 	PersistentIDHistogramBuffer.SafeRelease();
 	PersistentOldestThresholdBuffer.SafeRelease();
 	PersistentBoundaryCounterBuffer.SafeRelease();
+
+	// Release per-source recycle buffers
+	PersistentEmitterMaxCountsBuffer.SafeRelease();
+	PersistentPerSourceExcessBuffer.SafeRelease();
+	EmitterMaxCountsCPU.Empty();
+	ActiveEmitterMaxCount = 0;
+	bEmitterMaxCountsDirty = false;
 
 	NextParticleID.store(0);
 	bIsInitialized = false;
@@ -224,28 +233,41 @@ void FGPUSpawnManager::AddGPUDespawnSourceRequest(int32 SourceID)
 	bHasPendingGPUDespawnRequests.store(true);
 }
 
-void FGPUSpawnManager::AddGPUDespawnOldestRequest(int32 IncomingSpawnCount)
+void FGPUSpawnManager::SetSourceEmitterMax(int32 SourceID, int32 MaxCount)
 {
-	if (IncomingSpawnCount <= 0)
+	if (SourceID < 0 || SourceID >= EGPUParticleSource::MaxSourceCount)
 	{
 		return;
 	}
 
 	FScopeLock Lock(&GPUDespawnLock);
-	PendingGPUOldestSpawnCount += IncomingSpawnCount;
-	bHasPendingGPUDespawnRequests.store(true);
-}
 
-void FGPUSpawnManager::AddGPUExplicitRemoveOldestRequest(int32 RemoveCount)
-{
-	if (RemoveCount <= 0)
+	if (EmitterMaxCountsCPU.Num() == 0)
+	{
+		EmitterMaxCountsCPU.SetNumZeroed(EGPUParticleSource::MaxSourceCount);
+	}
+
+	const int32 OldValue = EmitterMaxCountsCPU[SourceID];
+	if (OldValue == MaxCount)
 	{
 		return;
 	}
 
-	FScopeLock Lock(&GPUDespawnLock);
-	PendingGPUExplicitRemoveCount += RemoveCount;
-	bHasPendingGPUDespawnRequests.store(true);
+	EmitterMaxCountsCPU[SourceID] = MaxCount;
+	bEmitterMaxCountsDirty = true;
+
+	// Track active count
+	if (OldValue == 0 && MaxCount > 0)
+	{
+		++ActiveEmitterMaxCount;
+	}
+	else if (OldValue > 0 && MaxCount == 0)
+	{
+		--ActiveEmitterMaxCount;
+	}
+
+	UE_LOG(LogGPUSpawnManager, Verbose, TEXT("SetSourceEmitterMax: SourceID=%d, Max=%d (active=%d)"),
+		SourceID, MaxCount, ActiveEmitterMaxCount);
 }
 
 bool FGPUSpawnManager::SwapGPUDespawnBuffers()
@@ -258,23 +280,16 @@ bool FGPUSpawnManager::SwapGPUDespawnBuffers()
 	ActiveGPUSourceDespawns = MoveTemp(PendingGPUSourceDespawns);
 	PendingGPUSourceDespawns.Empty();
 
-	ActiveGPUOldestSpawnCount = PendingGPUOldestSpawnCount;
-	PendingGPUOldestSpawnCount = 0;
-
-	ActiveGPUExplicitRemoveCount = PendingGPUExplicitRemoveCount;
-	PendingGPUExplicitRemoveCount = 0;
-
 	bHasPendingGPUDespawnRequests.store(false);
 
 	const bool bHasAny = (ActiveGPUBrushDespawns.Num() > 0 ||
 		ActiveGPUSourceDespawns.Num() > 0 ||
-		ActiveGPUOldestSpawnCount > 0 ||
-		ActiveGPUExplicitRemoveCount > 0);
+		HasPerSourceRecycle());
 
 	if (bHasAny)
 	{
-		UE_LOG(LogGPUSpawnManager, Verbose, TEXT("SwapGPUDespawnBuffers: Brush=%d, Source=%d, RecycleSpawn=%d, ExplicitRemove=%d"),
-			ActiveGPUBrushDespawns.Num(), ActiveGPUSourceDespawns.Num(), ActiveGPUOldestSpawnCount, ActiveGPUExplicitRemoveCount);
+		UE_LOG(LogGPUSpawnManager, Verbose, TEXT("SwapGPUDespawnBuffers: Brush=%d, Source=%d, PerSourceRecycle=%s"),
+			ActiveGPUBrushDespawns.Num(), ActiveGPUSourceDespawns.Num(), HasPerSourceRecycle() ? TEXT("Yes") : TEXT("No"));
 	}
 
 	return bHasAny;
@@ -292,25 +307,22 @@ void FGPUSpawnManager::AddGPUDespawnPass(
 	{
 		ActiveGPUBrushDespawns.Empty();
 		ActiveGPUSourceDespawns.Empty();
-		ActiveGPUOldestSpawnCount = 0;
-		ActiveGPUExplicitRemoveCount = 0;
 		return;
 	}
 
 	const bool bHasBrush = ActiveGPUBrushDespawns.Num() > 0;
 	const bool bHasSource = ActiveGPUSourceDespawns.Num() > 0;
-	const bool bHasOldest = ActiveGPUOldestSpawnCount > 0 || ActiveGPUExplicitRemoveCount > 0;
+	const bool bHasPerSourceRecycle = HasPerSourceRecycle();
+	const bool bHasOldest = bHasPerSourceRecycle;
 
 	if (!bHasBrush && !bHasSource && !bHasOldest)
 	{
 		return;
 	}
 
-	// Use MaxParticleCapacity for all dispatch/element counts.
-	// CPU's InOutParticleCount can be STALE (readback lag) and LOWER than the actual GPU count.
-	// Using MaxParticleCapacity guarantees full coverage — OOB threads write AliveMask=0 via
-	// each mark shader's bounds check against ParticleCountBuffer[6] (GPU-accurate).
-	const int32 DispatchCount = MaxParticleCapacity;
+	// Mark passes use indirect dispatch (GPU-accurate particle count from ParticleCountBuffer).
+	// PrefixSum/Compact still use MaxParticleCapacity (single-pass, correct with ClearUAV(0)).
+	const int32 CompactionElementCount = MaxParticleCapacity;
 
 	FRDGBufferRef AliveMaskBuffer;
 	FRDGBufferRef PrefixSumsBuffer;
@@ -322,7 +334,7 @@ void FGPUSpawnManager::AddGPUDespawnPass(
 	{
 		RDG_EVENT_SCOPE(GraphBuilder, "GPUDespawn_Setup");
 
-		EnsureStreamCompactionBuffers(GraphBuilder, DispatchCount);
+		EnsureStreamCompactionBuffers(GraphBuilder, CompactionElementCount);
 		ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 
 		AliveMaskBuffer = GraphBuilder.RegisterExternalBuffer(PersistentAliveMaskBuffer, TEXT("AliveMask"));
@@ -333,8 +345,18 @@ void FGPUSpawnManager::AddGPUDespawnPass(
 		// ParticleCountBuffer SRV for bounds checking in all mark shaders
 		ParticleCountSRV = GraphBuilder.CreateSRV(ParticleCountBuffer);
 
-		// Step 1: Clear AliveMask to 1 (all alive)
-		AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(AliveMaskBuffer), 1u);
+		// Step 1: Clear AliveMask to 0 (all dead), then InitAliveMask sets valid particles to 1
+		AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(AliveMaskBuffer), 0u);
+
+		TShaderMapRef<FInitAliveMaskCS> InitCS(ShaderMap);
+		FInitAliveMaskCS::FParameters* InitParams = GraphBuilder.AllocParameters<FInitAliveMaskCS::FParameters>();
+		InitParams->OutAliveMask = GraphBuilder.CreateUAV(AliveMaskBuffer);
+		InitParams->ParticleCountBuffer = ParticleCountSRV;
+
+		GPUIndirectDispatch::AddIndirectComputePass(GraphBuilder,
+			RDG_EVENT_NAME("GPUFluid::InitAliveMask"),
+			InitCS, InitParams, ParticleCountBuffer,
+			GPUIndirectDispatch::IndirectArgsOffset_TG256);
 	}
 
 	// Step 2: Brush mark pass
@@ -360,10 +382,10 @@ void FGPUSpawnManager::AddGPUDespawnPass(
 		BrushParams->ParticleCountBuffer = ParticleCountSRV;
 		BrushParams->BrushRequestCount = ActiveGPUBrushDespawns.Num();
 
-		const uint32 NumGroups = FMath::DivideAndRoundUp(DispatchCount, FMarkDespawnByBrushCS::ThreadGroupSize);
-		FComputeShaderUtils::AddPass(GraphBuilder,
+		GPUIndirectDispatch::AddIndirectComputePass(GraphBuilder,
 			RDG_EVENT_NAME("GPUFluid::DespawnBrush(%d brushes)", ActiveGPUBrushDespawns.Num()),
-			BrushCS, BrushParams, FIntVector(NumGroups, 1, 1));
+			BrushCS, BrushParams, ParticleCountBuffer,
+			GPUIndirectDispatch::IndirectArgsOffset_TG256);
 	}
 
 	// Step 3: Source mark pass
@@ -389,24 +411,24 @@ void FGPUSpawnManager::AddGPUDespawnPass(
 		SourceParams->ParticleCountBuffer = ParticleCountSRV;
 		SourceParams->DespawnSourceIDCount = ActiveGPUSourceDespawns.Num();
 
-		const uint32 NumGroups = FMath::DivideAndRoundUp(DispatchCount, FMarkDespawnBySourceCS::ThreadGroupSize);
-		FComputeShaderUtils::AddPass(GraphBuilder,
+		GPUIndirectDispatch::AddIndirectComputePass(GraphBuilder,
 			RDG_EVENT_NAME("GPUFluid::DespawnSource(%d sources)", ActiveGPUSourceDespawns.Num()),
-			SourceCS, SourceParams, FIntVector(NumGroups, 1, 1));
+			SourceCS, SourceParams, ParticleCountBuffer,
+			GPUIndirectDispatch::IndirectArgsOffset_TG256);
 	}
 
-	// Step 4: Oldest mark pass (3-pass histogram)
+	// Shared: Compute IDShiftBits (used by both per-source and global oldest)
+	const int32 MaxID = FMath::Max(1, NextParticleIDHint);
+	const int32 Log2MaxID = FMath::FloorLog2(MaxID);
+	const int32 IDShiftBits = FMath::Max(0, Log2MaxID - 7);
+
+	// Shared: Ensure histogram buffers exist (reused by per-source loop and global oldest)
+	FRDGBufferRef IDHistogramBuffer = nullptr;
+	FRDGBufferRef OldestThresholdBuffer = nullptr;
+	FRDGBufferRef BoundaryCounterBuffer = nullptr;
+
 	if (bHasOldest)
 	{
-		RDG_EVENT_SCOPE(GraphBuilder, "GPUDespawn_MarkOldest");
-
-		// Compute IDShiftBits = max(0, floor(log2(max(1, NextParticleID))) - 7)
-		const int32 MaxID = FMath::Max(1, NextParticleIDHint);
-		const int32 Log2MaxID = FMath::FloorLog2(MaxID);
-		const int32 IDShiftBits = FMath::Max(0, Log2MaxID - 7);
-
-		// Ensure histogram buffers exist
-		FRDGBufferRef IDHistogramBuffer;
 		if (!PersistentIDHistogramBuffer.IsValid())
 		{
 			FRDGBufferDesc HistDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 256);
@@ -418,7 +440,6 @@ void FGPUSpawnManager::AddGPUDespawnPass(
 			IDHistogramBuffer = GraphBuilder.RegisterExternalBuffer(PersistentIDHistogramBuffer, TEXT("IDHistogram"));
 		}
 
-		FRDGBufferRef OldestThresholdBuffer;
 		if (!PersistentOldestThresholdBuffer.IsValid())
 		{
 			FRDGBufferDesc ThreshDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 2);
@@ -430,7 +451,6 @@ void FGPUSpawnManager::AddGPUDespawnPass(
 			OldestThresholdBuffer = GraphBuilder.RegisterExternalBuffer(PersistentOldestThresholdBuffer, TEXT("OldestThreshold"));
 		}
 
-		FRDGBufferRef BoundaryCounterBuffer;
 		if (!PersistentBoundaryCounterBuffer.IsValid())
 		{
 			FRDGBufferDesc CounterDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), 1);
@@ -441,62 +461,164 @@ void FGPUSpawnManager::AddGPUDespawnPass(
 		{
 			BoundaryCounterBuffer = GraphBuilder.RegisterExternalBuffer(PersistentBoundaryCounterBuffer, TEXT("BoundaryCounter"));
 		}
+	}
 
-		// Clear histogram and boundary counter
-		AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(IDHistogramBuffer), 0u);
-		AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(BoundaryCounterBuffer), 0u);
+	// Step 3.5: Per-source recycle — compute PerSourceExcess[64] and run oldest 3-pass per source
+	if (bHasPerSourceRecycle)
+	{
+		RDG_EVENT_SCOPE(GraphBuilder, "GPUDespawn_PerSourceRecycle");
 
-		// Pass 1: BuildIDHistogramCS
+		// Ensure PerSourceExcess buffer exists
+		FRDGBufferRef PerSourceExcessBuffer;
+		if (!PersistentPerSourceExcessBuffer.IsValid())
 		{
-			TShaderMapRef<FBuildIDHistogramCS> HistCS(ShaderMap);
-			FBuildIDHistogramCS::FParameters* HistParams = GraphBuilder.AllocParameters<FBuildIDHistogramCS::FParameters>();
-			HistParams->Particles = GraphBuilder.CreateSRV(InOutParticleBuffer);
-			HistParams->IDHistogram = GraphBuilder.CreateUAV(IDHistogramBuffer);
-			HistParams->ParticleCountBuffer = ParticleCountSRV;
-			HistParams->IDShiftBits = IDShiftBits;
-
-			const uint32 NumGroups = FMath::DivideAndRoundUp(DispatchCount, FBuildIDHistogramCS::ThreadGroupSize);
-			FComputeShaderUtils::AddPass(GraphBuilder,
-				RDG_EVENT_NAME("GPUFluid::DespawnOldest_Histogram"),
-				HistCS, HistParams, FIntVector(NumGroups, 1, 1));
+			FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), EGPUParticleSource::MaxSourceCount);
+			PerSourceExcessBuffer = GraphBuilder.CreateBuffer(Desc, TEXT("PerSourceExcess"));
+			PersistentPerSourceExcessBuffer = GraphBuilder.ConvertToExternalBuffer(PerSourceExcessBuffer);
+		}
+		else
+		{
+			PerSourceExcessBuffer = GraphBuilder.RegisterExternalBuffer(PersistentPerSourceExcessBuffer, TEXT("PerSourceExcess"));
 		}
 
-		// Pass 2: FindOldestThresholdCS - GPU computes RemoveCount from exact counts
+		// Ensure EmitterMaxCounts buffer exists and upload if dirty
+		FRDGBufferRef EmitterMaxCountsBuffer;
+		if (!PersistentEmitterMaxCountsBuffer.IsValid() || bEmitterMaxCountsDirty)
 		{
-			TShaderMapRef<FFindOldestThresholdCS> ThreshCS(ShaderMap);
-			FFindOldestThresholdCS::FParameters* ThreshParams = GraphBuilder.AllocParameters<FFindOldestThresholdCS::FParameters>();
-			ThreshParams->IDHistogram = GraphBuilder.CreateUAV(IDHistogramBuffer);
-			ThreshParams->OldestThreshold = GraphBuilder.CreateUAV(OldestThresholdBuffer);
-			ThreshParams->ParticleCountBuffer = ParticleCountSRV;
-			ThreshParams->IncomingSpawnCount = ActiveGPUOldestSpawnCount;
-			ThreshParams->MaxParticleCount = MaxParticleCapacity;
-			ThreshParams->ExplicitRemoveCount = ActiveGPUExplicitRemoveCount;
+			TArray<uint32> MaxCountsUint32;
+			MaxCountsUint32.SetNumUninitialized(EGPUParticleSource::MaxSourceCount);
+			for (int32 i = 0; i < EGPUParticleSource::MaxSourceCount; ++i)
+			{
+				MaxCountsUint32[i] = static_cast<uint32>(FMath::Max(0, EmitterMaxCountsCPU.IsValidIndex(i) ? EmitterMaxCountsCPU[i] : 0));
+			}
 
-			FComputeShaderUtils::AddPass(GraphBuilder,
-				RDG_EVENT_NAME("GPUFluid::DespawnOldest_Threshold(spawn=%d,explicit=%d,max=%d)",
-					ActiveGPUOldestSpawnCount, ActiveGPUExplicitRemoveCount, MaxParticleCapacity),
-				ThreshCS, ThreshParams, FIntVector(1, 1, 1));
+			EmitterMaxCountsBuffer = CreateStructuredBuffer(
+				GraphBuilder,
+				TEXT("EmitterMaxCounts"),
+				sizeof(uint32),
+				EGPUParticleSource::MaxSourceCount,
+				MaxCountsUint32.GetData(),
+				MaxCountsUint32.Num() * sizeof(uint32),
+				ERDGInitialDataFlags::None
+			);
+			PersistentEmitterMaxCountsBuffer = GraphBuilder.ConvertToExternalBuffer(EmitterMaxCountsBuffer);
+			bEmitterMaxCountsDirty = false;
+		}
+		else
+		{
+			EmitterMaxCountsBuffer = GraphBuilder.RegisterExternalBuffer(PersistentEmitterMaxCountsBuffer, TEXT("EmitterMaxCounts"));
 		}
 
-		// Pass 3: MarkOldestParticlesCS
+		// Build per-source incoming spawn counts from ActiveSpawnRequests
+		TArray<uint32> IncomingCounts;
+		IncomingCounts.SetNumZeroed(EGPUParticleSource::MaxSourceCount);
+		for (const FGPUSpawnRequest& Req : ActiveSpawnRequests)
 		{
-			TShaderMapRef<FMarkOldestParticlesCS> MarkCS(ShaderMap);
-			FMarkOldestParticlesCS::FParameters* MarkParams = GraphBuilder.AllocParameters<FMarkOldestParticlesCS::FParameters>();
-			MarkParams->Particles = GraphBuilder.CreateSRV(InOutParticleBuffer);
-			MarkParams->OldestThreshold = GraphBuilder.CreateUAV(OldestThresholdBuffer);
-			MarkParams->OutAliveMask = GraphBuilder.CreateUAV(AliveMaskBuffer);
-			MarkParams->BoundaryCounter = GraphBuilder.CreateUAV(BoundaryCounterBuffer);
-			MarkParams->ParticleCountBuffer = ParticleCountSRV;
-			MarkParams->IDShiftBits = IDShiftBits;
+			if (Req.SourceID >= 0 && Req.SourceID < EGPUParticleSource::MaxSourceCount)
+			{
+				IncomingCounts[Req.SourceID]++;
+			}
+		}
 
-			const uint32 NumGroups = FMath::DivideAndRoundUp(DispatchCount, FMarkOldestParticlesCS::ThreadGroupSize);
+		FRDGBufferRef IncomingSpawnCountsBuffer = CreateStructuredBuffer(
+			GraphBuilder,
+			TEXT("IncomingSpawnCounts"),
+			sizeof(uint32),
+			EGPUParticleSource::MaxSourceCount,
+			IncomingCounts.GetData(),
+			IncomingCounts.Num() * sizeof(uint32),
+			ERDGInitialDataFlags::None
+		);
+
+		// Register SourceCounters as SRV for reading
+		FRDGBufferRef SourceCounterRDG = GraphBuilder.RegisterExternalBuffer(SourceCounterBuffer, TEXT("SourceCountersForRecycle"));
+
+		// Clear PerSourceExcess before compute
+		AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(PerSourceExcessBuffer), 0u);
+
+		// Dispatch ComputePerSourceRecycleCS → PerSourceExcess[64]
+		{
+			TShaderMapRef<FComputePerSourceRecycleCS> RecycleCS(ShaderMap);
+			FComputePerSourceRecycleCS::FParameters* RecycleParams = GraphBuilder.AllocParameters<FComputePerSourceRecycleCS::FParameters>();
+			RecycleParams->SourceCounters = GraphBuilder.CreateSRV(SourceCounterRDG);
+			RecycleParams->EmitterMaxCounts = GraphBuilder.CreateSRV(EmitterMaxCountsBuffer);
+			RecycleParams->IncomingSpawnCounts = GraphBuilder.CreateSRV(IncomingSpawnCountsBuffer);
+			RecycleParams->PerSourceExcess = GraphBuilder.CreateUAV(PerSourceExcessBuffer);
+			RecycleParams->ActiveSourceCount = EGPUParticleSource::MaxSourceCount;
+
 			FComputeShaderUtils::AddPass(GraphBuilder,
-				RDG_EVENT_NAME("GPUFluid::DespawnOldest_Mark"),
-				MarkCS, MarkParams, FIntVector(NumGroups, 1, 1));
+				RDG_EVENT_NAME("GPUFluid::ComputePerSourceExcess"),
+				RecycleCS, RecycleParams, FIntVector(1, 1, 1));
+		}
+
+		FRDGBufferSRVRef PerSourceExcessSRV = GraphBuilder.CreateSRV(PerSourceExcessBuffer);
+
+		// Step 3.6: Per-source oldest 3-pass — loop over each source with EmitterMax set
+		for (int32 s = 0; s < EGPUParticleSource::MaxSourceCount; ++s)
+		{
+			if (!EmitterMaxCountsCPU.IsValidIndex(s) || EmitterMaxCountsCPU[s] <= 0)
+			{
+				continue;
+			}
+
+			// Clear histogram and boundary counter for this source
+			AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(IDHistogramBuffer), 0u);
+			AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(BoundaryCounterBuffer), 0u);
+
+			// Pass 1: BuildIDHistogramCS (filtered to SourceID == s)
+			{
+				TShaderMapRef<FBuildIDHistogramCS> HistCS(ShaderMap);
+				FBuildIDHistogramCS::FParameters* HistParams = GraphBuilder.AllocParameters<FBuildIDHistogramCS::FParameters>();
+				HistParams->Particles = GraphBuilder.CreateSRV(InOutParticleBuffer);
+				HistParams->IDHistogram = GraphBuilder.CreateUAV(IDHistogramBuffer);
+				HistParams->ParticleCountBuffer = ParticleCountSRV;
+				HistParams->PerSourceExcess = PerSourceExcessSRV;
+				HistParams->FilterSourceID = s;
+				HistParams->IDShiftBits = IDShiftBits;
+
+				GPUIndirectDispatch::AddIndirectComputePass(GraphBuilder,
+					RDG_EVENT_NAME("GPUFluid::PerSourceOldest_Histogram(src=%d)", s),
+					HistCS, HistParams, ParticleCountBuffer,
+					GPUIndirectDispatch::IndirectArgsOffset_TG256);
+			}
+
+			// Pass 2: FindOldestThresholdCS (removeCount = PerSourceExcess[s], read on GPU)
+			{
+				TShaderMapRef<FFindOldestThresholdCS> ThreshCS(ShaderMap);
+				FFindOldestThresholdCS::FParameters* ThreshParams = GraphBuilder.AllocParameters<FFindOldestThresholdCS::FParameters>();
+				ThreshParams->IDHistogram = GraphBuilder.CreateUAV(IDHistogramBuffer);
+				ThreshParams->OldestThreshold = GraphBuilder.CreateUAV(OldestThresholdBuffer);
+				ThreshParams->ParticleCountBuffer = ParticleCountSRV;
+				ThreshParams->PerSourceExcess = PerSourceExcessSRV;
+				ThreshParams->FilterSourceID = s;
+
+				FComputeShaderUtils::AddPass(GraphBuilder,
+					RDG_EVENT_NAME("GPUFluid::PerSourceOldest_Threshold(src=%d)", s),
+					ThreshCS, ThreshParams, FIntVector(1, 1, 1));
+			}
+
+			// Pass 3: MarkOldestParticlesCS (filtered to SourceID == s)
+			{
+				TShaderMapRef<FMarkOldestParticlesCS> MarkCS(ShaderMap);
+				FMarkOldestParticlesCS::FParameters* MarkParams = GraphBuilder.AllocParameters<FMarkOldestParticlesCS::FParameters>();
+				MarkParams->Particles = GraphBuilder.CreateSRV(InOutParticleBuffer);
+				MarkParams->OldestThreshold = GraphBuilder.CreateUAV(OldestThresholdBuffer);
+				MarkParams->OutAliveMask = GraphBuilder.CreateUAV(AliveMaskBuffer);
+				MarkParams->BoundaryCounter = GraphBuilder.CreateUAV(BoundaryCounterBuffer);
+				MarkParams->ParticleCountBuffer = ParticleCountSRV;
+				MarkParams->PerSourceExcess = PerSourceExcessSRV;
+				MarkParams->FilterSourceID = s;
+				MarkParams->IDShiftBits = IDShiftBits;
+
+				GPUIndirectDispatch::AddIndirectComputePass(GraphBuilder,
+					RDG_EVENT_NAME("GPUFluid::PerSourceOldest_Mark(src=%d)", s),
+					MarkCS, MarkParams, ParticleCountBuffer,
+					GPUIndirectDispatch::IndirectArgsOffset_TG256);
+			}
 		}
 	}
 
-	// Step 5: UpdateSourceCountersDespawnCS
+	// Step 4: UpdateSourceCountersDespawnCS
 	{
 		RDG_EVENT_SCOPE(GraphBuilder, "GPUDespawn_UpdateSourceCounters");
 
@@ -508,14 +630,14 @@ void FGPUSpawnManager::AddGPUDespawnPass(
 		UpdateParams->ParticleCountBuffer = ParticleCountSRV;
 		UpdateParams->MaxSourceCount = EGPUParticleSource::MaxSourceCount;
 
-		const uint32 NumGroups = FMath::DivideAndRoundUp(DispatchCount, FUpdateSourceCountersDespawnCS::ThreadGroupSize);
-		FComputeShaderUtils::AddPass(GraphBuilder,
+		GPUIndirectDispatch::AddIndirectComputePass(GraphBuilder,
 			RDG_EVENT_NAME("GPUFluid::DespawnUpdateSourceCounters"),
-			UpdateCS, UpdateParams, FIntVector(NumGroups, 1, 1));
+			UpdateCS, UpdateParams, ParticleCountBuffer,
+			GPUIndirectDispatch::IndirectArgsOffset_TG256);
 	}
 
-	// Step 6-7: PrefixSum + Compact (reuse existing stream compaction pipeline)
-	const int32 PrefixSumBlockNumGroups = FMath::DivideAndRoundUp(DispatchCount, FPrefixSumBlockCS_RDG::ThreadGroupSize);
+	// Step 5-6: PrefixSum + Compact (reuse existing stream compaction pipeline)
+	const int32 PrefixSumBlockNumGroups = FMath::DivideAndRoundUp(CompactionElementCount, FPrefixSumBlockCS_RDG::ThreadGroupSize);
 
 	{
 		RDG_EVENT_SCOPE(GraphBuilder, "GPUDespawn_PrefixSum");
@@ -525,7 +647,7 @@ void FGPUSpawnManager::AddGPUDespawnPass(
 		PrefixSumBlockParameters->MarkedFlags = GraphBuilder.CreateSRV(AliveMaskBuffer);
 		PrefixSumBlockParameters->PrefixSums = GraphBuilder.CreateUAV(PrefixSumsBuffer);
 		PrefixSumBlockParameters->BlockSums = GraphBuilder.CreateUAV(BlockSumsBuffer);
-		PrefixSumBlockParameters->ElementCount = DispatchCount;
+		PrefixSumBlockParameters->ElementCount = CompactionElementCount;
 
 		FComputeShaderUtils::AddPass(GraphBuilder,
 			RDG_EVENT_NAME("GPUFluid::GPUDespawn_PrefixSumBlock"),
@@ -547,7 +669,7 @@ void FGPUSpawnManager::AddGPUDespawnPass(
 		FAddBlockOffsetsCS_RDG::FParameters* AddBlockOffsetsParameters = GraphBuilder.AllocParameters<FAddBlockOffsetsCS_RDG::FParameters>();
 		AddBlockOffsetsParameters->PrefixSums = GraphBuilder.CreateUAV(PrefixSumsBuffer);
 		AddBlockOffsetsParameters->BlockSums = GraphBuilder.CreateUAV(BlockSumsBuffer);
-		AddBlockOffsetsParameters->ElementCount = DispatchCount;
+		AddBlockOffsetsParameters->ElementCount = CompactionElementCount;
 
 		FComputeShaderUtils::AddPass(GraphBuilder,
 			RDG_EVENT_NAME("GPUFluid::GPUDespawn_AddBlockOffsets"),
@@ -568,7 +690,7 @@ void FGPUSpawnManager::AddGPUDespawnPass(
 		CompactParameters->MarkedFlags = GraphBuilder.CreateSRV(AliveMaskBuffer);
 		CompactParameters->PrefixSums = GraphBuilder.CreateSRV(PrefixSumsBuffer);
 		CompactParameters->CompactedParticles = GraphBuilder.CreateUAV(CompactedParticlesBuffer);
-		CompactParameters->ParticleCount = DispatchCount;
+		CompactParameters->ParticleCount = CompactionElementCount;
 
 		FComputeShaderUtils::AddPass(GraphBuilder,
 			RDG_EVENT_NAME("GPUFluid::GPUDespawn_Compact"),
@@ -581,8 +703,6 @@ void FGPUSpawnManager::AddGPUDespawnPass(
 	// Clear active requests
 	ActiveGPUBrushDespawns.Empty();
 	ActiveGPUSourceDespawns.Empty();
-	ActiveGPUOldestSpawnCount = 0;
-	ActiveGPUExplicitRemoveCount = 0;
 }
 
 //=============================================================================

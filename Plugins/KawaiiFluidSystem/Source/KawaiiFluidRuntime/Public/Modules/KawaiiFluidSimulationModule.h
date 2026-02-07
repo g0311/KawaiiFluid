@@ -480,12 +480,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Fluid")
 	void DespawnBySourceGPU(int32 SourceID);
 
-	/** Remove N oldest particles (GPU-driven histogram, no readback dependency)
-	 * @param IncomingSpawnCount Number of particles about to be spawned (GPU computes actual removal)
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Fluid")
-	void DespawnOldestGPU(int32 IncomingSpawnCount);
-
 	/** Get particle positions array */
 	UFUNCTION(BlueprintCallable, Category = "Fluid")
 	TArray<FVector> GetParticlePositions() const;

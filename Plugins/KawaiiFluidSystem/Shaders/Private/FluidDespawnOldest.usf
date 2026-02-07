@@ -1,6 +1,7 @@
 // Copyright KawaiiFluid Team. All Rights Reserved.
-// Oldest-Based Despawn Shader - Removes N oldest particles using histogram approach
+// Per-Source Oldest Despawn Shader - Removes N oldest particles per source using histogram approach
 // 3 kernels: BuildIDHistogramCS, FindOldestThresholdCS, MarkOldestParticlesCS
+// FilterSourceID selects which source to process
 
 #include "/Engine/Public/Platform.ush"
 #include "/Engine/Private/Common.ush"
@@ -29,10 +30,12 @@ struct FGPUFluidParticle
 
 StructuredBuffer<FGPUFluidParticle> Particles;
 StructuredBuffer<uint> ParticleCountBuffer;
+StructuredBuffer<uint> PerSourceExcess;  // [64] per-source excess from ComputePerSourceRecycleCS
+int FilterSourceID;                      // source to process (>= 0)
 
 // ===================================================================================
 // Pass 1: BuildIDHistogramCS
-// Builds a 256-bucket histogram of ParticleID upper bits
+// Builds a 256-bucket histogram of ParticleID upper bits for the target source
 // ===================================================================================
 
 RWStructuredBuffer<uint> IDHistogram;      // uint32 x 256
@@ -54,10 +57,13 @@ void BuildIDHistogramCS(uint3 GroupId : SV_GroupID, uint3 GroupThreadId : SV_Gro
 	const uint i = DispatchThreadId.x;
 	if (i < Count)
 	{
-		uint pid = (uint)Particles[i].ParticleID;
-		uint bucket = pid >> (uint)IDShiftBits;
-		bucket = min(bucket, 255u);
-		InterlockedAdd(SharedHist[bucket], 1);
+		if (Particles[i].SourceID == FilterSourceID)
+		{
+			uint pid = (uint)Particles[i].ParticleID;
+			uint bucket = pid >> (uint)IDShiftBits;
+			bucket = min(bucket, 255u);
+			InterlockedAdd(SharedHist[bucket], 1);
+		}
 	}
 
 	GroupMemoryBarrierWithGroupSync();
@@ -73,25 +79,18 @@ void BuildIDHistogramCS(uint3 GroupId : SV_GroupID, uint3 GroupThreadId : SV_Gro
 // Pass 2: FindOldestThresholdCS
 // Scans histogram from bucket 0 upward to find threshold bucket
 // Single-threaded pass (256 buckets is trivial)
+// removeCount = PerSourceExcess[FilterSourceID]
 // ===================================================================================
 
 RWStructuredBuffer<uint> OldestThreshold;  // [0] = threshold bucket, [1] = remaining count in boundary bucket
-int IncomingSpawnCount;    // recycle mode: GPU computes removal from counts
-int MaxParticleCount;      // recycle mode: max particle capacity
-int ExplicitRemoveCount;   // explicit mode: remove exactly this many
 
 [numthreads(1, 1, 1)]
 void FindOldestThresholdCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
-	// Compute total removal: explicit + recycle
-	int currentCount = (int)ParticleCountBuffer[6];
-	int recycleRemove = max(0, currentCount + IncomingSpawnCount - MaxParticleCount);
-	int removeCount = ExplicitRemoveCount + recycleRemove;
+	int removeCount = (int)PerSourceExcess[FilterSourceID];
 
 	if (removeCount <= 0)
 	{
-		// No removal needed - threshold bucket 0 with 0 remaining = no marks
-		// (unsigned: bucket < 0u is always false, bucket == 0 && 0 > 0 is false)
 		OldestThreshold[0] = 0;
 		OldestThreshold[1] = 0;
 		return;
@@ -119,6 +118,7 @@ void FindOldestThresholdCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 // ===================================================================================
 // Pass 3: MarkOldestParticlesCS
 // Marks particles in buckets below threshold, plus atomic counting at boundary
+// Only marks particles from the target source
 // ===================================================================================
 
 RWStructuredBuffer<uint> OutAliveMask;
@@ -131,8 +131,11 @@ void MarkOldestParticlesCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	const uint Count = ParticleCountBuffer[6];
 
 	if (Index >= Count)
+		return;
+
+	// Source filter: skip non-matching particles (leave their AliveMask unchanged)
+	if (Particles[Index].SourceID != FilterSourceID)
 	{
-		OutAliveMask[Index] = 0;
 		return;
 	}
 

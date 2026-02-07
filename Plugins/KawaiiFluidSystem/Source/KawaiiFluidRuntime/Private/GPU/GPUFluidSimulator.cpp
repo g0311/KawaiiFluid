@@ -882,7 +882,7 @@ void FGPUFluidSimulator::BeginFrame()
 
 	// Capture pending flags on game thread (before render command)
 	const bool bHasPendingSpawns = SpawnManager.IsValid() && SpawnManager->HasPendingSpawnRequests();
-	const bool bHasPendingDespawns = SpawnManager.IsValid() && SpawnManager->HasPendingGPUDespawnRequests();
+	const bool bHasPendingDespawns = SpawnManager.IsValid() && (SpawnManager->HasPendingGPUDespawnRequests() || SpawnManager->HasPerSourceRecycle());
 
 	// Single render command for all BeginFrame operations
 	ENQUEUE_RENDER_COMMAND(GPUFluidBeginFrame)(
@@ -2278,19 +2278,11 @@ void FGPUFluidSimulator::AddGPUDespawnSourceRequest(int32 SourceID)
 	}
 }
 
-void FGPUFluidSimulator::AddGPUDespawnOldestRequest(int32 IncomingSpawnCount)
+void FGPUFluidSimulator::SetSourceEmitterMax(int32 SourceID, int32 MaxCount)
 {
 	if (SpawnManager.IsValid())
 	{
-		SpawnManager->AddGPUDespawnOldestRequest(IncomingSpawnCount);
-	}
-}
-
-void FGPUFluidSimulator::AddGPUExplicitRemoveOldestRequest(int32 RemoveCount)
-{
-	if (SpawnManager.IsValid())
-	{
-		SpawnManager->AddGPUExplicitRemoveOldestRequest(RemoveCount);
+		SpawnManager->SetSourceEmitterMax(SourceID, MaxCount);
 	}
 }
 

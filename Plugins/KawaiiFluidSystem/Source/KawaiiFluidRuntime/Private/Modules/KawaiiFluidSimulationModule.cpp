@@ -1448,19 +1448,6 @@ void UKawaiiFluidSimulationModule::DespawnBySourceGPU(int32 SourceID)
 	}
 }
 
-void UKawaiiFluidSimulationModule::DespawnOldestGPU(int32 IncomingSpawnCount)
-{
-	if (IncomingSpawnCount <= 0)
-	{
-		return;
-	}
-
-	TSharedPtr<FGPUFluidSimulator> GPUSim = WeakGPUSimulator.Pin();
-	if (bGPUSimulationActive && GPUSim)
-	{
-		GPUSim->AddGPUDespawnOldestRequest(IncomingSpawnCount);
-	}
-}
 
 TArray<FVector> UKawaiiFluidSimulationModule::GetParticlePositions() const
 {

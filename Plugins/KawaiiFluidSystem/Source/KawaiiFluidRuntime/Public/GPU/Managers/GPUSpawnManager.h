@@ -49,10 +49,6 @@ public:
 		ActiveGPUBrushDespawns.Empty();
 		PendingGPUSourceDespawns.Empty();
 		ActiveGPUSourceDespawns.Empty();
-		PendingGPUOldestSpawnCount = 0;
-		ActiveGPUOldestSpawnCount = 0;
-		PendingGPUExplicitRemoveCount = 0;
-		ActiveGPUExplicitRemoveCount = 0;
 
 		bHasPendingSpawnRequests.store(false);
 		bHasPendingGPUDespawnRequests.store(false);
@@ -70,10 +66,6 @@ public:
 		ActiveGPUBrushDespawns.Empty();
 		PendingGPUSourceDespawns.Empty();
 		ActiveGPUSourceDespawns.Empty();
-		PendingGPUOldestSpawnCount = 0;
-		ActiveGPUOldestSpawnCount = 0;
-		PendingGPUExplicitRemoveCount = 0;
-		ActiveGPUExplicitRemoveCount = 0;
 		bHasPendingGPUDespawnRequests.store(false);
 	}
 
@@ -131,17 +123,15 @@ public:
 	void AddGPUDespawnSourceRequest(int32 SourceID);
 
 	/**
-	 * Add an oldest despawn request for particle recycling (thread-safe, cumulative)
-	 * GPU computes actual removal: max(0, GPU_Count + IncomingSpawnCount - MaxParticleCount)
-	 * @param IncomingSpawnCount - Number of particles about to be spawned
+	 * Set per-source emitter max particle count for GPU-driven recycling (thread-safe)
+	 * When set, GPU automatically removes oldest particles to keep each source under its limit
+	 * @param SourceID - Source component ID (0 to MaxSourceCount-1)
+	 * @param MaxCount - Max particles for this source (0 = no limit / disable)
 	 */
-	void AddGPUDespawnOldestRequest(int32 IncomingSpawnCount);
+	void SetSourceEmitterMax(int32 SourceID, int32 MaxCount);
 
-	/**
-	 * Add explicit oldest removal request - removes exactly N particles (thread-safe, cumulative)
-	 * @param RemoveCount - Exact number of oldest particles to remove
-	 */
-	void AddGPUExplicitRemoveOldestRequest(int32 RemoveCount);
+	/** Check if any per-source recycle limits are active */
+	bool HasPerSourceRecycle() const { return ActiveEmitterMaxCount > 0; }
 
 	/** Check if there are pending GPU despawn requests (lock-free) */
 	bool HasPendingGPUDespawnRequests() const { return bHasPendingGPUDespawnRequests.load(); }
@@ -153,7 +143,7 @@ public:
 
 	/**
 	 * Add GPU-driven despawn RDG passes
-	 * Pipeline: ClearUAV(AliveMask,1) → [Brush] → [Source] → [Oldest] → UpdateSourceCounters → PrefixSum → Compact
+	 * Pipeline: ClearUAV(AliveMask,0) → InitAliveMask → [Brush] → [Source] → [PerSourceOldest] → UpdateSourceCounters → PrefixSum → Compact
 	 * @param GraphBuilder - RDG builder
 	 * @param InOutParticleBuffer - Particle buffer (updated to compacted output)
 	 * @param InOutParticleCount - Particle count (used for dispatch, not updated by GPU)
@@ -322,10 +312,6 @@ private:
 	TArray<FGPUDespawnBrushRequest> ActiveGPUBrushDespawns;
 	TArray<int32> PendingGPUSourceDespawns;
 	TArray<int32> ActiveGPUSourceDespawns;
-	int32 PendingGPUOldestSpawnCount = 0;      // recycle: incoming spawn count
-	int32 ActiveGPUOldestSpawnCount = 0;
-	int32 PendingGPUExplicitRemoveCount = 0;   // explicit: remove exactly N
-	int32 ActiveGPUExplicitRemoveCount = 0;
 	mutable FCriticalSection GPUDespawnLock;
 
 	// Lock-free flag for quick pending check
@@ -335,6 +321,15 @@ private:
 	TRefCountPtr<FRDGPooledBuffer> PersistentIDHistogramBuffer;      // uint32 x 256
 	TRefCountPtr<FRDGPooledBuffer> PersistentOldestThresholdBuffer;  // uint32 x 2
 	TRefCountPtr<FRDGPooledBuffer> PersistentBoundaryCounterBuffer;  // uint32 x 1
+
+	//=========================================================================
+	// Per-Source Emitter Max (GPU-Driven Recycle)
+	//=========================================================================
+	TArray<int32> EmitterMaxCountsCPU;                                // [MaxSourceCount], 0 = no limit
+	bool bEmitterMaxCountsDirty = false;
+	int32 ActiveEmitterMaxCount = 0;                                  // Count of non-zero entries
+	TRefCountPtr<FRDGPooledBuffer> PersistentEmitterMaxCountsBuffer;  // uint32 x MaxSourceCount
+	TRefCountPtr<FRDGPooledBuffer> PersistentPerSourceExcessBuffer;   // uint32 x MaxSourceCount
 
 	//=========================================================================
 	// Particle ID Tracking

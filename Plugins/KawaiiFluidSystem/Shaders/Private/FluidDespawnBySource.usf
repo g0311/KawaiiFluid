@@ -46,10 +46,7 @@ void MarkDespawnBySourceCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	const uint Count = ParticleCountBuffer[6];
 
 	if (Index >= Count)
-	{
-		OutAliveMask[Index] = 0;
 		return;
-	}
 
 	int sid = Particles[Index].SourceID;
 
