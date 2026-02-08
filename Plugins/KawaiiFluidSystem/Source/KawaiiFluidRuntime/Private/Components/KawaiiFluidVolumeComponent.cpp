@@ -20,8 +20,8 @@ UKawaiiFluidVolumeComponent::UKawaiiFluidVolumeComponent()
 	bTickInEditor = true;
 
 	// UBoxComponent configuration for editor visualization and selection
-	SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	SetCollisionResponseToAllChannels(ECR_Ignore);
+	UBoxComponent::SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	UBoxComponent::SetCollisionResponseToAllChannels(ECR_Ignore);
 	SetGenerateOverlapEvents(false);
 
 	// Wireframe visualization settings
