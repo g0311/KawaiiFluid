@@ -1318,7 +1318,12 @@ UKawaiiFluidSimulationModule* UKawaiiFluidEmitterComponent::GetSimulationModule(
  */
 void UKawaiiFluidEmitterComponent::ClearSpawnedParticles()
 {
-	// First, clear any pending spawn requests for this emitter (prevents last-frame spawn leak)
+	// Always reset spawn state first, even if GPU despawn can't execute (prevents bAutoSpawnExecuted stuck-true)
+	SpawnedParticleCount = 0;
+	bAutoSpawnExecuted = false;
+	bJustCleared = true;  // Allow immediate re-spawn before GPU readback updates
+
+	// Clear any pending spawn requests for this emitter (prevents last-frame spawn leak)
 	// This clears Volume's PendingSpawnRequests queue
 	if (TargetVolume && CachedSourceID >= 0)
 	{
@@ -1354,11 +1359,6 @@ void UKawaiiFluidEmitterComponent::ClearSpawnedParticles()
 	GPUSim->AddGPUDespawnSourceRequest(CachedSourceID);
 	UE_LOG(LogTemp, Log, TEXT("EmitterComponent [%s]: GPU despawn by source (SourceID=%d)"),
 		*GetName(), CachedSourceID);
-
-	// Reset spawned count and allow re-spawning
-	SpawnedParticleCount = 0;
-	bAutoSpawnExecuted = false;
-	bJustCleared = true;  // Allow immediate re-spawn before GPU readback updates
 }
 
 /**

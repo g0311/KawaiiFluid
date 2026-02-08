@@ -700,6 +700,23 @@ void FGPUSpawnManager::AddGPUDespawnPass(
 		InOutParticleBuffer = CompactedParticlesBuffer;
 	}
 
+	// Step 7: Write exact alive count to ParticleCountBuffer (dispatch args + raw count + DrawIndirect)
+	{
+		RDG_EVENT_SCOPE(GraphBuilder, "GPUDespawn_WriteAliveCount");
+
+		TShaderMapRef<FWriteAliveCountAfterCompactionCS> WriteCountShader(ShaderMap);
+		FWriteAliveCountAfterCompactionCS::FParameters* WriteCountParams =
+			GraphBuilder.AllocParameters<FWriteAliveCountAfterCompactionCS::FParameters>();
+		WriteCountParams->PrefixSums = GraphBuilder.CreateSRV(PrefixSumsBuffer);
+		WriteCountParams->AliveMask = GraphBuilder.CreateSRV(AliveMaskBuffer);
+		WriteCountParams->ParticleCountBuffer = GraphBuilder.CreateUAV(ParticleCountBuffer);
+		WriteCountParams->OldParticleCount = CompactionElementCount;
+
+		FComputeShaderUtils::AddPass(GraphBuilder,
+			RDG_EVENT_NAME("GPUFluid::WriteAliveCountAfterCompaction"),
+			WriteCountShader, WriteCountParams, FIntVector(1, 1, 1));
+	}
+
 	// Clear active requests
 	ActiveGPUBrushDespawns.Empty();
 	ActiveGPUSourceDespawns.Empty();

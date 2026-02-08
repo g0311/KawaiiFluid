@@ -105,10 +105,10 @@ void UKawaiiFluidISMRenderer::UpdateRendering(const IKawaiiFluidDataProvider* Da
 
 			if (!Simulator->GetParticlePositionsAndVelocities(Positions, Velocities))
 			{
-				// No readback data available
-				if (bShouldLog)
+				// Readback not available: clear only once when particle count is confirmed zero
+				if (Simulator->GetParticleCount() <= 0 && ISMComponent->GetInstanceCount() > 0)
 				{
-					UE_LOG(LogTemp, Warning, TEXT("ISMRenderer: GPU readback not available"));
+					ISMComponent->ClearInstances();
 				}
 				return;
 			}

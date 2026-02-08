@@ -1298,8 +1298,11 @@ private:
 	/** GPU-authoritative particle count buffer for DispatchIndirect */
 	TRefCountPtr<FRDGPooledBuffer> PersistentParticleCountBuffer;
 
-	/** Async readback for GPU particle count → CPU CurrentParticleCount */
-	FRHIGPUBufferReadback* ParticleCountReadback = nullptr;
+	/** Triple-buffered async readback for GPU particle count → CPU CurrentParticleCount */
+	static constexpr int32 NUM_COUNT_READBACK_BUFFERS = 3;
+	FRHIGPUBufferReadback* CountReadbacks[NUM_COUNT_READBACK_BUFFERS] = { nullptr };
+	bool bCountReadbackValid[NUM_COUNT_READBACK_BUFFERS] = { false, false, false };
+	int32 CountReadbackWriteIndex = 0;
 
 	/** True once particles have ever existed (replaces CurrentParticleCount==0 early-out) */
 	bool bEverHadParticles = false;
@@ -1724,22 +1727,4 @@ void ReleaseAnisotropyReadbackObjects();
 
 	/** Process particle bounds readback (check for completion, populate CachedParticleBounds) */
 	void ProcessParticleBoundsReadback();
-};
-
-/**
- * Utility class for performing GPU simulation from render thread
- */
-class KAWAIIFLUIDRUNTIME_API FGPUFluidSimulationTask
-{
-public:
-	/**
-	 * Execute simulation on render thread
-	 * @param Simulator - GPU simulator instance
-	 * @param Params - Simulation parameters
-	 * @param NumSubsteps - Number of substeps to run
-	 */
-	static void Execute(
-		FGPUFluidSimulator* Simulator,
-		const FGPUFluidSimulationParams& Params,
-		int32 NumSubsteps = 1);
 };

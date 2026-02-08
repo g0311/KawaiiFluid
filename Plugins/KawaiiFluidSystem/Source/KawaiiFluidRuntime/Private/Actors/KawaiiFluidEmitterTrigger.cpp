@@ -70,28 +70,8 @@ void AKawaiiFluidEmitterTrigger::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	if (ClearFramesRemaining > 0)
-	{
-		for (AKawaiiFluidEmitter* Emitter : TargetEmitters)
-		{
-			if (Emitter)
-			{
-				Emitter->ClearSpawnedParticles();
-			}
-		}
-		--ClearFramesRemaining;
-
-		if (ClearFramesRemaining <= 0)
-		{
-			SetActorTickEnabled(false);
-		}
-	}
-	else
-	{
-		// Safety: disable tick if no work
-		ClearFramesRemaining = 0;
-		SetActorTickEnabled(false);
-	}
+	// GPU despawn is single-shot, no repeated clear needed
+	SetActorTickEnabled(false);
 }
 
 //========================================
@@ -143,20 +123,10 @@ void AKawaiiFluidEmitterTrigger::ExecuteExitAction()
 			Emitter->StopSpawn();
 		}
 
-		// TODO: Multi-frame Tick clear is a workaround for GPU readback latency.
-		// Replace with GPU-side SourceID bulk despawn or despawn completion callback.
+		// GPU despawn is single-shot — one ClearSpawnedParticles call is sufficient
 		if (bClearParticlesOnExit)
 		{
 			Emitter->ClearSpawnedParticles();
-		}
-	}
-
-	if (bClearParticlesOnExit)
-	{
-		ClearFramesRemaining = ClearParticleFrameCount - 1;
-		if (ClearFramesRemaining > 0)
-		{
-			SetActorTickEnabled(true);
 		}
 	}
 }
