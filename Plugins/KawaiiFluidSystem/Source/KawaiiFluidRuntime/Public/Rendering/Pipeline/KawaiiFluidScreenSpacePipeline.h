@@ -26,7 +26,7 @@ public:
 	virtual void PrepareRender(
 		FRDGBuilder& GraphBuilder,
 		const FSceneView& View,
-		const FFluidRenderingParameters& RenderParams,
+		const FKawaiiFluidRenderingParameters& RenderParams,
 		const TArray<UKawaiiFluidMetaballRenderer*>& Renderers,
 		FRDGTextureRef SceneDepthTexture,
 		FRDGTextureRef& GlobalDepthTexture,
@@ -36,7 +36,7 @@ public:
 	virtual void ExecuteRender(
 		FRDGBuilder& GraphBuilder,
 		const FSceneView& View,
-		const FFluidRenderingParameters& RenderParams,
+		const FKawaiiFluidRenderingParameters& RenderParams,
 		const TArray<UKawaiiFluidMetaballRenderer*>& Renderers,
 		FRDGTextureRef SceneDepthTexture,
 		FRDGTextureRef GlobalDepthTexture,

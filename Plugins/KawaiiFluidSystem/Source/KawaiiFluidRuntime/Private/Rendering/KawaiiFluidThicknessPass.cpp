@@ -1,7 +1,7 @@
 ﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
-#include "Rendering/FluidThicknessPass.h"
-#include "Rendering/FluidThicknessShaders.h"
+#include "Rendering/KawaiiFluidThicknessPass.h"
+#include "Rendering/KawaiiFluidThicknessShaders.h"
 #include "Rendering/KawaiiFluidRenderResource.h"
 #include "Modules/KawaiiFluidRenderingModule.h"
 #include "Rendering/KawaiiFluidMetaballRenderer.h"
@@ -23,7 +23,7 @@
 /**
  * @brief Fluid Thickness rendering pass (Batched path).
  */
-void RenderFluidThicknessPass(
+void RenderKawaiiFluidThicknessPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
 	const TArray<UKawaiiFluidMetaballRenderer*>& Renderers,
@@ -142,8 +142,8 @@ void RenderFluidThicknessPass(
 			OutThicknessTexture, ERenderTargetLoadAction::ELoad);
 
 		FGlobalShaderMap* GlobalShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
-		TShaderMapRef<FFluidThicknessVS> VertexShader(GlobalShaderMap);
-		TShaderMapRef<FFluidThicknessPS> PixelShader(GlobalShaderMap);
+		TShaderMapRef<FKawaiiFluidThicknessVS> VertexShader(GlobalShaderMap);
+		TShaderMapRef<FKawaiiFluidThicknessPS> PixelShader(GlobalShaderMap);
 
 		GraphBuilder.AddPass(
 			RDG_EVENT_NAME("ThicknessDraw_Batched"),

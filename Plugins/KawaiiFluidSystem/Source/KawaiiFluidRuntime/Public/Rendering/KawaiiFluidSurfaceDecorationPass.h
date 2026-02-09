@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "RenderGraphDefinitions.h"
-#include "FluidSurfaceDecoration.h"
+#include "KawaiiFluidSurfaceDecoration.h"
 
 class FSceneView;
 
@@ -24,7 +24,7 @@ class FSceneView;
  * @param OutputViewRect Screen rectangle for rendering.
  * @param OutDecoratedTexture Output: Final texture with all surface decorations.
  */
-void RenderFluidSurfaceDecorationPass(
+void RenderKawaiiFluidSurfaceDecorationPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
 	const FSurfaceDecorationParams& Params,

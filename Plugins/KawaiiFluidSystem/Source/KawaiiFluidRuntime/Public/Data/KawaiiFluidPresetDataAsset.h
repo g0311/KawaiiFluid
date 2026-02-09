@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
 #include "Engine/EngineTypes.h"
-#include "Rendering/FluidRenderingParameters.h"
+#include "Rendering/KawaiiFluidRenderingParameters.h"
 #include "KawaiiFluidPresetDataAsset.generated.h"
 
 class UKawaiiFluidPresetDataAsset;
@@ -86,7 +86,7 @@ public:
 	//========================================
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering", meta = (ShowOnlyInnerProperties))
-	FFluidRenderingParameters RenderingParameters;
+	FKawaiiFluidRenderingParameters RenderingParameters;
 
 	//========================================
 	// Physics | Material

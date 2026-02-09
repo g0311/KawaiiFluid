@@ -2,7 +2,7 @@
 
 #include "Rendering/KawaiiFluidMetaballRenderer.h"
 #include "Interfaces/IKawaiiFluidDataProvider.h"
-#include "Rendering/FluidRendererSubsystem.h"
+#include "Rendering/KawaiiFluidRendererSubsystem.h"
 #include "Rendering/KawaiiFluidRenderResource.h"
 #include "Core/KawaiiFluidSimulationContext.h"
 #include "Core/KawaiiFluidRenderParticle.h"
@@ -46,7 +46,7 @@ void UKawaiiFluidMetaballRenderer::Initialize(UWorld* InWorld, USceneComponent* 
 	// Cache renderer subsystem for ViewExtension access
 	if (CachedWorld)
 	{
-		RendererSubsystem = CachedWorld->GetSubsystem<UFluidRendererSubsystem>();
+		RendererSubsystem = CachedWorld->GetSubsystem<UKawaiiFluidRendererSubsystem>();
  
 		if (!RendererSubsystem.IsValid())
 		{

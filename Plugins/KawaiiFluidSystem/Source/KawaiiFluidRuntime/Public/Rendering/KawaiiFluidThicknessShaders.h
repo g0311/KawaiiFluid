@@ -37,13 +37,13 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidThicknessParameters, )
 END_SHADER_PARAMETER_STRUCT()
 
 /**
- * @class FFluidThicknessVS
+ * @class FKawaiiFluidThicknessVS
  * @brief Vertex shader for accumulating fluid thickness in view-space.
  */
-class FFluidThicknessVS : public FGlobalShader
+class FKawaiiFluidThicknessVS : public FGlobalShader
 {
-	DECLARE_GLOBAL_SHADER(FFluidThicknessVS);
-	SHADER_USE_PARAMETER_STRUCT(FFluidThicknessVS, FGlobalShader);
+	DECLARE_GLOBAL_SHADER(FKawaiiFluidThicknessVS);
+	SHADER_USE_PARAMETER_STRUCT(FKawaiiFluidThicknessVS, FGlobalShader);
 
 	using FParameters = FFluidThicknessParameters;
 
@@ -54,13 +54,13 @@ class FFluidThicknessVS : public FGlobalShader
 };
 
 /**
- * @class FFluidThicknessPS
+ * @class FKawaiiFluidThicknessPS
  * @brief Pixel shader for fluid thickness, outputting additive view-space depth coverage.
  */
-class FFluidThicknessPS : public FGlobalShader
+class FKawaiiFluidThicknessPS : public FGlobalShader
 {
-	DECLARE_GLOBAL_SHADER(FFluidThicknessPS);
-	SHADER_USE_PARAMETER_STRUCT(FFluidThicknessPS, FGlobalShader);
+	DECLARE_GLOBAL_SHADER(FKawaiiFluidThicknessPS);
+	SHADER_USE_PARAMETER_STRUCT(FKawaiiFluidThicknessPS, FGlobalShader);
 
 	using FParameters = FFluidThicknessParameters;
 

@@ -25,7 +25,7 @@ typedef FRDGTexture* FRDGTextureRef;
  * @param OutHardwareDepth Output: Final hardware depth texture after fluid rendering.
  * @param bIncremental If true, the pass starts with existing scene depth instead of clearing.
  */
-void RenderFluidDepthPass(
+void RenderKawaiiFluidDepthPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
 	const TArray<UKawaiiFluidMetaballRenderer*>& Renderers,

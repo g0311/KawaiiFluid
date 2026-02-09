@@ -1,6 +1,6 @@
 // Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
-#include "Rendering/Shaders/FluidSpatialHashShaders.h"
+#include "Rendering/Shaders/KawaiiFluidSpatialHashShaders.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "GlobalShader.h"

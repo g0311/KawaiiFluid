@@ -1,6 +1,6 @@
 ﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
-#include "Rendering/FluidNormalPass.h"
+#include "Rendering/KawaiiFluidNormalPass.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "SceneView.h"
@@ -50,7 +50,7 @@ IMPLEMENT_GLOBAL_SHADER(FFluidNormalCS, "/Plugin/KawaiiFluidSystem/Private/Fluid
  * @param SmoothedDepthTexture Fluid depth texture after bilateral filtering.
  * @param OutNormalTexture Output world-space normal texture (RGBA16F).
  */
-void RenderFluidNormalPass(
+void RenderKawaiiFluidNormalPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
 	FRDGTextureRef SmoothedDepthTexture,

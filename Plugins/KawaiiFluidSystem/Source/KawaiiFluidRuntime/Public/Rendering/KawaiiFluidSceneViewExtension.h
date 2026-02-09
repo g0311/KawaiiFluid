@@ -5,22 +5,22 @@
 #include "CoreMinimal.h"
 #include "SceneViewExtension.h"
 
-class UFluidRendererSubsystem;
+class UKawaiiFluidRendererSubsystem;
 struct FPostProcessingInputs;
 
 /**
- * @class FFluidSceneViewExtension
+ * @class FKawaiiFluidSceneViewExtension
  * @brief Scene View Extension for injecting the SSFR rendering pipeline into the Unreal renderer.
  * 
  * Handles GPU data extraction and executes fluid rendering passes at the PrePostProcess stage.
  * 
  * @param Subsystem Weak reference to the parent fluid renderer subsystem.
  */
-class KAWAIIFLUIDRUNTIME_API FFluidSceneViewExtension : public FSceneViewExtensionBase
+class KAWAIIFLUIDRUNTIME_API FKawaiiFluidSceneViewExtension : public FSceneViewExtensionBase
 {
 public:
-	FFluidSceneViewExtension(const FAutoRegister& AutoRegister, UFluidRendererSubsystem* InSubsystem);
-	virtual ~FFluidSceneViewExtension() override;
+	FKawaiiFluidSceneViewExtension(const FAutoRegister& AutoRegister, UKawaiiFluidRendererSubsystem* InSubsystem);
+	virtual ~FKawaiiFluidSceneViewExtension() override;
 
 	// ISceneViewExtension interface
 	virtual void SetupViewFamily(FSceneViewFamily& InViewFamily) override;
@@ -45,5 +45,5 @@ public:
 private:
 	bool IsViewFromOurWorld(const FSceneView& InView) const;
 
-	TWeakObjectPtr<UFluidRendererSubsystem> Subsystem;
+	TWeakObjectPtr<UKawaiiFluidRendererSubsystem> Subsystem;
 };

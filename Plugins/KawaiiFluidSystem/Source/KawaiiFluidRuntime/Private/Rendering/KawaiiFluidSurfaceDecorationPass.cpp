@@ -1,6 +1,6 @@
 // Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
-#include "Rendering/FluidSurfaceDecorationPass.h"
+#include "Rendering/KawaiiFluidSurfaceDecorationPass.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "SceneView.h"
@@ -202,7 +202,7 @@ static FRHITexture* GetTextureRHIOrDefault(UTexture2D* Texture, FRHITexture* Def
  * @param OutputViewRect Screen rectangle for rendering.
  * @param OutDecoratedTexture Output: Final texture with all surface decorations applied.
  */
-void RenderFluidSurfaceDecorationPass(
+void RenderKawaiiFluidSurfaceDecorationPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
 	const FSurfaceDecorationParams& Params,

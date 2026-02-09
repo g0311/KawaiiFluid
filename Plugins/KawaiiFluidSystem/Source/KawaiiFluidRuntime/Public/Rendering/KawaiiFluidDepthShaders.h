@@ -72,13 +72,13 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidDepthParameters, )
 END_SHADER_PARAMETER_STRUCT()
 
 /**
- * @class FFluidDepthVS
+ * @class FKawaiiFluidDepthVS
  * @brief Vertex shader for fluid particle depth rasterization (billboards or ellipsoids).
  */
-class FFluidDepthVS : public FGlobalShader
+class FKawaiiFluidDepthVS : public FGlobalShader
 {
-	DECLARE_GLOBAL_SHADER(FFluidDepthVS);
-	SHADER_USE_PARAMETER_STRUCT(FFluidDepthVS, FGlobalShader);
+	DECLARE_GLOBAL_SHADER(FKawaiiFluidDepthVS);
+	SHADER_USE_PARAMETER_STRUCT(FKawaiiFluidDepthVS, FGlobalShader);
 
 	using FParameters = FFluidDepthParameters;
 	using FPermutationDomain = TShaderPermutationDomain<FUseAnisotropyDim>;
@@ -97,13 +97,13 @@ class FFluidDepthVS : public FGlobalShader
 };
 
 /**
- * @class FFluidDepthPS
+ * @class FKawaiiFluidDepthPS
  * @brief Pixel shader for fluid depth, outputting linear depth, velocity, and occlusion.
  */
-class FFluidDepthPS : public FGlobalShader
+class FKawaiiFluidDepthPS : public FGlobalShader
 {
-	DECLARE_GLOBAL_SHADER(FFluidDepthPS);
-	SHADER_USE_PARAMETER_STRUCT(FFluidDepthPS, FGlobalShader);
+	DECLARE_GLOBAL_SHADER(FKawaiiFluidDepthPS);
+	SHADER_USE_PARAMETER_STRUCT(FKawaiiFluidDepthPS, FGlobalShader);
 
 	using FParameters = FFluidDepthParameters;
 	using FPermutationDomain = TShaderPermutationDomain<FUseAnisotropyDim>;

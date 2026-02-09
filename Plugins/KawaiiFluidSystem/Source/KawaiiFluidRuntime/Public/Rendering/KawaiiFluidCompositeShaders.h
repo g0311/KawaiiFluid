@@ -165,14 +165,14 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
 END_SHADER_PARAMETER_STRUCT()
 
 /**
- * @class FFluidCompositeVS
+ * @class FKawaiiFluidCompositeVS
  * @brief Vertex shader for the fluid composite post-process triangle.
  */
-class FFluidCompositeVS : public FGlobalShader
+class FKawaiiFluidCompositeVS : public FGlobalShader
 {
 public:
-    DECLARE_GLOBAL_SHADER(FFluidCompositeVS);
-    SHADER_USE_PARAMETER_STRUCT(FFluidCompositeVS, FGlobalShader);
+    DECLARE_GLOBAL_SHADER(FKawaiiFluidCompositeVS);
+    SHADER_USE_PARAMETER_STRUCT(FKawaiiFluidCompositeVS, FGlobalShader);
     
     using FParameters = FFluidCompositeParameters;
 
@@ -183,14 +183,14 @@ public:
 };
 
 /**
- * @class FFluidCompositePS
+ * @class FKawaiiFluidCompositePS
  * @brief Pixel shader implementing Blinn-Phong, Fresnel, and Beer's Law for fluid composite shading.
  */
-class FFluidCompositePS : public FGlobalShader
+class FKawaiiFluidCompositePS : public FGlobalShader
 {
 public:
-    DECLARE_GLOBAL_SHADER(FFluidCompositePS);
-    SHADER_USE_PARAMETER_STRUCT(FFluidCompositePS, FGlobalShader);
+    DECLARE_GLOBAL_SHADER(FKawaiiFluidCompositePS);
+    SHADER_USE_PARAMETER_STRUCT(FKawaiiFluidCompositePS, FGlobalShader);
 
     using FParameters = FFluidCompositeParameters;
 

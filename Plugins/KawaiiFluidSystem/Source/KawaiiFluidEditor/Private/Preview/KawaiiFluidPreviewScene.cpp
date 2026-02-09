@@ -10,7 +10,7 @@
 #include "Modules/KawaiiFluidSimulationModule.h"
 #include "Modules/KawaiiFluidRenderingModule.h"
 #include "Rendering/KawaiiFluidMetaballRenderer.h"
-#include "Rendering/FluidRendererSubsystem.h"
+#include "Rendering/KawaiiFluidRendererSubsystem.h"
 #include "GPU/GPUFluidSimulator.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -70,7 +70,7 @@ FKawaiiFluidPreviewScene::FKawaiiFluidPreviewScene(FPreviewScene::ConstructionVa
 		// Register to FluidRendererSubsystem (required for Metaball ViewExtension!)
 		if (UWorld* World = GetWorld())
 		{
-			if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+			if (UKawaiiFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UKawaiiFluidRendererSubsystem>())
 			{
 				RendererSubsystem->RegisterRenderingModule(RenderingModule);
 			}
@@ -91,7 +91,7 @@ FKawaiiFluidPreviewScene::~FKawaiiFluidPreviewScene()
 	{
 		if (UWorld* World = GetWorld())
 		{
-			if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+			if (UKawaiiFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UKawaiiFluidRendererSubsystem>())
 			{
 				RendererSubsystem->UnregisterRenderingModule(RenderingModule);
 			}

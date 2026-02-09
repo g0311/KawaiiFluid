@@ -6,7 +6,7 @@
 #include "RenderGraphDefinitions.h"
 
 class FSceneView;
-class UFluidRendererSubsystem;
+class UKawaiiFluidRendererSubsystem;
 
 /**
  * @struct FDistanceBasedSmoothingParams
@@ -28,7 +28,7 @@ struct FDistanceBasedSmoothingParams
 /**
  * @brief Narrow-Range Filter for Fluid Depth Smoothing (Truong & Yuksel, i3D 2018).
  */
-void RenderFluidNarrowRangeSmoothingPass(
+void RenderKawaiiFluidNarrowRangeSmoothingPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
 	FRDGTextureRef InputDepthTexture,
@@ -43,7 +43,7 @@ void RenderFluidNarrowRangeSmoothingPass(
 /**
  * @brief Separable Gaussian Blur for Fluid Thickness Smoothing.
  */
-void RenderFluidThicknessSmoothingPass(
+void RenderKawaiiFluidThicknessSmoothingPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
 	FRDGTextureRef InputThicknessTexture,
@@ -55,7 +55,7 @@ void RenderFluidThicknessSmoothingPass(
 /**
  * @brief Separable Gaussian Blur for Fluid Velocity Smoothing.
  */
-void RenderFluidVelocitySmoothingPass(
+void RenderKawaiiFluidVelocitySmoothingPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
 	FRDGTextureRef InputVelocityTexture,

@@ -11,7 +11,7 @@
 #include "GPU/GPUBoundaryAttachment.h"  // For FGPUBoneDeltaAttachment
 #include "Core/KawaiiFluidParticle.h"
 #include "Core/KawaiiFluidSimulationStats.h"
-#include "Rendering/Shaders/FluidSpatialHashShaders.h"
+#include "Rendering/Shaders/KawaiiFluidSpatialHashShaders.h"
 
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"

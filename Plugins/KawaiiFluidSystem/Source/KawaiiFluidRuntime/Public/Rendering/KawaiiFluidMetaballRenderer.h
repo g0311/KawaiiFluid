@@ -7,13 +7,13 @@
 #include "Components/SceneComponent.h"
 #include "Core/KawaiiFluidParticle.h"
 #include "Core/KawaiiFluidRenderParticle.h"
-#include "Rendering/FluidRenderingParameters.h"
+#include "Rendering/KawaiiFluidRenderingParameters.h"
 #include "Core/KawaiiFluidAnisotropy.h"
 #include "Data/KawaiiFluidPresetDataAsset.h"
 #include "KawaiiFluidMetaballRenderer.generated.h"
 
 class IKawaiiFluidDataProvider;
-class UFluidRendererSubsystem;
+class UKawaiiFluidRendererSubsystem;
 class FKawaiiFluidRenderResource;
 class IKawaiiMetaballRenderingPipeline;
 class FGPUFluidSimulator;
@@ -171,7 +171,7 @@ public:
 
 	float GetCachedParticleRadius() const { return CachedParticleRadius; }
 
-	const FFluidRenderingParameters& GetLocalParameters() const
+	const FKawaiiFluidRenderingParameters& GetLocalParameters() const
 	{
 		check(CachedPreset);
 		return CachedPreset->RenderingParameters;
@@ -201,7 +201,7 @@ public:
 	// DEPRECATED State
 	//========================================
 
-	FFluidRenderingParameters LocalParameters;
+	FKawaiiFluidRenderingParameters LocalParameters;
 
 	//========================================
 	// Performance Options
@@ -233,7 +233,7 @@ private:
 
 	float CachedParticleRadius = 5.0f;
 
-	TWeakObjectPtr<UFluidRendererSubsystem> RendererSubsystem;
+	TWeakObjectPtr<UKawaiiFluidRendererSubsystem> RendererSubsystem;
 
 	//========================================
 	// GPU Resources

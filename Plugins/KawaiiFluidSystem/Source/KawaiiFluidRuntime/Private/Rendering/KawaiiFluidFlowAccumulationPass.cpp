@@ -1,6 +1,6 @@
 ﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
-#include "Rendering/FluidFlowAccumulationPass.h"
+#include "Rendering/KawaiiFluidFlowAccumulationPass.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "SceneView.h"
@@ -75,10 +75,10 @@ IMPLEMENT_GLOBAL_SHADER(FFluidFlowAccumulationCS, "/Plugin/KawaiiFluidSystem/Pri
  * @param PrevAccumulatedFlowTexture Previous frame's accumulated flow (nullptr for first frame).
  * @param OutAccumulatedFlowTexture Output accumulated flow texture (RG16F).
  */
-void RenderFluidFlowAccumulationPass(
+void RenderKawaiiFluidFlowAccumulationPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
-	const FFlowAccumulationParams& Params,
+	const FKawaiiFluidAccumulationParams& Params,
 	FRDGTextureRef VelocityTexture,
 	FRDGTextureRef DepthTexture,
 	FRDGTextureRef PrevAccumulatedFlowTexture,

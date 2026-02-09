@@ -5,11 +5,11 @@
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Tickable.h"
-#include "FluidRenderingParameters.h"
+#include "KawaiiFluidRenderingParameters.h"
 #include "Core/KawaiiFluidRenderingTypes.h"
-#include "FluidRendererSubsystem.generated.h"
+#include "KawaiiFluidRendererSubsystem.generated.h"
 
-class FFluidSceneViewExtension;
+class FKawaiiFluidSceneViewExtension;
 class UKawaiiFluidRenderingModule;
 class UInstancedStaticMeshComponent;
 class UStaticMesh;
@@ -18,7 +18,7 @@ class UStaticMesh;
 static constexpr int32 NUM_SHADOW_QUALITY_LEVELS = 3;
 
 /**
- * @class UFluidRendererSubsystem
+ * @class UKawaiiFluidRendererSubsystem
  * @brief World subsystem responsible for coordinating fluid rendering and managing global shadow aggregation.
  * 
  * Integrates the SSFR rendering pipeline via SceneViewExtension and aggregates shadow particles 
@@ -38,7 +38,7 @@ static constexpr int32 NUM_SHADOW_QUALITY_LEVELS = 3;
  * @param CachedInstanceTransforms Reusable transform buffer for batch ISM updates.
  */
 UCLASS()
-class KAWAIIFLUIDRUNTIME_API UFluidRendererSubsystem : public UWorldSubsystem, public FTickableGameObject
+class KAWAIIFLUIDRUNTIME_API UKawaiiFluidRendererSubsystem : public UWorldSubsystem, public FTickableGameObject
 {
 	GENERATED_BODY()
 
@@ -77,15 +77,15 @@ public:
 	//========================================
 
 	UPROPERTY(EditAnywhere, Transient, BlueprintReadWrite, Category = "Fluid Rendering", meta = (ToolTip = "Global rendering settings for the SSFR pipeline."))
-	FFluidRenderingParameters RenderingParameters;
+	FKawaiiFluidRenderingParameters RenderingParameters;
 
-	TSharedPtr<FFluidSceneViewExtension, ESPMode::ThreadSafe> GetViewExtension() const { return ViewExtension; }
+	TSharedPtr<FKawaiiFluidSceneViewExtension, ESPMode::ThreadSafe> GetViewExtension() const { return ViewExtension; }
 
 private:
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UKawaiiFluidRenderingModule>> RegisteredRenderingModules;
 
-	TSharedPtr<FFluidSceneViewExtension, ESPMode::ThreadSafe> ViewExtension;
+	TSharedPtr<FKawaiiFluidSceneViewExtension, ESPMode::ThreadSafe> ViewExtension;
 
 	//========================================
 	// ISM Shadow (Instanced Mesh Shadow)

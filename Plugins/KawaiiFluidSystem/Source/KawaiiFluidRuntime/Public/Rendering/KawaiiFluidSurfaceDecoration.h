@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/Texture2D.h"
-#include "FluidSurfaceDecoration.generated.h"
+#include "KawaiiFluidSurfaceDecoration.generated.h"
 
 /**
  * @enum ETextureAddressingMode

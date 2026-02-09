@@ -21,7 +21,7 @@ typedef FRDGTexture* FRDGTextureRef;
  * @param SceneDepthTexture Background scene depth for depth-testing.
  * @param OutThicknessTexture Output: Accumulated thickness texture (R32F).
  */
-void RenderFluidThicknessPass(
+void RenderKawaiiFluidThicknessPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
 	const TArray<UKawaiiFluidMetaballRenderer*>& Renderers,

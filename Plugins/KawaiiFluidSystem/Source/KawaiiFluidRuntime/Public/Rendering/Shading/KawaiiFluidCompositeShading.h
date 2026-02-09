@@ -6,7 +6,7 @@
 #include "RenderGraphResources.h"
 #include "ScreenPass.h"
 
-struct FFluidRenderingParameters;
+struct FKawaiiFluidRenderingParameters;
 struct FMetaballIntermediateTextures;
 class FSceneView;
 
@@ -22,7 +22,7 @@ namespace KawaiiScreenSpaceShading
 	void RenderPostProcessShading(
 		FRDGBuilder& GraphBuilder,
 		const FSceneView& View,
-		const FFluidRenderingParameters& RenderParams,
+		const FKawaiiFluidRenderingParameters& RenderParams,
 		const FMetaballIntermediateTextures& IntermediateTextures,
 		FRDGTextureRef SceneDepthTexture,
 		FRDGTextureRef SceneColorTexture,

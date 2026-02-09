@@ -5,8 +5,8 @@
 #include "CoreMinimal.h"
 #include "RenderGraphDefinitions.h"
 #include "ScreenPass.h"
-#include "Rendering/FluidRenderingParameters.h"
-#include "Rendering/MetaballRenderingData.h"
+#include "Rendering/KawaiiFluidRenderingParameters.h"
+#include "Rendering/KawaiiFluidMetaballRenderingData.h"
 
 class FRDGBuilder;
 class FSceneView;
@@ -39,7 +39,7 @@ public:
 	virtual void PrepareRender(
 		FRDGBuilder& GraphBuilder,
 		const FSceneView& View,
-		const FFluidRenderingParameters& RenderParams,
+		const FKawaiiFluidRenderingParameters& RenderParams,
 		const TArray<UKawaiiFluidMetaballRenderer*>& Renderers,
 		FRDGTextureRef SceneDepthTexture,
 		FRDGTextureRef& GlobalDepthTexture,
@@ -61,7 +61,7 @@ public:
 	virtual void ExecuteRender(
 		FRDGBuilder& GraphBuilder,
 		const FSceneView& View,
-		const FFluidRenderingParameters& RenderParams,
+		const FKawaiiFluidRenderingParameters& RenderParams,
 		const TArray<UKawaiiFluidMetaballRenderer*>& Renderers,
 		FRDGTextureRef SceneDepthTexture,
 		FRDGTextureRef GlobalDepthTexture,

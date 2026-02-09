@@ -1,7 +1,7 @@
 ﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
-#include "Rendering/FluidRendererSubsystem.h"
-#include "Rendering/FluidSceneViewExtension.h"
+#include "Rendering/KawaiiFluidRendererSubsystem.h"
+#include "Rendering/KawaiiFluidSceneViewExtension.h"
 #include "Modules/KawaiiFluidRenderingModule.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -18,7 +18,7 @@
  * @param Outer World object.
  * @return True if the world type is supported.
  */
-bool UFluidRendererSubsystem::ShouldCreateSubsystem(UObject* Outer) const
+bool UKawaiiFluidRendererSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 {
 	if (!IsValid(Outer))
 	{
@@ -41,12 +41,12 @@ bool UFluidRendererSubsystem::ShouldCreateSubsystem(UObject* Outer) const
  * @brief Initializes the subsystem and its rendering extensions.
  * @param Collection Subsystem collection.
  */
-void UFluidRendererSubsystem::Initialize(FSubsystemCollectionBase& Collection)
+void UKawaiiFluidRendererSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 
 	// Create and register Scene View Extension
-	ViewExtension = FSceneViewExtensions::NewExtension<FFluidSceneViewExtension>(this);
+	ViewExtension = FSceneViewExtensions::NewExtension<FKawaiiFluidSceneViewExtension>(this);
 
 	UE_LOG(LogTemp, Log, TEXT("FluidRendererSubsystem Initialized"));
 }
@@ -54,7 +54,7 @@ void UFluidRendererSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 /**
  * @brief Cleanup resources during subsystem shutdown.
  */
-void UFluidRendererSubsystem::Deinitialize()
+void UKawaiiFluidRendererSubsystem::Deinitialize()
 {
 	// Cleanup shadow resources
 	CleanupShadowResources();
@@ -77,7 +77,7 @@ void UFluidRendererSubsystem::Deinitialize()
  * @brief Returns the stat ID for profiling.
  * @return Stat ID.
  */
-TStatId UFluidRendererSubsystem::GetStatId() const
+TStatId UKawaiiFluidRendererSubsystem::GetStatId() const
 {
 	RETURN_QUICK_DECLARE_CYCLE_STAT(UFluidRendererSubsystem, STATGROUP_Tickables);
 }
@@ -86,7 +86,7 @@ TStatId UFluidRendererSubsystem::GetStatId() const
  * @brief Subsystem tick - flushes aggregated shadow particles to ISM components.
  * @param DeltaTime Time elapsed since last frame.
  */
-void UFluidRendererSubsystem::Tick(float DeltaTime)
+void UKawaiiFluidRendererSubsystem::Tick(float DeltaTime)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FluidRendererSubsystem_Tick);
 
@@ -110,7 +110,7 @@ void UFluidRendererSubsystem::Tick(float DeltaTime)
  * @brief Registers a rendering module to be managed by this subsystem.
  * @param Module The module to register.
  */
-void UFluidRendererSubsystem::RegisterRenderingModule(UKawaiiFluidRenderingModule* Module)
+void UKawaiiFluidRendererSubsystem::RegisterRenderingModule(UKawaiiFluidRenderingModule* Module)
 {
 	if (!Module)
 	{
@@ -136,7 +136,7 @@ void UFluidRendererSubsystem::RegisterRenderingModule(UKawaiiFluidRenderingModul
  * @brief Unregisters a rendering module.
  * @param Module The module to unregister.
  */
-void UFluidRendererSubsystem::UnregisterRenderingModule(UKawaiiFluidRenderingModule* Module)
+void UKawaiiFluidRendererSubsystem::UnregisterRenderingModule(UKawaiiFluidRenderingModule* Module)
 {
 	if (!Module)
 	{
@@ -378,7 +378,7 @@ static UStaticMesh* CreateLowPolySphere(float Radius, EFluidShadowMeshQuality Qu
  * @param Quality Shadow mesh quality level.
  * @return Static mesh pointer.
  */
-UStaticMesh* UFluidRendererSubsystem::GetOrCreateShadowMesh(EFluidShadowMeshQuality Quality)
+UStaticMesh* UKawaiiFluidRendererSubsystem::GetOrCreateShadowMesh(EFluidShadowMeshQuality Quality)
 {
 	const int32 QualityIndex = static_cast<int32>(Quality);
 	if (QualityIndex < 0 || QualityIndex >= NUM_SHADOW_QUALITY_LEVELS)
@@ -411,7 +411,7 @@ UStaticMesh* UFluidRendererSubsystem::GetOrCreateShadowMesh(EFluidShadowMeshQual
  * @param Quality Shadow mesh quality level.
  * @return ISM component pointer.
  */
-UInstancedStaticMeshComponent* UFluidRendererSubsystem::GetOrCreateShadowISM(EFluidShadowMeshQuality Quality)
+UInstancedStaticMeshComponent* UKawaiiFluidRendererSubsystem::GetOrCreateShadowISM(EFluidShadowMeshQuality Quality)
 {
 	const int32 QualityIndex = static_cast<int32>(Quality);
 	if (QualityIndex < 0 || QualityIndex >= NUM_SHADOW_QUALITY_LEVELS)
@@ -515,7 +515,7 @@ UInstancedStaticMeshComponent* UFluidRendererSubsystem::GetOrCreateShadowISM(EFl
  * @param ParticleRadius Radius of each particle.
  * @param Quality Shadow mesh quality level.
  */
-void UFluidRendererSubsystem::RegisterShadowParticles(const FVector* ParticlePositions, int32 NumParticles, float ParticleRadius, EFluidShadowMeshQuality Quality)
+void UKawaiiFluidRendererSubsystem::RegisterShadowParticles(const FVector* ParticlePositions, int32 NumParticles, float ParticleRadius, EFluidShadowMeshQuality Quality)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FluidShadow_RegisterParticles);
 
@@ -552,7 +552,7 @@ void UFluidRendererSubsystem::RegisterShadowParticles(const FVector* ParticlePos
 /**
  * @brief Flush aggregated particles to ISM components and update their transforms.
  */
-void UFluidRendererSubsystem::FlushShadowInstances()
+void UKawaiiFluidRendererSubsystem::FlushShadowInstances()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FluidShadow_FlushInstances);
 
@@ -637,7 +637,7 @@ void UFluidRendererSubsystem::FlushShadowInstances()
 /**
  * @brief Clear aggregation buffers for the next frame.
  */
-void UFluidRendererSubsystem::ClearAggregationBuffers()
+void UKawaiiFluidRendererSubsystem::ClearAggregationBuffers()
 {
 	for (int32 i = 0; i < NUM_SHADOW_QUALITY_LEVELS; ++i)
 	{
@@ -650,7 +650,7 @@ void UFluidRendererSubsystem::ClearAggregationBuffers()
 /**
  * @brief Cleanup all shadow-related resources (actor, components, meshes).
  */
-void UFluidRendererSubsystem::CleanupShadowResources()
+void UKawaiiFluidRendererSubsystem::CleanupShadowResources()
 {
 	// Destroy ISM components
 	for (int32 i = 0; i < NUM_SHADOW_QUALITY_LEVELS; ++i)

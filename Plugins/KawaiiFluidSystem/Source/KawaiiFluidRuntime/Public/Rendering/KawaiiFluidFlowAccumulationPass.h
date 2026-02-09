@@ -8,7 +8,7 @@
 class FSceneView;
 
 /**
- * @struct FFlowAccumulationParams
+ * @struct FKawaiiFluidAccumulationParams
  * @brief Parameters for the screen-space flow accumulation pass, used to track temporal motion of fluid surfaces.
  * 
  * @param VelocityScale Multiplier for screen-space velocity contribution to flow offset.
@@ -19,7 +19,7 @@ class FSceneView;
  * @param InvProjectionMatrix Current frame's inverse projection matrix.
  * @param PrevViewProjectionMatrix Previous frame's view-projection matrix for temporal reprojection.
  */
-struct FFlowAccumulationParams
+struct FKawaiiFluidAccumulationParams
 {
 	float VelocityScale = 1.0f;
 
@@ -39,10 +39,10 @@ struct FFlowAccumulationParams
 /**
  * @brief Accumulates screen-space velocity into a temporal UV offset texture for flowing effects.
  */
-void RenderFluidFlowAccumulationPass(
+void RenderKawaiiFluidFlowAccumulationPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
-	const FFlowAccumulationParams& Params,
+	const FKawaiiFluidAccumulationParams& Params,
 	FRDGTextureRef VelocityTexture,
 	FRDGTextureRef DepthTexture,
 	FRDGTextureRef PrevAccumulatedFlowTexture,

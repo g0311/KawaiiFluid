@@ -1,6 +1,6 @@
 ﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
-#include "Rendering/FluidSmoothingPass.h"
+#include "Rendering/KawaiiFluidSmoothingPass.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "SceneView.h"
@@ -541,7 +541,7 @@ IMPLEMENT_GLOBAL_SHADER(FFluidThicknessUpsampleCS,
  * @param GrazingBoost Threshold boost factor for steep viewing angles.
  * @param DistanceBasedParams Settings for depth-adaptive blur radius.
  */
-void RenderFluidNarrowRangeSmoothingPass(
+void RenderKawaiiFluidNarrowRangeSmoothingPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
 	FRDGTextureRef InputDepthTexture,
@@ -827,7 +827,7 @@ void RenderFluidNarrowRangeSmoothingPass(
  * @param NumIterations Number of blur passes.
  * @param bUseHalfRes Optimization flag to perform blurring at half resolution.
  */
-void RenderFluidThicknessSmoothingPass(
+void RenderKawaiiFluidThicknessSmoothingPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
 	FRDGTextureRef InputThicknessTexture,
@@ -1041,7 +1041,7 @@ void RenderFluidThicknessSmoothingPass(
  * @param BlurRadius Blur kernel radius in pixels
  * @param NumIterations Number of blur iterations (1-5)
  */
-void RenderFluidVelocitySmoothingPass(
+void RenderKawaiiFluidVelocitySmoothingPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
 	FRDGTextureRef InputVelocityTexture,

@@ -4,9 +4,9 @@
 
 #include "CoreMinimal.h"
 #include "Core/KawaiiFluidAnisotropy.h"
-#include "FluidSurfaceDecoration.h"
+#include "KawaiiFluidSurfaceDecoration.h"
 #include "Engine/TextureCube.h"
-#include "FluidRenderingParameters.generated.h"
+#include "KawaiiFluidRenderingParameters.generated.h"
 
 /**
  * @enum EFluidReflectionMode
@@ -22,7 +22,7 @@ enum class EFluidReflectionMode : uint8
 };
 
 /**
- * @struct FFluidRenderingParameters
+ * @struct FKawaiiFluidRenderingParameters
  * @brief Global fluid rendering parameters used throughout the SSFR pipeline.
  * 
  * @param FluidColor The base diffuse/absorption color of the fluid surface.
@@ -64,7 +64,7 @@ enum class EFluidReflectionMode : uint8
  * @param SurfaceDecoration Settings for foam, emissive, and texture overlay effects.
  */
 USTRUCT(BlueprintType)
-struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
+struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidRenderingParameters
 {
 	GENERATED_BODY()
 
@@ -215,13 +215,13 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Surface Decoration", meta = (ShowOnlyInnerProperties, ToolTip = "Foam, emissive, and texture overlay parameters."))
 	FSurfaceDecorationParams SurfaceDecoration;
 
-	FFluidRenderingParameters() = default;
+	FKawaiiFluidRenderingParameters() = default;
 };
 
 /**
  * @brief Hash function for batching FFluidRenderingParameters in TMaps.
  */
-FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
+FORCEINLINE uint32 GetTypeHash(const FKawaiiFluidRenderingParameters& Params)
 {
 	uint32 Hash = GetTypeHash(Params.FluidColor.ToString());
 	Hash = HashCombine(Hash, GetTypeHash(Params.FresnelStrength));
@@ -272,7 +272,7 @@ FORCEINLINE uint32 GetTypeHash(const FFluidRenderingParameters& Params)
 /**
  * @brief Equality operator for FFluidRenderingParameters.
  */
-FORCEINLINE bool operator==(const FFluidRenderingParameters& A, const FFluidRenderingParameters& B)
+FORCEINLINE bool operator==(const FKawaiiFluidRenderingParameters& A, const FKawaiiFluidRenderingParameters& B)
 {
 	return A.FluidColor.Equals(B.FluidColor, 0.001f) &&
 		FMath::IsNearlyEqual(A.FresnelStrength, B.FresnelStrength, 0.001f) &&
