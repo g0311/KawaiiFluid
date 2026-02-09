@@ -90,7 +90,7 @@ void FKawaiiFluidRenderResource::ResizeBuffer(FRHICommandListBase& RHICmdList, i
 		return;
 	}
 
-	const uint32 ElementSize = sizeof(FKawaiiRenderParticle);
+	const uint32 ElementSize = sizeof(FKawaiiFluidRenderParticle);
 
 	// Create Pooled Buffer via RDG (Phase 2: single source of truth)
 	FRHICommandListImmediate& ImmediateCmdList = static_cast<FRHICommandListImmediate&>(RHICmdList);
@@ -143,7 +143,7 @@ void FKawaiiFluidRenderResource::ResizeBuffer(FRHICommandListBase& RHICmdList, i
 	//========================================
 	// RenderParticle buffer (FKawaiiRenderParticle)
 	//========================================
-	FRDGBufferDesc RenderParticleBufferDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(FKawaiiRenderParticle), NewCapacity);
+	FRDGBufferDesc RenderParticleBufferDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(FKawaiiFluidRenderParticle), NewCapacity);
 	RenderParticleBufferDesc.Usage |= EBufferUsageFlags::UnorderedAccess;
 	FRDGBufferRef RenderParticleRDGBuffer = GraphBuilder.CreateBuffer(RenderParticleBufferDesc, TEXT("RenderParticles"));
 

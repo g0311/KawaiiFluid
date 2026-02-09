@@ -5,7 +5,7 @@
 #include "Preview/KawaiiFluidPreviewScene.h"
 #include "Editor/KawaiiFluidPresetAssetEditor.h"
 #include "Widgets/SKawaiiFluidPreviewStatsOverlay.h"
-#include "Core/FluidParticle.h"
+#include "Core/KawaiiFluidParticle.h"
 #include "SEditorViewportToolBarMenu.h"
 #include "STransformViewportToolbar.h"
 
@@ -89,7 +89,7 @@ void SKawaiiFluidPresetEditorViewport::FocusOnParticles()
 		return;
 	}
 
-	const TArray<FFluidParticle>& Particles = PreviewScene->GetParticles();
+	const TArray<FKawaiiFluidParticle>& Particles = PreviewScene->GetParticles();
 	if (Particles.Num() == 0)
 	{
 		return;
@@ -97,7 +97,7 @@ void SKawaiiFluidPresetEditorViewport::FocusOnParticles()
 
 	// Calculate bounds of all particles
 	FBox Bounds(ForceInit);
-	for (const FFluidParticle& Particle : Particles)
+	for (const FKawaiiFluidParticle& Particle : Particles)
 	{
 		Bounds += Particle.Position;
 	}

@@ -14,7 +14,7 @@ FViscositySolver::FViscositySolver()
 {
 }
 
-void FViscositySolver::ApplyXSPH(TArray<FFluidParticle>& Particles, float ViscosityCoeff, float SmoothingRadius)
+void FViscositySolver::ApplyXSPH(TArray<FKawaiiFluidParticle>& Particles, float ViscosityCoeff, float SmoothingRadius)
 {
 	if (ViscosityCoeff <= 0.0f)
 	{
@@ -41,7 +41,7 @@ void FViscositySolver::ApplyXSPH(TArray<FFluidParticle>& Particles, float Viscos
 	// [Optimization 4] Load balancing - use Unbalanced flag to handle varying neighbor counts
 	ParallelFor(ParticleCount, [&](int32 i)
 	{
-		const FFluidParticle& Particle = Particles[i];
+		const FKawaiiFluidParticle& Particle = Particles[i];
 		FVector VelocityCorrection = FVector::ZeroVector;
 		float WeightSum = 0.0f;
 
@@ -52,7 +52,7 @@ void FViscositySolver::ApplyXSPH(TArray<FFluidParticle>& Particles, float Viscos
 				continue;
 			}
 
-			const FFluidParticle& Neighbor = Particles[NeighborIdx];
+			const FKawaiiFluidParticle& Neighbor = Particles[NeighborIdx];
 			const FVector r = Particle.Position - Neighbor.Position;
 
 			// [Optimization 2] Radius-based filtering - early skip if r² > h² (avoid sqrt)

@@ -11,7 +11,7 @@ FAdhesionSolver::FAdhesionSolver()
 }
 
 void FAdhesionSolver::Apply(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	const TArray<TObjectPtr<UKawaiiFluidCollider>>& Colliders,
 	float AdhesionStrength,
 	float AdhesionRadius,
@@ -49,7 +49,7 @@ void FAdhesionSolver::Apply(
 	// Parallel computation (safe as read-only)
 	ParallelFor(Particles.Num(), [&](int32 i)
 	{
-		const FFluidParticle& Particle = Particles[i];
+		const FKawaiiFluidParticle& Particle = Particles[i];
 		FVector TotalAdhesionForce = FVector::ZeroVector;
 		AActor* ClosestColliderActor = nullptr;
 		float ClosestDistance = FLT_MAX;
@@ -186,7 +186,7 @@ void FAdhesionSolver::Apply(
 }
 
 void FAdhesionSolver::ApplyCohesion(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	float CohesionStrength,
 	float SmoothingRadius)
 {
@@ -201,7 +201,7 @@ void FAdhesionSolver::ApplyCohesion(
 	// Parallel computation
 	ParallelFor(Particles.Num(), [&](int32 i)
 	{
-		const FFluidParticle& Particle = Particles[i];
+		const FKawaiiFluidParticle& Particle = Particles[i];
 		FVector CohesionForce = FVector::ZeroVector;
 
 		for (int32 NeighborIdx : Particle.NeighborIndices)
@@ -211,7 +211,7 @@ void FAdhesionSolver::ApplyCohesion(
 				continue;
 			}
 
-			const FFluidParticle& Neighbor = Particles[NeighborIdx];
+			const FKawaiiFluidParticle& Neighbor = Particles[NeighborIdx];
 			FVector r = Particle.Position - Neighbor.Position;
 			float Distance = r.Size();
 
@@ -271,7 +271,7 @@ FVector FAdhesionSolver::ComputeAdhesionForce(
 }
 
 void FAdhesionSolver::UpdateAttachmentState(
-	FFluidParticle& Particle,
+	FKawaiiFluidParticle& Particle,
 	AActor* ColliderActor,
 	float Force,
 	float DetachThreshold,

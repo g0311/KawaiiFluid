@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
-#include "Core/FluidParticle.h"
+#include "Core/KawaiiFluidParticle.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
 #include "GPU/GPUFluidParticle.h"
 #include "Data/KawaiiFluidPresetDataAsset.h"
@@ -12,7 +12,7 @@
 #include "KawaiiFluidSimulationContext.generated.h"
 
 // Forward declarations
-class FSpatialHash;
+class FKawaiiFluidSpatialHash;
 class FDensityConstraint;
 class FViscositySolver;
 class FAdhesionSolver;
@@ -22,15 +22,32 @@ class FKawaiiFluidRenderResource;
 struct FGPUFluidSimulationParams;
 
 /**
- * Stateless Simulation Context
- *
- * Contains pure simulation logic with no internal state.
- * All state is passed in as parameters, making it thread-safe and reusable.
- *
- * Inherit from this class to create custom fluid behaviors:
- * - ULavaSimulationContext: Temperature-based viscosity, solidification
- * - USandSimulationContext: Friction-based rest, granular behavior
- * - USnowSimulationContext: Compression-based density changes
+ * @brief Stateless Simulation Context containing pure simulation logic.
+ * 
+ * This class coordinates the simulation flow by dispatching tasks to various solvers.
+ * It does not own the simulation state (particles), making it reusable across different fluid components.
+ * 
+ * @param DensityConstraint Solver for enforcing fluid incompressibility via XPBD.
+ * @param ViscositySolver Solver for applying XSPH-based viscosity.
+ * @param AdhesionSolver Solver for surface tension and cohesion forces.
+ * @param StackPressureSolver Solver for transferring weight between stacked attached particles.
+ * @param bSolversInitialized Internal flag indicating if the solvers have been initialized.
+ * @param GPUSimulator The GPU simulator instance for compute-shader based simulation.
+ * @param RenderResource Shared resources for batched rendering across multiple components.
+ * @param PersistentBoneTransforms Bone transforms from the previous frame used for velocity calculation.
+ * @param PersistentBoneNameToIndex Mapping of bone names to indices for consistent tracking.
+ * @param CachedPreset Weak reference to the preset currently being used.
+ * @param TargetVolumeComponent Weak reference to the volume component providing simulation bounds.
+ * @param CachedGPUWorldCollisionPrimitives Cached geometry primitives for GPU world collision.
+ * @param CachedGPUWorldCollisionBounds The world-space bounds for the current collision cache.
+ * @param CachedGPUWorldCollisionWorld The world associated with the current collision cache.
+ * @param bGPUWorldCollisionCacheDirty Flag to trigger a rebuild of the world collision cache.
+ * @param bStaticBoundaryParticlesDirty Flag to trigger regeneration of static boundary particles.
+ * @param CachedLandscapeHeightmap Sampled heightmap data for landscape collision.
+ * @param CachedHeightmapWidth Width of the cached heightmap texture.
+ * @param CachedHeightmapHeight Height of the cached heightmap texture.
+ * @param CachedHeightmapBounds World-space bounds of the extracted landscape area.
+ * @param bLandscapeHeightmapDirty Flag to trigger re-extraction of landscape data.
  */
 UCLASS(BlueprintType, Blueprintable)
 class KAWAIIFLUIDRUNTIME_API UKawaiiFluidSimulationContext : public UObject
@@ -41,143 +58,69 @@ public:
 	UKawaiiFluidSimulationContext();
 	virtual ~UKawaiiFluidSimulationContext() override;
 
-	/**
-	 * Initialize solvers (called once when context is created)
-	 */
 	virtual void InitializeSolvers(const UKawaiiFluidPresetDataAsset* Preset);
 
 	//========================================
 	// GPU Simulation Mode
 	//========================================
 
-	/**
-	 * Initialize GPU simulator (call before using GPU mode)
-	 * GPU simulation is always used
-	 */
 	virtual void InitializeGPUSimulator(int32 MaxParticleCount);
 
-	/**
-	 * Release GPU simulator resources
-	 */
 	virtual void ReleaseGPUSimulator();
 
-	/**
-	 * Check if GPU simulator is ready
-	 */
 	bool IsGPUSimulatorReady() const;
 
-	/**
-	 * Get GPU simulator pointer (for Phase 2 GPU→GPU rendering)
-	 */
 	FGPUFluidSimulator* GetGPUSimulator() const { return GPUSimulator.Get(); }
 
-	/**
-	 * Get GPU simulator as TSharedPtr (for TWeakPtr assignment in modules)
-	 */
 	TSharedPtr<FGPUFluidSimulator> GetGPUSimulatorShared() const { return GPUSimulator; }
 
-	/**
-	 * Get the cached preset associated with this context
-	 * Returns nullptr if preset has been garbage collected
-	 */
 	UKawaiiFluidPresetDataAsset* GetCachedPreset() const { return CachedPreset.Get(); }
 
-	/**
-	 * Set the preset associated with this context
-	 */
 	void SetCachedPreset(UKawaiiFluidPresetDataAsset* InPreset) { CachedPreset = InPreset; }
 
-	/** Mark GPU world-collision cache dirty (rebuild on next GPU sim) */
 	void MarkGPUWorldCollisionCacheDirty() { bGPUWorldCollisionCacheDirty = true; }
 
-	/** Mark landscape heightmap dirty (re-extract and upload on next GPU sim) */
 	void MarkLandscapeHeightmapDirty() { bLandscapeHeightmapDirty = true; }
 
 	//========================================
 	// Target Volume Component (Z-Order Space Bounds)
 	//========================================
 
-	/**
-	 * Get the target volume component for Z-Order space bounds
-	 * When set, this context uses the Volume's bounds instead of Preset bounds
-	 */
 	UKawaiiFluidVolumeComponent* GetTargetVolumeComponent() const { return TargetVolumeComponent.Get(); }
 
-	/**
-	 * Set the target volume component for Z-Order space bounds
-	 * @param InVolumeComponent The volume component to use (nullptr = use Preset bounds)
-	 */
 	void SetTargetVolumeComponent(UKawaiiFluidVolumeComponent* InVolumeComponent) { TargetVolumeComponent = InVolumeComponent; }
 
 	//========================================
 	// Render Resource (for batch rendering)
-	// Owned by Context so renderers sharing the same Context
-	// use the same RenderResource → reduces Draw Calls
 	//========================================
 
-	/**
-	 * Initialize render resource for this context
-	 * Called when context is first used for rendering
-	 */
 	void InitializeRenderResource();
 
-	/**
-	 * Release render resource
-	 */
 	void ReleaseRenderResource();
 
-	/**
-	 * Get shared render resource raw pointer (for quick access)
-	 */
 	FKawaiiFluidRenderResource* GetRenderResource() const { return RenderResource.Get(); }
 
-	/**
-	 * Get shared render resource as TSharedPtr (for sharing ownership)
-	 */
 	TSharedPtr<FKawaiiFluidRenderResource> GetRenderResourceShared() const { return RenderResource; }
 
-	/**
-	 * Check if render resource is valid
-	 */
 	bool HasValidRenderResource() const { return RenderResource.IsValid(); }
 
-	/**
-	 * Main simulation entry point (Stateless)
-	 *
-	 * @param Particles - In/Out particle array
-	 * @param Preset - Read-only preset parameters
-	 * @param Params - Per-frame simulation parameters
-	 * @param SpatialHash - In/Out spatial hash (rebuilt each frame)
-	 * @param DeltaTime - Frame delta time
-	 * @param AccumulatedTime - In/Out accumulated time for substeps
-	 */
 	virtual void Simulate(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		const UKawaiiFluidPresetDataAsset* Preset,
 		const FKawaiiFluidSimulationParams& Params,
-		FSpatialHash& SpatialHash,
+		FKawaiiFluidSpatialHash& SpatialHash,
 		float DeltaTime,
 		float& AccumulatedTime
 	);
 
-	/**
-	 * Single substep simulation
-	 */
 	virtual void SimulateSubstep(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		const UKawaiiFluidPresetDataAsset* Preset,
 		const FKawaiiFluidSimulationParams& Params,
-		FSpatialHash& SpatialHash,
+		FKawaiiFluidSpatialHash& SpatialHash,
 		float SubstepDT
 	);
 
-	/**
-	 * Run single initialization simulation step after uploading particles
-	 * Stabilizes particle positions with full simulation parameters (colliders/interactions)
-	 * @param Preset - Fluid preset for physics parameters
-	 * @param Params - Full simulation parameters (same as normal simulation)
-	 * @param ParticleCount - Number of particles uploaded
-	 */
 	void RunInitializationSimulation(
 		const UKawaiiFluidPresetDataAsset* Preset,
 		const FKawaiiFluidSimulationParams& Params,
@@ -186,121 +129,105 @@ public:
 
 protected:
 	//========================================
-	// Simulation Steps (Virtual - Override for custom behaviors)
+	// Simulation Steps
 	//========================================
 
-	/** 1. Apply external forces and predict positions */
 	virtual void PredictPositions(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		const UKawaiiFluidPresetDataAsset* Preset,
 		const FVector& ExternalForce,
 		float DeltaTime
 	);
 
-	/** 2. Update neighbor cache using spatial hash */
 	virtual void UpdateNeighbors(
-		TArray<FFluidParticle>& Particles,
-		FSpatialHash& SpatialHash,
+		TArray<FKawaiiFluidParticle>& Particles,
+		FKawaiiFluidSpatialHash& SpatialHash,
 		float SmoothingRadius
 	);
 
-	/** 3. Solve density constraints (XPBD) */
 	virtual void SolveDensityConstraints(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		const UKawaiiFluidPresetDataAsset* Preset,
 		float DeltaTime
 	);
 
-	/** 4. Handle collisions with registered colliders */
 	virtual void HandleCollisions(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		const TArray<TObjectPtr<UKawaiiFluidCollider>>& Colliders,
 		float SubstepDT
 	);
 
-	/** 5. Handle world geometry collision (dispatches to Sweep or SDF based on Params) */
 	virtual void HandleWorldCollision(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		const FKawaiiFluidSimulationParams& Params,
-		FSpatialHash& SpatialHash,
+		FKawaiiFluidSpatialHash& SpatialHash,
 		float ParticleRadius,
 		float SubstepDT,
 		float Friction = 0.5f,
 		float Restitution = 0.0f
 	);
 
-	/** 5a. Legacy sweep-based world collision (SweepSingleByChannel) */
 	virtual void HandleWorldCollision_Sweep(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		const FKawaiiFluidSimulationParams& Params,
-		FSpatialHash& SpatialHash,
+		FKawaiiFluidSpatialHash& SpatialHash,
 		float ParticleRadius,
 		float SubstepDT,
 		float Friction,
 		float Restitution
 	);
 
-	/** 5b. SDF-based world collision (Overlap + ClosestPoint) */
 	virtual void HandleWorldCollision_SDF(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		const FKawaiiFluidSimulationParams& Params,
-		FSpatialHash& SpatialHash,
+		FKawaiiFluidSpatialHash& SpatialHash,
 		float ParticleRadius,
 		float SubstepDT,
 		float Friction,
 		float Restitution
 	);
 
-	/** 6. Finalize positions and update velocities */
 	virtual void FinalizePositions(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		float DeltaTime
 	);
 
-	/** 7. Apply viscosity (XSPH) */
 	virtual void ApplyViscosity(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		const UKawaiiFluidPresetDataAsset* Preset
 	);
 
-	/** 8. Apply adhesion to surfaces */
 	virtual void ApplyAdhesion(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		const UKawaiiFluidPresetDataAsset* Preset,
 		const TArray<TObjectPtr<UKawaiiFluidCollider>>& Colliders
 	);
 
-	/** 9. Apply cohesion (surface tension between particles) */
 	virtual void ApplyCohesion(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		const UKawaiiFluidPresetDataAsset* Preset
 	);
 
-	/** Collect simulation statistics for debugging/comparison (CPU) */
 	virtual void CollectSimulationStats(
-		const TArray<FFluidParticle>& Particles,
+		const TArray<FKawaiiFluidParticle>& Particles,
 		const UKawaiiFluidPresetDataAsset* Preset,
 		int32 SubstepCount,
 		bool bIsGPU
 	);
 
-	/** Collect GPU simulation statistics (without particle readback) */
 	virtual void CollectGPUSimulationStats(
 		const UKawaiiFluidPresetDataAsset* Preset,
 		int32 ParticleCount,
 		int32 SubstepCount
 	);
 
-	/** Update attached particle positions (bone tracking) */
 	virtual void UpdateAttachedParticlePositions(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		const TArray<TObjectPtr<UKawaiiFluidInteractionComponent>>& InteractionComponents
 	);
 
-	/** Cache collider shapes (once per frame) */
 	virtual void CacheColliderShapes(const TArray<TObjectPtr<UKawaiiFluidCollider>>& Colliders);
 
-	/** Append cached world-collision primitives (GPU) using channel-filtered world query */
 	void AppendGPUWorldCollisionPrimitives(
 		FGPUCollisionPrimitives& OutPrimitives,
 		const FKawaiiFluidSimulationParams& Params,
@@ -312,74 +239,52 @@ protected:
 
 protected:
 	//========================================
-	// Cached Solvers (Lazy initialization)
+	// Cached Solvers
 	//========================================
 
-	/** Density constraint solver */
 	TSharedPtr<FDensityConstraint> DensityConstraint;
 
-	/** Viscosity solver */
 	TSharedPtr<FViscositySolver> ViscositySolver;
 
-	/** Adhesion solver */
 	TSharedPtr<FAdhesionSolver> AdhesionSolver;
 
-	/** Stack pressure solver (weight transfer from stacked attached particles) */
 	TSharedPtr<FStackPressureSolver> StackPressureSolver;
 
-	/** Flag to check if solvers are initialized */
 	bool bSolversInitialized = false;
 
-	/** Ensure solvers are initialized */
 	void EnsureSolversInitialized(const UKawaiiFluidPresetDataAsset* Preset);
 
 	//========================================
 	// GPU Simulation
 	//========================================
 
-	/** GPU fluid simulator instance */
 	TSharedPtr<FGPUFluidSimulator> GPUSimulator;
 
 	//========================================
-	// Render Resource (for batch rendering)
+	// Render Resource
 	//========================================
 
-	/** Shared render resource for all renderers using this context */
 	TSharedPtr<FKawaiiFluidRenderResource> RenderResource;
 
-	/**
-	 * Simulate using GPU compute shaders
-	 * Always uses GPU simulation
-	 */
 	virtual void SimulateGPU(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		const UKawaiiFluidPresetDataAsset* Preset,
 		const FKawaiiFluidSimulationParams& Params,
-		FSpatialHash& SpatialHash,
+		FKawaiiFluidSpatialHash& SpatialHash,
 		float DeltaTime,
 		float& AccumulatedTime
 	);
 
-	/**
-	 * Build GPU simulation parameters from preset and frame params
-	 */
 	FGPUFluidSimulationParams BuildGPUSimParams(
 		const UKawaiiFluidPresetDataAsset* Preset,
 		const FKawaiiFluidSimulationParams& Params,
 		float SubstepDT
 	) const;
 
-	/**
-	 * Separate attached particles for CPU handling
-	 * @return Indices of attached particles
-	 */
-	TArray<int32> ExtractAttachedParticleIndices(const TArray<FFluidParticle>& Particles) const;
+	TArray<int32> ExtractAttachedParticleIndices(const TArray<FKawaiiFluidParticle>& Particles) const;
 
-	/**
-	 * Handle attached particles on CPU (bone tracking, adhesion)
-	 */
 	virtual void HandleAttachedParticlesCPU(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		const TArray<int32>& AttachedIndices,
 		const UKawaiiFluidPresetDataAsset* Preset,
 		const FKawaiiFluidSimulationParams& Params,
@@ -387,57 +292,43 @@ protected:
 	);
 
 	//========================================
-	// Persistent Bone Transform Data (for GPU adhesion)
+	// Persistent Bone Transform Data
 	//========================================
 
-	/** Bone transforms persisted across frames for velocity calculation */
 	TArray<FGPUBoneTransform> PersistentBoneTransforms;
 
-	/** Bone name to index mapping persisted across frames */
 	TMap<FName, int32> PersistentBoneNameToIndex;
 
-	/** Weak reference to the preset associated with this context */
 	TWeakObjectPtr<UKawaiiFluidPresetDataAsset> CachedPreset;
 
-	/** Weak reference to the target volume component for Z-Order space bounds */
 	TWeakObjectPtr<UKawaiiFluidVolumeComponent> TargetVolumeComponent;
 
 	//========================================
-	// GPU World Collision Cache (channel-based)
+	// GPU World Collision Cache
 	//========================================
 
-	/** Cached primitives built from world collision channel */
 	FGPUCollisionPrimitives CachedGPUWorldCollisionPrimitives;
 
-	/** Cached query bounds for world collision */
 	FBox CachedGPUWorldCollisionBounds = FBox(EForceInit::ForceInit);
 
-	/** Cached world pointer for world collision */
 	TWeakObjectPtr<UWorld> CachedGPUWorldCollisionWorld;
 
-	/** Cached world collision primitives dirty flag */
 	bool bGPUWorldCollisionCacheDirty = true;
 
-	/** Static boundary particles need regeneration flag */
 	bool bStaticBoundaryParticlesDirty = true;
 
 	//========================================
 	// Landscape Heightmap Collision Cache
 	//========================================
 
-	/** Cached heightmap data */
 	TArray<float> CachedLandscapeHeightmap;
 
-	/** Cached heightmap dimensions */
 	int32 CachedHeightmapWidth = 0;
 	int32 CachedHeightmapHeight = 0;
 
-	/** Cached heightmap world bounds */
 	FBox CachedHeightmapBounds = FBox(EForceInit::ForceInit);
 
-	/** Landscape heightmap needs rebuild flag */
 	bool bLandscapeHeightmapDirty = true;
 
-	/** Update landscape heightmap collision (called from SimulateGPU) */
 	void UpdateLandscapeHeightmapCollision(const FKawaiiFluidSimulationParams& Params, const UKawaiiFluidPresetDataAsset* Preset);
 };

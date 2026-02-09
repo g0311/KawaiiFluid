@@ -3,7 +3,7 @@
 #include "Modules/KawaiiFluidSimulationModule.h"
 
 #include "KawaiiFluidSimulationContext.h"
-#include "Core/SpatialHash.h"
+#include "Core/KawaiiFluidSpatialHash.h"
 #include "Collision/KawaiiFluidCollider.h"
 #include "Components/KawaiiFluidInteractionComponent.h"
 #include "Components/KawaiiFluidVolumeComponent.h"
@@ -133,7 +133,7 @@ void UKawaiiFluidSimulationModule::SyncGPUParticlesToCPU()
 		return;
 	}
 
-	TArray<FFluidParticle> MyParticles;
+	TArray<FKawaiiFluidParticle> MyParticles;
 
 	if (GPUSim->IsReady())
 	{
@@ -178,7 +178,7 @@ void UKawaiiFluidSimulationModule::UploadCPUParticlesToGPU()
 	// Run initialization simulation to preload collision/landscape data (runs even with 0 particles)
 	if (UKawaiiFluidSimulationContext* Context = GetSimulationContext())
 	{
-		FSpatialHash* Hash = GetSpatialHash();
+		FKawaiiFluidSpatialHash* Hash = GetSpatialHash();
 		if (!Hash)
 		{
 			// SpatialHash not initialized yet - initialize now
@@ -192,7 +192,7 @@ void UKawaiiFluidSimulationModule::UploadCPUParticlesToGPU()
 			FKawaiiFluidSimulationParams Params = BuildSimulationParams();
 
 			// Prepare temporary variables for Simulate
-			TArray<FFluidParticle> EmptyParticles;  // GPU-only mode doesn't need CPU particles
+			TArray<FKawaiiFluidParticle> EmptyParticles;  // GPU-only mode doesn't need CPU particles
 			float TempAccumulatedTime = 0.0f;
 
 			// Run one simulation frame (1 substep) to:
@@ -269,7 +269,7 @@ void UKawaiiFluidSimulationModule::PostEditChangeProperty(FPropertyChangedEvent&
 			// Reconstruct SpatialHash
 			if (SpatialHash.IsValid())
 			{
-				SpatialHash = MakeShared<FSpatialHash>(Preset->SmoothingRadius);
+				SpatialHash = MakeShared<FKawaiiFluidSpatialHash>(Preset->SmoothingRadius);
 			}
 			// Subscribe to preset property changes
 			BindToPresetPropertyChanged();
@@ -452,13 +452,13 @@ void UKawaiiFluidSimulationModule::SetPreset(UKawaiiFluidPresetDataAsset* InPres
 	// Reconstruct SpatialHash
 	if (Preset && SpatialHash.IsValid())
 	{
-		SpatialHash = MakeShared<FSpatialHash>(Preset->SmoothingRadius);
+		SpatialHash = MakeShared<FKawaiiFluidSpatialHash>(Preset->SmoothingRadius);
 	}
 }
 
 void UKawaiiFluidSimulationModule::InitializeSpatialHash(float InCellSize)
 {
-	SpatialHash = MakeShared<FSpatialHash>(InCellSize);
+	SpatialHash = MakeShared<FKawaiiFluidSpatialHash>(InCellSize);
 }
 
 AActor* UKawaiiFluidSimulationModule::GetOwnerActor() const
@@ -1454,7 +1454,7 @@ TArray<FVector> UKawaiiFluidSimulationModule::GetParticlePositions() const
 	TArray<FVector> Positions;
 	Positions.Reserve(Particles.Num());
 
-	for (const FFluidParticle& Particle : Particles)
+	for (const FKawaiiFluidParticle& Particle : Particles)
 	{
 		Positions.Add(Particle.Position);
 	}
@@ -1467,7 +1467,7 @@ TArray<FVector> UKawaiiFluidSimulationModule::GetParticleVelocities() const
 	TArray<FVector> Velocities;
 	Velocities.Reserve(Particles.Num());
 
-	for (const FFluidParticle& Particle : Particles)
+	for (const FKawaiiFluidParticle& Particle : Particles)
 	{
 		Velocities.Add(Particle.Velocity);
 	}
@@ -1541,7 +1541,7 @@ bool UKawaiiFluidSimulationModule::GetParticleInfo(int32 ParticleIndex, FVector&
 		return false;
 	}
 
-	const FFluidParticle& Particle = Particles[ParticleIndex];
+	const FKawaiiFluidParticle& Particle = Particles[ParticleIndex];
 	OutPosition = Particle.Position;
 	OutVelocity = Particle.Velocity;
 	OutDensity = Particle.Density;
@@ -1912,7 +1912,7 @@ void UKawaiiFluidSimulationModule::ResolveVolumeBoundaryCollisions()
 	const FVector LocalBoxMin = -EffectiveHalfExtent;
 	const FVector LocalBoxMax = EffectiveHalfExtent;
 
-	for (FFluidParticle& P : Particles)
+	for (FKawaiiFluidParticle& P : Particles)
 	{
 		// World -> Local transformation
 		FVector LocalPos = InverseRotation.RotateVector(P.PredictedPosition - EffectiveCenter);
@@ -2321,7 +2321,7 @@ void UKawaiiFluidSimulationModule::OnPresetChangedExternal(UKawaiiFluidPresetDat
 	// Update SpatialHash if it exists
 	if (SpatialHash.IsValid() && Preset)
 	{
-		SpatialHash = MakeShared<FSpatialHash>(Preset->SmoothingRadius);
+		SpatialHash = MakeShared<FKawaiiFluidSpatialHash>(Preset->SmoothingRadius);
 	}
 
 #if WITH_EDITOR
@@ -2350,7 +2350,7 @@ void UKawaiiFluidSimulationModule::OnPresetPropertyChanged(UKawaiiFluidPresetDat
 	// Update SpatialHash if it exists
 	if (SpatialHash.IsValid() && Preset)
 	{
-		SpatialHash = MakeShared<FSpatialHash>(Preset->SmoothingRadius);
+		SpatialHash = MakeShared<FKawaiiFluidSpatialHash>(Preset->SmoothingRadius);
 	}
 
 	// Update CellSize and bounds display
@@ -2403,7 +2403,7 @@ void UKawaiiFluidSimulationModule::OnObjectsReplaced(const TMap<UObject*, UObjec
 			// Update SpatialHash if it exists
 			if (SpatialHash.IsValid() && Preset)
 			{
-				SpatialHash = MakeShared<FSpatialHash>(Preset->SmoothingRadius);
+				SpatialHash = MakeShared<FKawaiiFluidSpatialHash>(Preset->SmoothingRadius);
 			}
 
 			// Bind to new preset's property changed delegate

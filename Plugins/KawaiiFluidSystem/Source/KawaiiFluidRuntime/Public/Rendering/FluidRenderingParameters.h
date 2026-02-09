@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Core/FluidAnisotropy.h"
+#include "Core/KawaiiFluidAnisotropy.h"
 #include "FluidSurfaceDecoration.h"
 #include "Engine/TextureCube.h"
 #include "FluidRenderingParameters.generated.h"
@@ -376,7 +376,7 @@ struct KAWAIIFLUIDRUNTIME_API FFluidRenderingParameters
 
 	/** Anisotropy parameters for ellipsoid rendering */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Anisotropy", meta = (ShowOnlyInnerProperties))
-	FFluidAnisotropyParams AnisotropyParams;
+	FKawaiiFluidAnisotropyParams AnisotropyParams;
 
 	//========================================
 	// Surface Decoration

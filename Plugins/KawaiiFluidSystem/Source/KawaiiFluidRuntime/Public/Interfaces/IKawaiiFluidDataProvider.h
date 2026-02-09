@@ -6,7 +6,7 @@
 #include "UObject/Interface.h"
 #include "IKawaiiFluidDataProvider.generated.h"
 
-struct FFluidParticle;
+struct FKawaiiFluidParticle;
 class FGPUFluidSimulator;
 
 /**
@@ -61,7 +61,7 @@ public:
 	 *
 	 * @return Const reference to particle array
 	 */
-	virtual const TArray<FFluidParticle>& GetParticles() const = 0;
+	virtual const TArray<FKawaiiFluidParticle>& GetParticles() const = 0;
 
 	/**
 	 * Get particle count

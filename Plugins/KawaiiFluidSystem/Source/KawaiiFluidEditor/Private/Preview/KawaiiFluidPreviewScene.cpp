@@ -2,8 +2,8 @@
 
 #include "Preview/KawaiiFluidPreviewScene.h"
 #include "Data/KawaiiFluidPresetDataAsset.h"
-#include "Core/FluidParticle.h"
-#include "Core/SpatialHash.h"
+#include "Core/KawaiiFluidParticle.h"
+#include "Core/KawaiiFluidSpatialHash.h"
 #include "Core/KawaiiFluidSimulationContext.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
 #include "Core/KawaiiFluidSimulationStats.h"
@@ -469,8 +469,8 @@ void FKawaiiFluidPreviewScene::TickSimulation(float DeltaTime)
 	GPUSimulator->SetSimulationBounds(FVector3f(BoundsMin), FVector3f(BoundsMax));
 
 	// Run GPU simulation
-	static TArray<FFluidParticle> DummyParticles;  // GPU mode doesn't use CPU particles
-	static FSpatialHash DummySpatialHash(CurrentPreset->SmoothingRadius);
+	static TArray<FKawaiiFluidParticle> DummyParticles;  // GPU mode doesn't use CPU particles
+	static FKawaiiFluidSpatialHash DummySpatialHash(CurrentPreset->SmoothingRadius);
 	float AccumulatedTime = 0.0f;
 
 	SimulationContext->Simulate(
@@ -550,9 +550,9 @@ void FKawaiiFluidPreviewScene::UpdateEnvironment()
  * @brief Returns CPU particles (empty in GPU mode).
  * @return Empty particle array
  */
-const TArray<FFluidParticle>& FKawaiiFluidPreviewScene::GetParticles() const
+const TArray<FKawaiiFluidParticle>& FKawaiiFluidPreviewScene::GetParticles() const
 {
-	static TArray<FFluidParticle> EmptyArray;
+	static TArray<FKawaiiFluidParticle> EmptyArray;
 	return EmptyArray;
 }
 
@@ -587,9 +587,9 @@ bool FKawaiiFluidPreviewScene::IsDataValid() const
  * @brief Returns mutable CPU particles (empty in GPU mode).
  * @return Empty particle array
  */
-TArray<FFluidParticle>& FKawaiiFluidPreviewScene::GetParticlesMutable()
+TArray<FKawaiiFluidParticle>& FKawaiiFluidPreviewScene::GetParticlesMutable()
 {
-	static TArray<FFluidParticle> EmptyArray;
+	static TArray<FKawaiiFluidParticle> EmptyArray;
 	return EmptyArray;
 }
 

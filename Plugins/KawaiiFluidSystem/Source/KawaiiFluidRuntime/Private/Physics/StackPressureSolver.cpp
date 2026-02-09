@@ -9,7 +9,7 @@ FStackPressureSolver::FStackPressureSolver()
 }
 
 void FStackPressureSolver::Apply(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	const FVector& Gravity,
 	float StackPressureScale,
 	float SmoothingRadius,
@@ -31,7 +31,7 @@ void FStackPressureSolver::Apply(
 	// Calculate stack pressure forces (parallel)
 	ParallelFor(ParticleCount, [&](int32 i)
 	{
-		FFluidParticle& Particle = Particles[i];
+		FKawaiiFluidParticle& Particle = Particles[i];
 
 		// Only process attached particles
 		if (!Particle.bIsAttached)
@@ -70,7 +70,7 @@ void FStackPressureSolver::Apply(
 				continue;
 			}
 
-			const FFluidParticle& Neighbor = Particles[NeighborIdx];
+			const FKawaiiFluidParticle& Neighbor = Particles[NeighborIdx];
 
 			// Only consider attached neighbors
 			if (!Neighbor.bIsAttached)
@@ -135,8 +135,8 @@ void FStackPressureSolver::Apply(
 }
 
 float FStackPressureSolver::GetHeightDifference(
-	const FFluidParticle& ParticleI,
-	const FFluidParticle& ParticleJ,
+	const FKawaiiFluidParticle& ParticleI,
+	const FKawaiiFluidParticle& ParticleJ,
 	const FVector& TangentGravityDir) const
 {
 	// "Up" is opposite of sliding direction

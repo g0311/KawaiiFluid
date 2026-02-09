@@ -14,7 +14,7 @@ FFluidTestMetrics FFluidMetricsCollector::CollectFromModule(const UKawaiiFluidSi
 	}
 
 	// Get particle data from module
-	const TArray<FFluidParticle>& Particles = Module->GetParticles();
+	const TArray<FKawaiiFluidParticle>& Particles = Module->GetParticles();
 
 	// Get rest density from module preset
 	float RestDensity = 1000.0f;  // Default

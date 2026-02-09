@@ -1,7 +1,7 @@
 // Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #include "Core/KawaiiFluidSimulationContext.h"
-#include "Core/SpatialHash.h"
+#include "Core/KawaiiFluidSpatialHash.h"
 #include "Core/KawaiiFluidSimulationStats.h"
 #include "Components/KawaiiFluidVolumeComponent.h"
 #include "Data/KawaiiFluidPresetDataAsset.h"
@@ -327,16 +327,27 @@ namespace
 	}
 }
 
+/**
+ * @brief Default constructor for UKawaiiFluidSimulationContext.
+ */
 UKawaiiFluidSimulationContext::UKawaiiFluidSimulationContext()
 {
 }
 
+/**
+ * @brief Destructor for UKawaiiFluidSimulationContext.
+ * Ensures that GPU simulator and render resources are properly released.
+ */
 UKawaiiFluidSimulationContext::~UKawaiiFluidSimulationContext()
 {
 	ReleaseRenderResource();
 	ReleaseGPUSimulator();
 }
 
+/**
+ * @brief Initialize solvers used in the simulation.
+ * @param Preset The data asset containing fluid properties.
+ */
 void UKawaiiFluidSimulationContext::InitializeSolvers(const UKawaiiFluidPresetDataAsset* Preset)
 {
 	if (!Preset)
@@ -356,6 +367,10 @@ void UKawaiiFluidSimulationContext::InitializeSolvers(const UKawaiiFluidPresetDa
 	bSolversInitialized = true;
 }
 
+/**
+ * @brief Ensure solvers are initialized before proceeding with simulation steps.
+ * @param Preset The data asset containing fluid properties.
+ */
 void UKawaiiFluidSimulationContext::EnsureSolversInitialized(const UKawaiiFluidPresetDataAsset* Preset)
 {
 	if (!bSolversInitialized && Preset)
@@ -368,6 +383,10 @@ void UKawaiiFluidSimulationContext::EnsureSolversInitialized(const UKawaiiFluidP
 // GPU Simulation Methods
 //=============================================================================
 
+/**
+ * @brief Initialize the GPU simulator with a maximum particle capacity.
+ * @param MaxParticleCount Maximum number of particles allowed.
+ */
 void UKawaiiFluidSimulationContext::InitializeGPUSimulator(int32 MaxParticleCount)
 {
 	if (GPUSimulator.IsValid())
@@ -387,6 +406,9 @@ void UKawaiiFluidSimulationContext::InitializeGPUSimulator(int32 MaxParticleCoun
 	UE_LOG(LogTemp, Log, TEXT("GPU Fluid Simulator initialized with capacity: %d"), MaxParticleCount);
 }
 
+/**
+ * @brief Release GPU simulator resources.
+ */
 void UKawaiiFluidSimulationContext::ReleaseGPUSimulator()
 {
 	if (GPUSimulator.IsValid())
@@ -400,6 +422,9 @@ void UKawaiiFluidSimulationContext::ReleaseGPUSimulator()
 // Render Resource Methods (for batch rendering)
 //=============================================================================
 
+/**
+ * @brief Initialize the shared render resource for this context.
+ */
 void UKawaiiFluidSimulationContext::InitializeRenderResource()
 {
 	if (RenderResource.IsValid())
@@ -420,6 +445,9 @@ void UKawaiiFluidSimulationContext::InitializeRenderResource()
 	UE_LOG(LogTemp, Log, TEXT("SimulationContext: RenderResource initialized"));
 }
 
+/**
+ * @brief Release the shared render resource.
+ */
 void UKawaiiFluidSimulationContext::ReleaseRenderResource()
 {
 	if (RenderResource.IsValid())
@@ -437,11 +465,22 @@ void UKawaiiFluidSimulationContext::ReleaseRenderResource()
 	}
 }
 
+/**
+ * @brief Check if the GPU simulator is ready for simulation.
+ * @return True if initialized and ready.
+ */
 bool UKawaiiFluidSimulationContext::IsGPUSimulatorReady() const
 {
 	return GPUSimulator.IsValid() && GPUSimulator->IsReady();
 }
 
+/**
+ * @brief Build GPU simulation parameters structure from preset and current frame state.
+ * @param Preset Fluid preset containing physics parameters.
+ * @param Params Frame-specific simulation parameters.
+ * @param SubstepDT Time step for a single simulation substep.
+ * @return FGPUFluidSimulationParams structure ready for constant buffer upload.
+ */
 FGPUFluidSimulationParams UKawaiiFluidSimulationContext::BuildGPUSimParams(
 	const UKawaiiFluidPresetDataAsset* Preset,
 	const FKawaiiFluidSimulationParams& Params,
@@ -596,7 +635,12 @@ FGPUFluidSimulationParams UKawaiiFluidSimulationContext::BuildGPUSimParams(
 	return GPUParams;
 }
 
-TArray<int32> UKawaiiFluidSimulationContext::ExtractAttachedParticleIndices(const TArray<FFluidParticle>& Particles) const
+/**
+ * @brief Identify and extract indices of particles that are currently attached to an actor or bone.
+ * @param Particles Particle array to check.
+ * @return TArray of indices representing attached particles.
+ */
+TArray<int32> UKawaiiFluidSimulationContext::ExtractAttachedParticleIndices(const TArray<FKawaiiFluidParticle>& Particles) const
 {
 	TArray<int32> AttachedIndices;
 	AttachedIndices.Reserve(Particles.Num() / 10);  // Estimate ~10% attached
@@ -612,8 +656,16 @@ TArray<int32> UKawaiiFluidSimulationContext::ExtractAttachedParticleIndices(cons
 	return AttachedIndices;
 }
 
+/**
+ * @brief Handle simulation logic for attached particles on the CPU.
+ * @param Particles In/Out particle array.
+ * @param AttachedIndices Indices of particles to process.
+ * @param Preset Read-only preset data asset.
+ * @param Params Simulation parameters.
+ * @param SubstepDT Time step for the current substep.
+ */
 void UKawaiiFluidSimulationContext::HandleAttachedParticlesCPU(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	const TArray<int32>& AttachedIndices,
 	const UKawaiiFluidPresetDataAsset* Preset,
 	const FKawaiiFluidSimulationParams& Params,
@@ -633,7 +685,7 @@ void UKawaiiFluidSimulationContext::HandleAttachedParticlesCPU(
 		// Only apply to attached particles
 		for (int32 Idx : AttachedIndices)
 		{
-			FFluidParticle& Particle = Particles[Idx];
+			FKawaiiFluidParticle& Particle = Particles[Idx];
 
 			// Apply sliding gravity (tangent component)
 			const FVector& Normal = Particle.AttachedSurfaceNormal;
@@ -653,11 +705,20 @@ void UKawaiiFluidSimulationContext::HandleAttachedParticlesCPU(
 	// (Per-polygon collision will be added in Phase 2)
 }
 
+/**
+ * @brief Execute the simulation using GPU compute shaders.
+ * @param Particles In/Out particle array (Note: GPU is the source of truth, CPU array may be outdated).
+ * @param Preset Read-only preset data asset.
+ * @param Params Simulation parameters.
+ * @param SpatialHash Spatial hash for neighbor find (used for world query bounds).
+ * @param DeltaTime Frame delta time.
+ * @param AccumulatedTime In/Out accumulated time for fixed-step simulation.
+ */
 void UKawaiiFluidSimulationContext::SimulateGPU(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	const UKawaiiFluidPresetDataAsset* Preset,
 	const FKawaiiFluidSimulationParams& Params,
-	FSpatialHash& SpatialHash,
+	FKawaiiFluidSpatialHash& SpatialHash,
 	float DeltaTime,
 	float& AccumulatedTime)
 {
@@ -1166,11 +1227,20 @@ void UKawaiiFluidSimulationContext::SimulateGPU(
 	CollectGPUSimulationStats(Preset, GPUParams.ParticleCount, SubstepCount);
 }
 
+/**
+ * @brief Main entry point for the simulation (Stateless).
+ * @param Particles In/Out particle array.
+ * @param Preset Read-only preset data asset.
+ * @param Params Simulation parameters for the current frame.
+ * @param SpatialHash Spatial hash for neighbor finding.
+ * @param DeltaTime Frame delta time.
+ * @param AccumulatedTime In/Out accumulated time for fixed-step simulation.
+ */
 void UKawaiiFluidSimulationContext::Simulate(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	const UKawaiiFluidPresetDataAsset* Preset,
 	const FKawaiiFluidSimulationParams& Params,
-	FSpatialHash& SpatialHash,
+	FKawaiiFluidSpatialHash& SpatialHash,
 	float DeltaTime,
 	float& AccumulatedTime)
 {
@@ -1186,11 +1256,19 @@ void UKawaiiFluidSimulationContext::Simulate(
 	SimulateGPU(Particles, Preset, Params, SpatialHash, DeltaTime, AccumulatedTime);
 }
 
+/**
+ * @brief Perform a single substep of the simulation.
+ * @param Particles In/Out particle array.
+ * @param Preset Read-only preset data asset.
+ * @param Params Simulation parameters.
+ * @param SpatialHash Spatial hash for neighbor search.
+ * @param SubstepDT Time step for this specific substep.
+ */
 void UKawaiiFluidSimulationContext::SimulateSubstep(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	const UKawaiiFluidPresetDataAsset* Preset,
 	const FKawaiiFluidSimulationParams& Params,
-	FSpatialHash& SpatialHash,
+	FKawaiiFluidSpatialHash& SpatialHash,
 	float SubstepDT)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(KawaiiFluidContext_SimulateSubstep);
@@ -1273,6 +1351,12 @@ void UKawaiiFluidSimulationContext::SimulateSubstep(
 	}
 }
 
+/**
+ * @brief Run an initialization simulation step after uploading particles to the GPU.
+ * @param Preset Fluid preset for physics parameters.
+ * @param Params Full simulation parameters.
+ * @param ParticleCount Total number of particles in the system.
+ */
 void UKawaiiFluidSimulationContext::RunInitializationSimulation(
 	const UKawaiiFluidPresetDataAsset* Preset,
 	const FKawaiiFluidSimulationParams& Params,
@@ -1298,9 +1382,9 @@ void UKawaiiFluidSimulationContext::RunInitializationSimulation(
 	GPUParams.TotalSubsteps = 1;  // Single substep (triggers anisotropy: 0 == 1-1)
 
 	// Temporarily enable anisotropy for initialization (restore after simulation)
-	FFluidAnisotropyParams TempAnisotropyParams;
+	FKawaiiFluidAnisotropyParams TempAnisotropyParams;
 	TempAnisotropyParams.bEnabled = true;
-	TempAnisotropyParams.Mode = EFluidAnisotropyMode::DensityBased;
+	TempAnisotropyParams.Mode = EKawaiiFluidAnisotropyMode::DensityBased;
 	TempAnisotropyParams.Strength = 1.0f;
 	TempAnisotropyParams.VelocityStretchFactor = 0.0f;  // No velocity stretch for initialization
 	TempAnisotropyParams.MinStretch = 0.5f;
@@ -1308,7 +1392,7 @@ void UKawaiiFluidSimulationContext::RunInitializationSimulation(
 	TempAnisotropyParams.DensityWeight = 1.0f;
 	TempAnisotropyParams.UpdateInterval = 1;
 
-	FFluidAnisotropyParams PreviousParams = GPUSimulator->GetAnisotropyParams();
+	FKawaiiFluidAnisotropyParams PreviousParams = GPUSimulator->GetAnisotropyParams();
 	GPUSimulator->SetAnisotropyParams(TempAnisotropyParams);
 
 	// Run one simulation step to stabilize particles
@@ -1320,8 +1404,15 @@ void UKawaiiFluidSimulationContext::RunInitializationSimulation(
 	UE_LOG(LogTemp, Log, TEXT("RunInitializationSimulation: Completed for %d particles"), ParticleCount);
 }
 
+/**
+ * @brief Predict future particle positions based on external forces and current velocity.
+ * @param Particles In/Out particle array.
+ * @param Preset Read-only preset data asset.
+ * @param ExternalForce Vector representing external forces (e.g., gravity, wind).
+ * @param DeltaTime Substep time interval.
+ */
 void UKawaiiFluidSimulationContext::PredictPositions(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	const UKawaiiFluidPresetDataAsset* Preset,
 	const FVector& ExternalForce,
 	float DeltaTime)
@@ -1330,7 +1421,7 @@ void UKawaiiFluidSimulationContext::PredictPositions(
 
 	ParallelFor(Particles.Num(), [&](int32 i)
 	{
-		FFluidParticle& Particle = Particles[i];
+		FKawaiiFluidParticle& Particle = Particles[i];
 
 		FVector AppliedForce = TotalForce;
 
@@ -1348,16 +1439,22 @@ void UKawaiiFluidSimulationContext::PredictPositions(
 	});
 }
 
+/**
+ * @brief Rebuild the spatial hash and cache neighbors for each particle.
+ * @param Particles Particle array containing current predicted positions.
+ * @param SpatialHash The spatial hash structure to update.
+ * @param SmoothingRadius Interaction radius for neighbor search.
+ */
 void UKawaiiFluidSimulationContext::UpdateNeighbors(
-	TArray<FFluidParticle>& Particles,
-	FSpatialHash& SpatialHash,
+	TArray<FKawaiiFluidParticle>& Particles,
+	FKawaiiFluidSpatialHash& SpatialHash,
 	float SmoothingRadius)
 {
 	// Rebuild spatial hash (sequential - hashmap write)
 	TArray<FVector> Positions;
 	Positions.Reserve(Particles.Num());
 
-	for (const FFluidParticle& Particle : Particles)
+	for (const FKawaiiFluidParticle& Particle : Particles)
 	{
 		Positions.Add(Particle.PredictedPosition);
 	}
@@ -1375,8 +1472,14 @@ void UKawaiiFluidSimulationContext::UpdateNeighbors(
 	});
 }
 
+/**
+ * @brief Solve PBF density constraints iteratively to enforce fluid incompressibility.
+ * @param Particles In/Out particle array.
+ * @param Preset Read-only preset containing physical properties.
+ * @param DeltaTime Substep time interval.
+ */
 void UKawaiiFluidSimulationContext::SolveDensityConstraints(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	const UKawaiiFluidPresetDataAsset* Preset,
 	float DeltaTime)
 {
@@ -1438,24 +1541,68 @@ void UKawaiiFluidSimulationContext::SolveDensityConstraints(
 	}
 }
 
+/**
+
+ * @brief Cache collider shapes once per frame for optimized collision detection.
+
+ * @param Colliders Array of fluid collider components to cache.
+
+ */
+
 void UKawaiiFluidSimulationContext::CacheColliderShapes(const TArray<TObjectPtr<UKawaiiFluidCollider>>& Colliders)
+
 {
+
 	for (UKawaiiFluidCollider* Collider : Colliders)
+
 	{
+
 		if (Collider && Collider->IsColliderEnabled())
+
 		{
+
 			Collider->CacheCollisionShapes();
+
 		}
+
 	}
+
 }
 
+
+
+/**
+
+ * @brief Append world geometry primitives to the GPU collision structure.
+
+ * @param OutPrimitives GPU primitives structure to populate.
+
+ * @param Params Simulation parameters including the world to query.
+
+ * @param QueryBounds World-space bounds for geometry sampling.
+
+ * @param DefaultFriction Default friction for the sampling region.
+
+ * @param DefaultRestitution Default restitution for the sampling region.
+
+ * @param FluidColliderOwners Set of actors to exclude from world query.
+
+ */
+
 void UKawaiiFluidSimulationContext::AppendGPUWorldCollisionPrimitives(
+
 	FGPUCollisionPrimitives& OutPrimitives,
+
 	const FKawaiiFluidSimulationParams& Params,
+
 	const FBox& QueryBounds,
+
 	float DefaultFriction,
+
 	float DefaultRestitution,
+
 	const TSet<const AActor*>& FluidColliderOwners)
+
 {
 	// Diagnostic log (every 60 frames)
 	static int32 DiagLogCounter = 0;
@@ -1763,8 +1910,14 @@ void UKawaiiFluidSimulationContext::AppendGPUWorldCollisionPrimitives(
 	}
 }
 
+/**
+ * @brief Resolve collisions with registered fluid collider components.
+ * @param Particles In/Out particle array.
+ * @param Colliders Array of collider components.
+ * @param SubstepDT Time step for the current substep.
+ */
 void UKawaiiFluidSimulationContext::HandleCollisions(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	const TArray<TObjectPtr<UKawaiiFluidCollider>>& Colliders,
 	float SubstepDT)
 {
@@ -1777,10 +1930,20 @@ void UKawaiiFluidSimulationContext::HandleCollisions(
 	}
 }
 
+/**
+ * @brief Dispatch world geometry collision to the appropriate method (Sweep or SDF).
+ * @param Particles In/Out particle array.
+ * @param Params Simulation parameters.
+ * @param SpatialHash Spatial hash for broad-phase optimization.
+ * @param ParticleRadius Radius of the particles for collision offset.
+ * @param SubstepDT Time step for the current substep.
+ * @param Friction Surface friction.
+ * @param Restitution Surface restitution.
+ */
 void UKawaiiFluidSimulationContext::HandleWorldCollision(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	const FKawaiiFluidSimulationParams& Params,
-	FSpatialHash& SpatialHash,
+	FKawaiiFluidSpatialHash& SpatialHash,
 	float ParticleRadius,
 	float SubstepDT,
 	float Friction,
@@ -1804,10 +1967,13 @@ void UKawaiiFluidSimulationContext::HandleWorldCollision(
 // Legacy Sweep-based World Collision
 //========================================
 
+/**
+ * @brief Resolve world geometry collisions using a sweep-based approach (Legacy).
+ */
 void UKawaiiFluidSimulationContext::HandleWorldCollision_Sweep(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	const FKawaiiFluidSimulationParams& Params,
-	FSpatialHash& SpatialHash,
+	FKawaiiFluidSpatialHash& SpatialHash,
 	float ParticleRadius,
 	float SubstepDT,
 	float Friction,
@@ -1894,7 +2060,7 @@ void UKawaiiFluidSimulationContext::HandleWorldCollision_Sweep(
 		ParallelFor(CollisionParticleIndices.Num(), [&](int32 j)
 		{
 			const int32 i = CollisionParticleIndices[j];
-			FFluidParticle& Particle = Particles[i];
+			FKawaiiFluidParticle& Particle = Particles[i];
 
 			FCollisionQueryParams LocalParams;
 			LocalParams.bTraceComplex = false;
@@ -2026,7 +2192,7 @@ void UKawaiiFluidSimulationContext::HandleWorldCollision_Sweep(
 	const float FloorDetachDistance = 5.0f;
 	const float FloorNearDistance = 20.0f;
 
-	for (FFluidParticle& Particle : Particles)
+	for (FKawaiiFluidParticle& Particle : Particles)
 	{
 		if (!Particle.bIsAttached)
 		{
@@ -2072,10 +2238,13 @@ void UKawaiiFluidSimulationContext::HandleWorldCollision_Sweep(
 // SDF-based World Collision (Overlap + ClosestPoint)
 //========================================
 
+/**
+ * @brief Resolve world geometry collisions using a Signed Distance Field (SDF) approach.
+ */
 void UKawaiiFluidSimulationContext::HandleWorldCollision_SDF(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	const FKawaiiFluidSimulationParams& Params,
-	FSpatialHash& SpatialHash,
+	FKawaiiFluidSpatialHash& SpatialHash,
 	float ParticleRadius,
 	float SubstepDT,
 	float Friction,
@@ -2165,7 +2334,7 @@ void UKawaiiFluidSimulationContext::HandleWorldCollision_SDF(
 		ParallelFor(CollisionParticleIndices.Num(), [&](int32 j)
 		{
 			const int32 i = CollisionParticleIndices[j];
-			FFluidParticle& Particle = Particles[i];
+			FKawaiiFluidParticle& Particle = Particles[i];
 
 			FCollisionQueryParams LocalParams;
 			LocalParams.bTraceComplex = false;
@@ -2338,7 +2507,7 @@ void UKawaiiFluidSimulationContext::HandleWorldCollision_SDF(
 	const float FloorDetachDistance = 5.0f;
 	const float FloorNearDistance = 20.0f;
 
-	for (FFluidParticle& Particle : Particles)
+	for (FKawaiiFluidParticle& Particle : Particles)
 	{
 		if (!Particle.bIsAttached)
 		{
@@ -2380,22 +2549,32 @@ void UKawaiiFluidSimulationContext::HandleWorldCollision_SDF(
 	}
 }
 
+/**
+ * @brief Finalize particle positions and derive velocity from displacement.
+ * @param Particles In/Out particle array.
+ * @param DeltaTime Substep time interval.
+ */
 void UKawaiiFluidSimulationContext::FinalizePositions(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	float DeltaTime)
 {
 	const float InvDeltaTime = 1.0f / DeltaTime;
 
 	ParallelFor(Particles.Num(), [&](int32 i)
 	{
-		FFluidParticle& Particle = Particles[i];
+		FKawaiiFluidParticle& Particle = Particles[i];
 		Particle.Velocity = (Particle.PredictedPosition - Particle.Position) * InvDeltaTime;
 		Particle.Position = Particle.PredictedPosition;
 	});
 }
 
+/**
+ * @brief Apply viscosity to particles using the XSPH method.
+ * @param Particles In/Out particle array.
+ * @param Preset Read-only preset containing viscosity parameters.
+ */
 void UKawaiiFluidSimulationContext::ApplyViscosity(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	const UKawaiiFluidPresetDataAsset* Preset)
 {
 if (ViscositySolver.IsValid() && Preset->Viscosity > 0.0f)
@@ -2404,8 +2583,12 @@ if (ViscositySolver.IsValid() && Preset->Viscosity > 0.0f)
 	}
 }
 
+/**
+ * @brief Apply adhesion forces to particles.
+ * @note DEPRECATED: CPU adhesion solver is no longer used. Handled by GPU boundary particle system.
+ */
 void UKawaiiFluidSimulationContext::ApplyAdhesion(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	const UKawaiiFluidPresetDataAsset* Preset,
 	const TArray<TObjectPtr<UKawaiiFluidCollider>>& Colliders)
 {
@@ -2413,8 +2596,13 @@ void UKawaiiFluidSimulationContext::ApplyAdhesion(
 	// All adhesion is now handled by GPU boundary particle system (FluidApplyViscosity.usf)
 }
 
+/**
+ * @brief Apply cohesion (surface tension) between particles.
+ * @param Particles In/Out particle array.
+ * @param Preset Read-only preset containing surface tension parameters.
+ */
 void UKawaiiFluidSimulationContext::ApplyCohesion(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	const UKawaiiFluidPresetDataAsset* Preset)
 {
 if (AdhesionSolver.IsValid() && Preset->SurfaceTension > 0.0f)
@@ -2427,8 +2615,13 @@ if (AdhesionSolver.IsValid() && Preset->SurfaceTension > 0.0f)
 	}
 }
 
+/**
+ * @brief Update world-space positions for particles attached to skeletal mesh bones.
+ * @param Particles In/Out particle array.
+ * @param InteractionComponents Components representing characters or objects to track.
+ */
 void UKawaiiFluidSimulationContext::UpdateAttachedParticlePositions(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	const TArray<TObjectPtr<UKawaiiFluidInteractionComponent>>& InteractionComponents)
 {
 	if (InteractionComponents.Num() == 0 || Particles.Num() == 0)
@@ -2441,7 +2634,7 @@ void UKawaiiFluidSimulationContext::UpdateAttachedParticlePositions(
 
 	for (int32 i = 0; i < Particles.Num(); ++i)
 	{
-		const FFluidParticle& Particle = Particles[i];
+		const FKawaiiFluidParticle& Particle = Particles[i];
 		if (Particle.bIsAttached && Particle.AttachedActor.IsValid() && Particle.AttachedBoneName != NAME_None)
 		{
 			OwnerToParticleIndices.FindOrAdd(Particle.AttachedActor.Get()).Add(i);
@@ -2478,7 +2671,7 @@ void UKawaiiFluidSimulationContext::UpdateAttachedParticlePositions(
 		TMap<FName, TArray<int32>> BoneToParticleIndices;
 		for (int32 ParticleIdx : *ParticleIndicesPtr)
 		{
-			const FFluidParticle& Particle = Particles[ParticleIdx];
+			const FKawaiiFluidParticle& Particle = Particles[ParticleIdx];
 			BoneToParticleIndices.FindOrAdd(Particle.AttachedBoneName).Add(ParticleIdx);
 		}
 
@@ -2498,7 +2691,7 @@ void UKawaiiFluidSimulationContext::UpdateAttachedParticlePositions(
 
 			for (int32 ParticleIdx : BoneParticleIndices)
 			{
-				FFluidParticle& Particle = Particles[ParticleIdx];
+				FKawaiiFluidParticle& Particle = Particles[ParticleIdx];
 				FVector OldWorldPosition = CurrentBoneTransform.TransformPosition(Particle.AttachedLocalOffset);
 				FVector BoneDelta = OldWorldPosition - Particle.Position;
 				Particle.Position += BoneDelta;
@@ -2511,8 +2704,15 @@ void UKawaiiFluidSimulationContext::UpdateAttachedParticlePositions(
 // Statistics Collection
 //=============================================================================
 
+/**
+ * @brief Collect simulation statistics for performance and quality monitoring (CPU).
+ * @param Particles Particle array to analyze.
+ * @param Preset Read-only preset containing reference values.
+ * @param SubstepCount Number of substeps executed in the current frame.
+ * @param bIsGPU Flag indicating if statistics were collected during a GPU simulation.
+ */
 void UKawaiiFluidSimulationContext::CollectSimulationStats(
-	const TArray<FFluidParticle>& Particles,
+	const TArray<FKawaiiFluidParticle>& Particles,
 	const UKawaiiFluidPresetDataAsset* Preset,
 	int32 SubstepCount,
 	bool bIsGPU)
@@ -2540,7 +2740,7 @@ void UKawaiiFluidSimulationContext::CollectSimulationStats(
 	int32 AttachedCount = 0;
 	int32 GroundCount = 0;
 
-	for (const FFluidParticle& Particle : Particles)
+	for (const FKawaiiFluidParticle& Particle : Particles)
 	{
 		// Velocity sample
 		float VelMag = static_cast<float>(Particle.Velocity.Size());
@@ -2579,6 +2779,12 @@ void UKawaiiFluidSimulationContext::CollectSimulationStats(
 	Stats.EndFrame();
 }
 
+/**
+ * @brief Collect basic GPU simulation statistics without triggering an expensive particle readback.
+ * @param Preset Read-only preset containing reference values.
+ * @param ParticleCount Total number of particles currently in the system.
+ * @param SubstepCount Number of substeps executed in the current frame.
+ */
 void UKawaiiFluidSimulationContext::CollectGPUSimulationStats(
 	const UKawaiiFluidPresetDataAsset* Preset,
 	int32 ParticleCount,
@@ -2616,6 +2822,11 @@ void UKawaiiFluidSimulationContext::CollectGPUSimulationStats(
 // Landscape Heightmap Collision
 //========================================
 
+/**
+ * @brief Extract and upload landscape heightmap data for GPU-based terrain collision.
+ * @param Params Simulation parameters.
+ * @param Preset Read-only preset data asset.
+ */
 void UKawaiiFluidSimulationContext::UpdateLandscapeHeightmapCollision(
 	const FKawaiiFluidSimulationParams& Params,
 	const UKawaiiFluidPresetDataAsset* Preset)

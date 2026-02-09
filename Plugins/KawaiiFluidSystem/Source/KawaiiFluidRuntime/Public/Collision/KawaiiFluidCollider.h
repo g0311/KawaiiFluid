@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Core/FluidParticle.h"
+#include "Core/KawaiiFluidParticle.h"
 #include "KawaiiFluidCollider.generated.h"
 
 /**
@@ -34,7 +34,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Fluid Collider")
 	bool IsColliderEnabled() const { return bColliderEnabled; }
 
-	virtual void ResolveCollisions(TArray<FFluidParticle>& Particles, float SubstepDT);
+	virtual void ResolveCollisions(TArray<FKawaiiFluidParticle>& Particles, float SubstepDT);
 
 	virtual void CacheCollisionShapes() {}
 
@@ -57,5 +57,5 @@ public:
 protected:
 	virtual void BeginPlay() override;
 
-	virtual void ResolveParticleCollision(FFluidParticle& Particle, float SubstepDT);
+	virtual void ResolveParticleCollision(FKawaiiFluidParticle& Particle, float SubstepDT);
 };

@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #include "Core/KawaiiFluidSimulationStats.h"
 #include "HAL/IConsoleManager.h"
@@ -39,6 +39,18 @@ DEFINE_STAT(STAT_FluidStabilityScore);
 // FFluidSimulationStats Implementation
 //=============================================================================
 
+/**
+ * @brief Reset all statistics in the snapshot to their default zeroed state.
+ */
+void FKawaiiFluidSimulationStats::Reset()
+{
+	*this = FKawaiiFluidSimulationStats();
+}
+
+/**
+ * @brief Log the current statistics snapshot to the Unreal Output Log.
+ * @param Label Optional descriptive label for the log entry.
+ */
 void FKawaiiFluidSimulationStats::LogStats(const FString& Label) const
 {
 	const FString ModeStr = bIsGPUSimulation ? TEXT("GPU") : TEXT("CPU");
@@ -103,6 +115,10 @@ void FKawaiiFluidSimulationStats::LogStats(const FString& Label) const
 	UE_LOG(LogTemp, Log, TEXT("========================================"));
 }
 
+/**
+ * @brief Get a human-readable multiline string containing the current statistics.
+ * @return FString formatted for on-screen display or debugging.
+ */
 FString FKawaiiFluidSimulationStats::ToString() const
 {
 	const FString ModeStr = bIsGPUSimulation ? TEXT("GPU") : TEXT("CPU");
@@ -135,6 +151,12 @@ FString FKawaiiFluidSimulationStats::ToString() const
 	return Result;
 }
 
+/**
+ * @brief Compare the current snapshot with another and return a string describing the differences.
+ * @param Other The other statistics snapshot to compare against.
+ * @param OtherLabel Label for the other snapshot (e.g., "CPU Reference").
+ * @return FString containing a side-by-side comparison and delta values.
+ */
 FString FKawaiiFluidSimulationStats::CompareWith(const FKawaiiFluidSimulationStats& Other, const FString& OtherLabel) const
 {
 	const FString ThisMode = bIsGPUSimulation ? TEXT("GPU") : TEXT("CPU");
@@ -187,6 +209,10 @@ FString FKawaiiFluidSimulationStats::CompareWith(const FKawaiiFluidSimulationSta
 // FFluidStatsCollector Implementation
 //=============================================================================
 
+/**
+ * @brief Initialize a new statistics frame and reset all accumulators.
+ * Preserves asynchronous GPU metrics if detailed mode is active.
+ */
 void FKawaiiFluidSimulationStatsCollector::BeginFrame()
 {
 	if (!bEnabled)
@@ -279,6 +305,9 @@ void FKawaiiFluidSimulationStatsCollector::BeginFrame()
 	bFrameActive = true;
 }
 
+/**
+ * @brief Finalize statistics collection for the frame and calculate final averages and stability scores.
+ */
 void FKawaiiFluidSimulationStatsCollector::EndFrame()
 {
 	if (!bEnabled || !bFrameActive)
@@ -359,6 +388,12 @@ void FKawaiiFluidSimulationStatsCollector::EndFrame()
 	bFrameActive = false;
 }
 
+/**
+ * @brief Set the finalized particle counts for the current frame.
+ * @param Total Total particle count.
+ * @param Active Number of active (non-attached) particles.
+ * @param Attached Number of attached particles.
+ */
 void FKawaiiFluidSimulationStatsCollector::SetParticleCounts(int32 Total, int32 Active, int32 Attached)
 {
 	CurrentStats.ParticleCount = Total;
@@ -366,6 +401,10 @@ void FKawaiiFluidSimulationStatsCollector::SetParticleCounts(int32 Total, int32 
 	CurrentStats.AttachedParticleCount = Attached;
 }
 
+/**
+ * @brief Add a particle velocity magnitude sample for averaging and min/max tracking.
+ * @param VelocityMagnitude Magnitude of the particle velocity in cm/s.
+ */
 void FKawaiiFluidSimulationStatsCollector::AddVelocitySample(float VelocityMagnitude)
 {
 	if (!bEnabled || !bFrameActive)
@@ -380,6 +419,10 @@ void FKawaiiFluidSimulationStatsCollector::AddVelocitySample(float VelocityMagni
 	CurrentStats.MaxVelocity = FMath::Max(CurrentStats.MaxVelocity, VelocityMagnitude);
 }
 
+/**
+ * @brief Add a particle density sample for averaging and min/max tracking.
+ * @param Density Calculated density of the particle.
+ */
 void FKawaiiFluidSimulationStatsCollector::AddDensitySample(float Density)
 {
 	if (!bEnabled || !bFrameActive)
@@ -394,6 +437,10 @@ void FKawaiiFluidSimulationStatsCollector::AddDensitySample(float Density)
 	CurrentStats.MaxDensity = FMath::Max(CurrentStats.MaxDensity, Density);
 }
 
+/**
+ * @brief Add a neighbor count sample for averaging and min/max tracking.
+ * @param NeighborCount Number of neighbors found for a single particle.
+ */
 void FKawaiiFluidSimulationStatsCollector::AddNeighborCountSample(int32 NeighborCount)
 {
 	if (!bEnabled || !bFrameActive)
@@ -408,6 +455,9 @@ void FKawaiiFluidSimulationStatsCollector::AddNeighborCountSample(int32 Neighbor
 	CurrentStats.MaxNeighborCount = FMath::Max(CurrentStats.MaxNeighborCount, NeighborCount);
 }
 
+/**
+ * @brief Add a pressure correction magnitude sample.
+ */
 void FKawaiiFluidSimulationStatsCollector::AddPressureCorrectionSample(float CorrectionMagnitude)
 {
 	if (!bEnabled || !bFrameActive)
@@ -419,6 +469,9 @@ void FKawaiiFluidSimulationStatsCollector::AddPressureCorrectionSample(float Cor
 	PressureCorrectionSampleCount++;
 }
 
+/**
+ * @brief Add a viscosity force magnitude sample.
+ */
 void FKawaiiFluidSimulationStatsCollector::AddViscosityForceSample(float ForceMagnitude)
 {
 	if (!bEnabled || !bFrameActive)
@@ -430,6 +483,9 @@ void FKawaiiFluidSimulationStatsCollector::AddViscosityForceSample(float ForceMa
 	ViscosityForceSampleCount++;
 }
 
+/**
+ * @brief Add a cohesion/surface tension force magnitude sample.
+ */
 void FKawaiiFluidSimulationStatsCollector::AddCohesionForceSample(float ForceMagnitude)
 {
 	if (!bEnabled || !bFrameActive)
@@ -441,6 +497,14 @@ void FKawaiiFluidSimulationStatsCollector::AddCohesionForceSample(float ForceMag
 	CohesionForceSampleCount++;
 }
 
+/**
+ * @brief Calculate high-level stability metrics from raw particle data (GPU detailed mode only).
+ * @param Densities Pointer to density buffer.
+ * @param Velocities Pointer to velocity magnitude buffer.
+ * @param Masses Pointer to mass buffer (nullable for uniform mass).
+ * @param Count Number of particles in the buffers.
+ * @param RestDensity Reference density for error calculation.
+ */
 void FKawaiiFluidSimulationStatsCollector::CalculateStabilityMetrics(
 	const float* Densities,
 	const float* Velocities,
@@ -526,6 +590,9 @@ void FKawaiiFluidSimulationStatsCollector::CalculateStabilityMetrics(
 	CurrentStats.StabilityScore = DensityErrorScore + VelocityStdDevScore + AvgVelocityScore + MaxVelocityScore;
 }
 
+/**
+ * @brief Push the current finalized statistics to the Unreal Engine built-in stat system (SET_STAT).
+ */
 void FKawaiiFluidSimulationStatsCollector::UpdateEngineStats() const
 {
 	SET_DWORD_STAT(STAT_FluidParticleCount, CurrentStats.ParticleCount);
@@ -553,6 +620,7 @@ void FKawaiiFluidSimulationStatsCollector::UpdateEngineStats() const
 
 static FKawaiiFluidSimulationStatsCollector GFluidStatsCollector;
 
+/** @return Reference to the global fluid simulation statistics collector. */
 FKawaiiFluidSimulationStatsCollector& GetFluidStatsCollector()
 {
 	return GFluidStatsCollector;
@@ -581,16 +649,23 @@ FAutoConsoleCommand FKawaiiFluidStatsCommand::StatsCommand(
 	ECVF_Default
 );
 
+/** @brief Register console commands for fluid statistics. */
 void FKawaiiFluidStatsCommand::Register()
 {
 	// Console command is auto-registered via FAutoConsoleCommand
 }
 
+/** @brief Unregister console commands for fluid statistics. */
 void FKawaiiFluidStatsCommand::Unregister()
 {
 	// Console command is auto-unregistered
 }
 
+/**
+ * @brief Handle the "KawaiiFluidSimulation.Stats" console command arguments.
+ * @param Args Command arguments from the console.
+ * @param World World context pointer.
+ */
 void FKawaiiFluidStatsCommand::HandleStatsCommand(const TArray<FString>& Args, UWorld* World)
 {
 	if (Args.Num() == 0)

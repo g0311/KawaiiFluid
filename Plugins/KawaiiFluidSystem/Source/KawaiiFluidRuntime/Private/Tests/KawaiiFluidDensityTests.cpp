@@ -7,8 +7,8 @@
 #include "Misc/AutomationTest.h"
 #include "Physics/SPHKernels.h"
 #include "Physics/DensityConstraint.h"
-#include "Core/FluidParticle.h"
-#include "Core/SpatialHash.h"
+#include "Core/KawaiiFluidParticle.h"
+#include "Core/KawaiiFluidSpatialHash.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -31,13 +31,13 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FKawaiiFluidDensityTest_BoundaryParticle,
 namespace
 {
 	// Helper: Create particles in a uniform 3D grid
-	TArray<FFluidParticle> CreateUniformGrid(
+	TArray<FKawaiiFluidParticle> CreateUniformGrid(
 		const FVector& Center,
 		int32 GridSize,
 		float Spacing,
 		float Mass)
 	{
-		TArray<FFluidParticle> Particles;
+		TArray<FKawaiiFluidParticle> Particles;
 		Particles.Reserve(GridSize * GridSize * GridSize);
 
 		const float HalfExtent = (GridSize - 1) * Spacing * 0.5f;
@@ -49,7 +49,7 @@ namespace
 			{
 				for (int32 z = 0; z < GridSize; ++z)
 				{
-					FFluidParticle Particle;
+					FKawaiiFluidParticle Particle;
 					Particle.Position = StartPos + FVector(x * Spacing, y * Spacing, z * Spacing);
 					Particle.PredictedPosition = Particle.Position;
 					Particle.Mass = Mass;
@@ -65,13 +65,13 @@ namespace
 	}
 
 	// Helper: Build neighbor lists using spatial hash
-	void BuildNeighborLists(TArray<FFluidParticle>& Particles, float SmoothingRadius)
+	void BuildNeighborLists(TArray<FKawaiiFluidParticle>& Particles, float SmoothingRadius)
 	{
-		FSpatialHash SpatialHash(SmoothingRadius);
+		FKawaiiFluidSpatialHash SpatialHash(SmoothingRadius);
 
 		TArray<FVector> Positions;
 		Positions.Reserve(Particles.Num());
-		for (const FFluidParticle& P : Particles)
+		for (const FKawaiiFluidParticle& P : Particles)
 		{
 			Positions.Add(P.PredictedPosition);
 		}
@@ -90,15 +90,15 @@ namespace
 
 	// Helper: Compute density for a single particle using SPH
 	float ComputeParticleDensity(
-		const FFluidParticle& Particle,
-		const TArray<FFluidParticle>& AllParticles,
+		const FKawaiiFluidParticle& Particle,
+		const TArray<FKawaiiFluidParticle>& AllParticles,
 		float SmoothingRadius)
 	{
 		float Density = 0.0f;
 
 		for (int32 NeighborIdx : Particle.NeighborIndices)
 		{
-			const FFluidParticle& Neighbor = AllParticles[NeighborIdx];
+			const FKawaiiFluidParticle& Neighbor = AllParticles[NeighborIdx];
 			const FVector r = Particle.PredictedPosition - Neighbor.PredictedPosition;
 			Density += Neighbor.Mass * SPHKernels::Poly6(r, SmoothingRadius);
 		}
@@ -123,7 +123,7 @@ bool FKawaiiFluidDensityTest_UniformGridDensity::RunTest(const FString& Paramete
 	const int32 GridSize = 5;  // 5x5x5 = 125 particles
 
 	// Create uniform grid
-	TArray<FFluidParticle> Particles = CreateUniformGrid(
+	TArray<FKawaiiFluidParticle> Particles = CreateUniformGrid(
 		FVector::ZeroVector, GridSize, Spacing, ParticleMass);
 
 	// Build neighbor lists
@@ -131,7 +131,7 @@ bool FKawaiiFluidDensityTest_UniformGridDensity::RunTest(const FString& Paramete
 
 	// Compute density for center particle (most neighbors)
 	const int32 CenterIndex = (GridSize * GridSize * GridSize) / 2;
-	FFluidParticle& CenterParticle = Particles[CenterIndex];
+	FKawaiiFluidParticle& CenterParticle = Particles[CenterIndex];
 
 	const float CenterDensity = ComputeParticleDensity(CenterParticle, Particles, SmoothingRadius);
 
@@ -163,8 +163,8 @@ bool FKawaiiFluidDensityTest_IsolatedParticle::RunTest(const FString& Parameters
 	const float ParticleMass = 1.0f;
 
 	// Create single isolated particle
-	TArray<FFluidParticle> Particles;
-	FFluidParticle Particle;
+	TArray<FKawaiiFluidParticle> Particles;
+	FKawaiiFluidParticle Particle;
 	Particle.Position = FVector::ZeroVector;
 	Particle.PredictedPosition = Particle.Position;
 	Particle.Mass = ParticleMass;
@@ -206,12 +206,12 @@ bool FKawaiiFluidDensityTest_DenseState::RunTest(const FString& Parameters)
 	const int32 GridSize = 3;  // 3x3x3 = 27 particles
 
 	// Create dense grid
-	TArray<FFluidParticle> DenseParticles = CreateUniformGrid(
+	TArray<FKawaiiFluidParticle> DenseParticles = CreateUniformGrid(
 		FVector::ZeroVector, GridSize, TightSpacing, ParticleMass);
 	BuildNeighborLists(DenseParticles, SmoothingRadius);
 
 	// Create normal grid
-	TArray<FFluidParticle> NormalParticles = CreateUniformGrid(
+	TArray<FKawaiiFluidParticle> NormalParticles = CreateUniformGrid(
 		FVector(500, 0, 0), GridSize, NormalSpacing, ParticleMass);
 	BuildNeighborLists(NormalParticles, SmoothingRadius);
 
@@ -249,7 +249,7 @@ bool FKawaiiFluidDensityTest_BoundaryParticle::RunTest(const FString& Parameters
 	const int32 GridSize = 5;
 
 	// Create uniform grid
-	TArray<FFluidParticle> Particles = CreateUniformGrid(
+	TArray<FKawaiiFluidParticle> Particles = CreateUniformGrid(
 		FVector::ZeroVector, GridSize, Spacing, ParticleMass);
 	BuildNeighborLists(Particles, SmoothingRadius);
 
@@ -315,9 +315,9 @@ bool FKawaiiFluidDensityTest_TensileInstabilityCorrection::RunTest(const FString
 	const int32 GridSize = 5;
 
 	// Create uniform grid
-	TArray<FFluidParticle> ParticlesWithScorr = CreateUniformGrid(
+	TArray<FKawaiiFluidParticle> ParticlesWithScorr = CreateUniformGrid(
 		FVector::ZeroVector, GridSize, Spacing, ParticleMass);
-	TArray<FFluidParticle> ParticlesWithoutScorr = CreateUniformGrid(
+	TArray<FKawaiiFluidParticle> ParticlesWithoutScorr = CreateUniformGrid(
 		FVector::ZeroVector, GridSize, Spacing, ParticleMass);
 
 	// Build neighbor lists

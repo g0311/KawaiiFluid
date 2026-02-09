@@ -25,7 +25,7 @@
 
 // Unified interface
 #include "Rendering/KawaiiFluidRenderResource.h"
-#include "Core/KawaiiRenderParticle.h"
+#include "Core/KawaiiFluidRenderParticle.h"
 #include "GPU/GPUFluidSimulator.h"
 #include "GPU/GPUFluidSimulatorShaders.h"
 #include "RHIGPUReadback.h"  // FRHIGPUBufferReadback for particle bounds readback

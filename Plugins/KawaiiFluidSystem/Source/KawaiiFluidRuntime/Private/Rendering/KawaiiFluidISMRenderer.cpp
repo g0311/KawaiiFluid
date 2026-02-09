@@ -2,7 +2,7 @@
 
 #include "Rendering/KawaiiFluidISMRenderer.h"
 #include "Interfaces/IKawaiiFluidDataProvider.h"
-#include "Core/FluidParticle.h"
+#include "Core/KawaiiFluidParticle.h"
 #include "Data/KawaiiFluidPresetDataAsset.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "GPU/GPUFluidSimulator.h"
@@ -121,7 +121,7 @@ void UKawaiiFluidISMRenderer::UpdateRendering(const IKawaiiFluidDataProvider* Da
 	else
 	{
 		// CPU mode: Extract positions and velocities from particle array
-		const TArray<FFluidParticle>& CPUParticles = DataProvider->GetParticles();
+		const TArray<FKawaiiFluidParticle>& CPUParticles = DataProvider->GetParticles();
 		const int32 Count = CPUParticles.Num();
 		Positions.SetNumUninitialized(Count);
 		Velocities.SetNumUninitialized(Count);

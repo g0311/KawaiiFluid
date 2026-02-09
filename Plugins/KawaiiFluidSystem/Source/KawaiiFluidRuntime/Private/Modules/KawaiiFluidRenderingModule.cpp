@@ -3,7 +3,7 @@
 #include "Modules/KawaiiFluidRenderingModule.h"
 #include "Rendering/KawaiiFluidISMRenderer.h"
 #include "Rendering/KawaiiFluidMetaballRenderer.h"
-#include "Core/FluidParticle.h"
+#include "Core/KawaiiFluidParticle.h"
 
 UKawaiiFluidRenderingModule::UKawaiiFluidRenderingModule()
 {

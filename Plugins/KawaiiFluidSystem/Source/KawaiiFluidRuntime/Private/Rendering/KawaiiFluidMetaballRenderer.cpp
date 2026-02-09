@@ -5,7 +5,7 @@
 #include "Rendering/FluidRendererSubsystem.h"
 #include "Rendering/KawaiiFluidRenderResource.h"
 #include "Core/KawaiiFluidSimulationContext.h"
-#include "Core/KawaiiRenderParticle.h"
+#include "Core/KawaiiFluidRenderParticle.h"
 #include "RenderGraphResources.h"
 #include "RenderingThread.h"
 #include "GPU/GPUFluidSimulator.h"

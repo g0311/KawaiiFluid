@@ -1,95 +1,92 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
 #include "CoreMinimal.h"
-#include "FluidParticle.generated.h"
+#include "KawaiiFluidParticle.generated.h"
 
 /**
- * Fluid particle structure
- * Base unit of PBF simulation
+ * @struct FKawaiiFluidParticle
+ * @brief Fluid particle structure representing the base unit of PBF (Position-Based Fluids) simulation.
+ * 
+ * @param Position Current world-space position of the particle.
+ * @param PredictedPosition Predicted position used by the solver.
+ * @param Velocity Current velocity of the particle.
+ * @param Mass Mass of the particle.
+ * @param Density Calculated density of the particle.
+ * @param Lambda Lagrange multiplier for density constraint.
+ * @param bIsAttached Whether the particle is currently attached to a surface.
+ * @param AttachedActor Weak reference to the actor this particle is attached to.
+ * @param AttachedBoneName Name of the bone this particle is attached to.
+ * @param AttachedLocalOffset Relative position in bone local coordinates.
+ * @param AttachedSurfaceNormal Surface normal of the attached surface.
+ * @param bJustDetached Flag to prevent immediate reattachment after detaching.
+ * @param bNearGround Flag indicating proximity to world geometry.
+ * @param bNearBoundary Flag indicating proximity to boundary particles.
+ * @param ParticleID Unique identifier for the particle.
+ * @param NeighborIndices List of neighbor particle indices found in the spatial hash.
+ * @param SourceID Combined identifier for preset and component source.
+ * @param bIsSurfaceParticle Flag for rendering optimization.
+ * @param SurfaceNormal Normal vector used for surface tension calculation.
+ * @param bTrailSpawned Flag for trail VFX spawning.
  */
 USTRUCT(BlueprintType)
-struct KAWAIIFLUIDRUNTIME_API FFluidParticle
+struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidParticle
 {
 	GENERATED_BODY()
 
-	// Position
 	UPROPERTY(BlueprintReadWrite, Category = "Particle")
 	FVector Position;
 
-	// Predicted position (used by solver)
 	UPROPERTY(BlueprintReadOnly, Category = "Particle")
 	FVector PredictedPosition;
 
-	// Velocity
 	UPROPERTY(BlueprintReadWrite, Category = "Particle")
 	FVector Velocity;
 
-	// Mass
 	UPROPERTY(BlueprintReadWrite, Category = "Particle")
 	float Mass;
 
-	// Density (calculated every frame)
 	UPROPERTY(BlueprintReadOnly, Category = "Particle")
 	float Density;
 
-	// Lagrange multiplier (for density constraint)
 	float Lambda;
 
-	// Adhesion state
 	UPROPERTY(BlueprintReadOnly, Category = "Particle")
 	bool bIsAttached;
 
-	// Attached actor
 	UPROPERTY(BlueprintReadOnly, Category = "Particle")
 	TWeakObjectPtr<AActor> AttachedActor;
 
-	// Attached bone name (for skeletal mesh)
 	UPROPERTY(BlueprintReadOnly, Category = "Particle")
 	FName AttachedBoneName;
 
-	// Relative position in bone local coordinates (for bone motion tracking)
 	FVector AttachedLocalOffset;
 
-	// Surface normal of attached surface (for surface slip calculation)
 	FVector AttachedSurfaceNormal;
 
-	// Detached this frame (prevents reattachment in same frame)
 	bool bJustDetached;
 
-	// Near ground (for reduced adhesion maintenance margin)
 	bool bNearGround;
 
-	// Near boundary particle (for debug visualization, doesn't affect physics)
 	bool bNearBoundary;
 
-	// Particle ID
 	UPROPERTY(BlueprintReadOnly, Category = "Particle")
 	int32 ParticleID;
 
-	// Neighbor particle indices (for caching)
 	TArray<int32> NeighborIndices;
 
-	//========================================
-	// Source Identification
-	//========================================
-
-	// Source ID (PresetIndex | ComponentIndex << 16)
 	UPROPERTY(BlueprintReadOnly, Category = "Particle")
 	int32 SourceID;
 
-	// Whether this is a surface particle (used for surface-only rendering optimization)
 	UPROPERTY(BlueprintReadOnly, Category = "Particle")
 	bool bIsSurfaceParticle;
 
-	// Surface normal (for surface tension calculation)
 	FVector SurfaceNormal;
 
-	// Trail spawned (prevents duplicate spawning)
 	bool bTrailSpawned;
 
-	FFluidParticle()
+	FKawaiiFluidParticle()
 		: Position(FVector::ZeroVector)
 		, PredictedPosition(FVector::ZeroVector)
 		, Velocity(FVector::ZeroVector)
@@ -111,7 +108,7 @@ struct KAWAIIFLUIDRUNTIME_API FFluidParticle
 	{
 	}
 
-	FFluidParticle(const FVector& InPosition, int32 InID)
+	FKawaiiFluidParticle(const FVector& InPosition, int32 InID)
 		: Position(InPosition)
 		, PredictedPosition(InPosition)
 		, Velocity(FVector::ZeroVector)

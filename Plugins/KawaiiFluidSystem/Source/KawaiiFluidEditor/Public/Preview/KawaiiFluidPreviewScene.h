@@ -11,7 +11,7 @@ class UKawaiiFluidPresetDataAsset;
 class UKawaiiFluidSimulationContext;
 class UKawaiiFluidSimulationModule;
 class UKawaiiFluidRenderingModule;
-struct FFluidParticle;
+struct FKawaiiFluidParticle;
 
 /**
  * @brief FKawaiiFluidPreviewScene
@@ -41,7 +41,7 @@ public:
 	// IKawaiiFluidDataProvider Interface
 	//========================================
 
-	virtual const TArray<FFluidParticle>& GetParticles() const override;
+	virtual const TArray<FKawaiiFluidParticle>& GetParticles() const override;
 	virtual int32 GetParticleCount() const override;
 	virtual float GetParticleRadius() const override;
 	virtual bool IsDataValid() const override;
@@ -101,7 +101,7 @@ public:
 	// Particle Access (GPU mode - limited)
 	//========================================
 
-	TArray<FFluidParticle>& GetParticlesMutable();
+	TArray<FKawaiiFluidParticle>& GetParticlesMutable();
 
 	float GetSimulationTime() const;
 

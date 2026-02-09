@@ -6,7 +6,7 @@
 
 #include "CoreMinimal.h"
 #include "Tests/FluidTestMetrics.h"
-#include "Core/FluidParticle.h"
+#include "Core/KawaiiFluidParticle.h"
 
 class UKawaiiFluidSimulationModule;
 
@@ -28,7 +28,7 @@ public:
 	 * @return Collected metrics
 	 */
 	static FFluidTestMetrics CollectFromParticles(
-		const TArray<FFluidParticle>& Particles,
+		const TArray<FKawaiiFluidParticle>& Particles,
 		float RestDensity,
 		const FBox& SimulationBounds = FBox(FVector(-1e10f), FVector(1e10f)))
 	{
@@ -65,7 +65,7 @@ public:
 		// Single pass collection
 		for (int32 i = 0; i < NumParticles; ++i)
 		{
-			const FFluidParticle& P = Particles[i];
+			const FKawaiiFluidParticle& P = Particles[i];
 
 			// Density metrics
 			DensitySum += P.Density;
@@ -192,13 +192,13 @@ public:
 	 * @return Average |C_i| value
 	 */
 	static float CalculateAverageConstraintError(
-		const TArray<FFluidParticle>& Particles,
+		const TArray<FKawaiiFluidParticle>& Particles,
 		float RestDensity)
 	{
 		if (Particles.Num() == 0 || RestDensity <= 0.0f) return 0.0f;
 
 		double ErrorSum = 0.0;
-		for (const FFluidParticle& P : Particles)
+		for (const FKawaiiFluidParticle& P : Particles)
 		{
 			ErrorSum += FMath::Abs(CalculateConstraintError(P.Density, RestDensity));
 		}
@@ -213,13 +213,13 @@ public:
 	 * @return Maximum |C_i| value
 	 */
 	static float CalculateMaxConstraintError(
-		const TArray<FFluidParticle>& Particles,
+		const TArray<FKawaiiFluidParticle>& Particles,
 		float RestDensity)
 	{
 		if (Particles.Num() == 0 || RestDensity <= 0.0f) return 0.0f;
 
 		float MaxError = 0.0f;
-		for (const FFluidParticle& P : Particles)
+		for (const FKawaiiFluidParticle& P : Particles)
 		{
 			MaxError = FMath::Max(MaxError, FMath::Abs(CalculateConstraintError(P.Density, RestDensity)));
 		}

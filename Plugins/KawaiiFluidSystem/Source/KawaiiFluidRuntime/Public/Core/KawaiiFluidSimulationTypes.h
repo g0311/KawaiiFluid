@@ -13,173 +13,80 @@ class UKawaiiFluidInteractionComponent;
 class UKawaiiFluidSimulationModule;
 
 /**
- * World collision detection method
+ * @enum EWorldCollisionMethod
+ * @brief Method used for detecting collisions with world geometry.
  */
 UENUM(BlueprintType)
 enum class EWorldCollisionMethod : uint8
 {
-	/** Legacy sweep-based collision (SweepSingleByChannel) */
-	Sweep UMETA(DisplayName = "Sweep (Legacy)"),
-
-	/** SDF-based collision using Overlap + ClosestPoint */
-	SDF UMETA(DisplayName = "SDF (Distance-based)")
+	Sweep UMETA(DisplayName = "Sweep (Legacy)", ToolTip = "Legacy sweep-based collision using SweepSingleByChannel."),
+	SDF UMETA(DisplayName = "SDF (Distance-based)", ToolTip = "SDF-based collision using Overlap and ClosestPoint for better stability.")
 };
 
 /**
- * Grid resolution preset for Z-Order sorting
- *
- * Controls the number of bits per axis for Morton code encoding.
- * Higher bits = larger simulation bounds but more memory/computation.
- *
- * Bounds extent formula: GridResolution × CellSize
- * - Small (6 bits):  64³ = 262,144 cells,  64 × CellSize bounds
- * - Medium (7 bits): 128³ = 2,097,152 cells, 128 × CellSize bounds
- * - Large (8 bits):  256³ = 16,777,216 cells, 256 × CellSize bounds
- *
- * For 100k particle simulations, Medium (7 bits) is recommended.
+ * @enum EGridResolutionPreset
+ * @brief Grid resolution preset for Z-Order sorting, controlling Morton code bits per axis.
+ * 
+ * Bounds extent is calculated as GridResolution x CellSize.
+ * Higher bits support larger simulation bounds but require more memory and computation.
  */
 UENUM(BlueprintType)
 enum class EGridResolutionPreset : uint8
 {
-	/** 6 bits per axis = 64³ cells (262,144 total)
-	 * Smallest bounds, fastest computation
-	 * Good for: Small-scale simulations, local effects */
-	Small UMETA(DisplayName = "Small"),
-
-	/** 7 bits per axis = 128³ cells (2,097,152 total)
-	 * Balanced bounds and performance
-	 * Good for: Medium-scale simulations, 100k particles */
-	Medium UMETA(DisplayName = "Medium"),
-
-	/** 8 bits per axis = 256³ cells (16,777,216 total)
-	 * Largest bounds, more computation
-	 * Good for: Large-scale simulations, environmental effects */
-	Large UMETA(DisplayName = "Large")
+	Small UMETA(DisplayName = "Small", ToolTip = "6 bits per axis = 64^3 cells. Best for small-scale local effects."),
+	Medium UMETA(DisplayName = "Medium", ToolTip = "7 bits per axis = 128^3 cells. Balanced performance, recommended for 100k particles."),
+	Large UMETA(DisplayName = "Large", ToolTip = "8 bits per axis = 256^3 cells. Best for large-scale environmental effects.")
 };
 
-/** Helper functions for EGridResolutionPreset */
 namespace GridResolutionPresetHelper
 {
-	/** Get bits per axis from preset */
-	inline int32 GetAxisBits(EGridResolutionPreset Preset)
-	{
-		switch (Preset)
-		{
-		case EGridResolutionPreset::Small:  return 6;
-		case EGridResolutionPreset::Medium: return 7;
-		case EGridResolutionPreset::Large:  return 8;
-		default: return 7;
-		}
-	}
+	KAWAIIFLUIDRUNTIME_API int32 GetAxisBits(EGridResolutionPreset Preset);
 
-	/** Get grid resolution per axis (2^bits) */
-	inline int32 GetGridResolution(EGridResolutionPreset Preset)
-	{
-		return 1 << GetAxisBits(Preset);
-	}
+	KAWAIIFLUIDRUNTIME_API int32 GetGridResolution(EGridResolutionPreset Preset);
 
-	/** Get total cell count (resolution³) */
-	inline int32 GetMaxCells(EGridResolutionPreset Preset)
-	{
-		const int32 Res = GetGridResolution(Preset);
-		return Res * Res * Res;
-	}
+	KAWAIIFLUIDRUNTIME_API int32 GetMaxCells(EGridResolutionPreset Preset);
 
-	/** Get display name for UI */
-	inline FString GetDisplayName(EGridResolutionPreset Preset)
-	{
-		switch (Preset)
-		{
-		case EGridResolutionPreset::Small:  return TEXT("Small");
-		case EGridResolutionPreset::Medium: return TEXT("Medium");
-		case EGridResolutionPreset::Large:  return TEXT("Large");
-		default: return TEXT("Unknown");
-		}
-	}
+	KAWAIIFLUIDRUNTIME_API FString GetDisplayName(EGridResolutionPreset Preset);
 
-	/**
-	 * Get maximum volume extent (half-extent) that a preset can support
-	 * @param Preset - Grid resolution preset
-	 * @param CellSize - Cell size in cm (typically SmoothingRadius)
-	 * @return Maximum half-extent per axis in cm
-	 */
-	inline float GetMaxExtentForPreset(EGridResolutionPreset Preset, float CellSize)
-	{
-		// Z-Order space is centered, so max extent is (GridResolution * CellSize) / 2
-		return static_cast<float>(GetGridResolution(Preset)) * CellSize * 0.5f;
-	}
+	KAWAIIFLUIDRUNTIME_API float GetMaxExtentForPreset(EGridResolutionPreset Preset, float CellSize);
 
-	/**
-	 * Auto-select the smallest Z-Order permutation that can contain the given volume extent
-	 * This is used for the unified SimulationVolume system where users set a free extent
-	 * and the system automatically selects the appropriate Z-Order space.
-	 *
-	 * @param VolumeExtent - User-defined volume half-extent (per axis)
-	 * @param CellSize - Cell size in cm (typically SmoothingRadius)
-	 * @return Smallest preset that can contain the volume, capped at Large
-	 */
-	inline EGridResolutionPreset SelectPresetForExtent(const FVector& VolumeExtent, float CellSize)
-	{
-		// Get the maximum axis extent
-		const float MaxExtent = FMath::Max3(VolumeExtent.X, VolumeExtent.Y, VolumeExtent.Z);
+	KAWAIIFLUIDRUNTIME_API EGridResolutionPreset SelectPresetForExtent(const FVector& VolumeExtent, float CellSize);
 
-		// Check presets from smallest to largest
-		if (MaxExtent <= GetMaxExtentForPreset(EGridResolutionPreset::Small, CellSize))
-		{
-			return EGridResolutionPreset::Small;
-		}
-		else if (MaxExtent <= GetMaxExtentForPreset(EGridResolutionPreset::Medium, CellSize))
-		{
-			return EGridResolutionPreset::Medium;
-		}
-		else
-		{
-			return EGridResolutionPreset::Large;
-		}
-	}
-
-	/**
-	 * Clamp volume extent to the maximum supported by the largest preset
-	 * @param VolumeExtent - User-defined volume half-extent
-	 * @param CellSize - Cell size in cm
-	 * @return Clamped extent that fits within Large preset bounds
-	 */
-	inline FVector ClampExtentToMaxSupported(const FVector& VolumeExtent, float CellSize)
-	{
-		const float MaxSupported = GetMaxExtentForPreset(EGridResolutionPreset::Large, CellSize);
-		return FVector(
-			FMath::Min(VolumeExtent.X, MaxSupported),
-			FMath::Min(VolumeExtent.Y, MaxSupported),
-			FMath::Min(VolumeExtent.Z, MaxSupported)
-		);
-	}
+	KAWAIIFLUIDRUNTIME_API FVector ClampExtentToMaxSupported(const FVector& VolumeExtent, float CellSize);
 }
 
 /**
- * Brush mode for adding or removing particles
+ * @enum EFluidBrushMode
+ * @brief Mode for adding or removing particles using the fluid brush.
  */
 UENUM(BlueprintType)
 enum class EFluidBrushMode : uint8
 {
-	Add		UMETA(DisplayName = "Add", ToolTip = "Add particles to simulation"),
-	Remove	UMETA(DisplayName = "Remove", ToolTip = "Remove particles from simulation"),
+	Add UMETA(DisplayName = "Add", ToolTip = "Add particles to the simulation."),
+	Remove UMETA(DisplayName = "Remove", ToolTip = "Remove particles from the simulation.")
 };
 
 /**
- * Method for estimating submerged volume for buoyancy calculation
+ * @enum ESubmergedVolumeMethod
+ * @brief Method for estimating the submerged volume used in buoyancy calculations.
  */
 UENUM(BlueprintType)
 enum class ESubmergedVolumeMethod : uint8
 {
-	/** Estimate submerged volume from number of contacting fluid particles. Fast but approximate. */
-	ContactBased UMETA(DisplayName = "Contact Based"),
-
-	/** Use a fixed percentage of the object's bounding box volume. Simple and predictable. */
-	FixedRatio UMETA(DisplayName = "Fixed Ratio"),
+	ContactBased UMETA(DisplayName = "Contact Based", ToolTip = "Estimate volume from the number of contacting particles. Fast but approximate."),
+	FixedRatio UMETA(DisplayName = "Fixed Ratio", ToolTip = "Use a fixed percentage of the object's bounding box. Simple and predictable.")
 };
 
 /**
- * Brush settings struct for editor brush tool
+ * @struct FFluidBrushSettings
+ * @brief Settings for the editor fluid brush tool.
+ * 
+ * @param Mode The brush mode (Add/Remove).
+ * @param Radius Radius of the brush stroke.
+ * @param ParticlesPerStroke Number of particles spawned per single brush stroke.
+ * @param InitialVelocity Initial velocity applied to newly added particles.
+ * @param Randomness Amount of random variation in particle placement.
+ * @param StrokeInterval Time interval between consecutive strokes.
  */
 USTRUCT(BlueprintType)
 struct KAWAIIFLUIDRUNTIME_API FFluidBrushSettings
@@ -206,27 +113,37 @@ struct KAWAIIFLUIDRUNTIME_API FFluidBrushSettings
 };
 
 /**
- * Collision event data
+ * @struct FKawaiiFluidCollisionEvent
+ * @brief Data structure containing information about a particle collision event.
+ * 
+ * @param ParticleIndex Index of the particle that collided.
+ * @param SourceID ID of the component that spawned the particle.
+ * @param ColliderOwnerID ID of the actor that was hit.
+ * @param BoneIndex Index of the specific bone hit (for skeletal meshes).
+ * @param HitActor Pointer to the actor that was hit.
+ * @param SourceModule Pointer to the simulation module that owns the particle.
+ * @param HitInteractionComponent Pointer to the interaction component that was hit.
+ * @param HitLocation World-space location of the collision.
+ * @param HitNormal Surface normal at the collision point.
+ * @param HitSpeed Velocity magnitude of the particle at the time of impact.
  */
 USTRUCT(BlueprintType)
 struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidCollisionEvent
 {
 	GENERATED_BODY()
 
-	// ID-based (from GPU)
 	UPROPERTY(BlueprintReadOnly, Category = "Collision")
 	int32 ParticleIndex = 0;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Collision")
-	int32 SourceID = -1;              // Particle source Component ID
+	int32 SourceID = -1;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Collision")
-	int32 ColliderOwnerID = -1;       // Hit target Actor ID
+	int32 ColliderOwnerID = -1;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Collision")
-	int32 BoneIndex = -1;             // Hit bone index (-1 = none)
+	int32 BoneIndex = -1;
 
-	// Pointer-based (looked up)
 	UPROPERTY(BlueprintReadOnly, Category = "Collision")
 	TObjectPtr<AActor> HitActor = nullptr;
 
@@ -236,7 +153,6 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidCollisionEvent
 	UPROPERTY(BlueprintReadOnly, Category = "Collision")
 	TObjectPtr<UKawaiiFluidInteractionComponent> HitInteractionComponent = nullptr;
 
-	// Collision data
 	UPROPERTY(BlueprintReadOnly, Category = "Collision")
 	FVector HitLocation = FVector::ZeroVector;
 
@@ -247,173 +163,142 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidCollisionEvent
 	float HitSpeed = 0.0f;
 };
 
-/** Collision event callback signature */
 DECLARE_DELEGATE_OneParam(FOnFluidCollisionEvent, const FKawaiiFluidCollisionEvent&);
 
-/**
- * Particle hit event delegate (Blueprint bindable)
- * Called when a particle collides with an actor
- */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FOnFluidParticleHitComponent,
 	const FKawaiiFluidCollisionEvent&, CollisionEvent
 );
 
 /**
- * Simulation parameters passed to Context
- * Contains external forces, colliders, and other per-frame data
+ * @struct FKawaiiFluidSimulationParams
+ * @brief Parameters passed to the simulation context for each frame.
+ * 
+ * @param ExternalForce Force vector accumulated this frame (e.g. wind).
+ * @param Colliders Array of active fluid collider components.
+ * @param InteractionComponents Array of active interaction components.
+ * @param World Reference to the world for collision queries.
+ * @param bUseWorldCollision Whether to enable collision with world geometry.
+ * @param WorldCollisionMethod Detection method for world collision (Sweep/SDF).
+ * @param ParticleRadius Radius used for collision detection.
+ * @param IgnoreActor Actor to be ignored during collision queries.
+ * @param GridResolutionPreset Preset determining the resolution of the Z-Order spatial hash.
+ * @param SimulationOrigin World-space origin used to offset local simulation bounds.
+ * @param WorldBounds AABB bounds for GPU collision containment.
+ * @param BoundsCenter World-space center for OBB collision.
+ * @param BoundsExtent Half-extent for OBB collision.
+ * @param BoundsRotation Rotation for OBB collision.
+ * @param BoundsRestitution Restitution coefficient for boundary collisions.
+ * @param BoundsFriction Friction coefficient for boundary collisions.
+ * @param bSkipBoundsCollision If true, particles are not constrained by volume bounds.
+ * @param bEnableStaticBoundaryParticles Enable Akinci-style static boundary particles for density consistency.
+ * @param StaticBoundaryParticleSpacing Spacing between generated static boundary particles.
+ * @param bEnableCollisionEvents Enable generation of collision event data.
+ * @param MinVelocityForEvent Minimum speed required to trigger a collision event.
+ * @param MaxEventsPerFrame Maximum number of collision events allowed per frame.
+ * @param EventCountPtr Thread-safe pointer to the atomic event counter.
+ * @param EventCooldownPerParticle Cooldown time to prevent event spamming from the same particle.
+ * @param ParticleLastEventTimePtr Pointer to a map tracking the last event time per particle.
+ * @param CurrentGameTime Current game time for cooldown calculations.
+ * @param OnCollisionEvent Delegate callback for collision events.
+ * @param SourceID ID filter for collision events.
+ * @param SurfaceNeighborThreshold Neighbor count threshold for identifying surface particles.
+ * @param CPUCollisionFeedbackBufferPtr Buffer for deferred collision processing on the CPU.
+ * @param CPUCollisionFeedbackLockPtr Critical section for thread-safe buffer access.
  */
 USTRUCT(BlueprintType)
 struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidSimulationParams
 {
 	GENERATED_BODY()
 
-	/** External force accumulated this frame */
 	UPROPERTY(BlueprintReadWrite, Category = "Simulation")
 	FVector ExternalForce = FVector::ZeroVector;
 
-	/** Registered colliders */
 	UPROPERTY(BlueprintReadWrite, Category = "Simulation")
 	TArray<TObjectPtr<UKawaiiFluidCollider>> Colliders;
 
-	/** Registered interaction components */
 	UPROPERTY(BlueprintReadWrite, Category = "Simulation")
 	TArray<TObjectPtr<UKawaiiFluidInteractionComponent>> InteractionComponents;
 
-	/** World reference for collision queries */
 	UPROPERTY(BlueprintReadWrite, Category = "Simulation")
 	TObjectPtr<UWorld> World = nullptr;
 
-	/** Use world collision */
 	UPROPERTY(BlueprintReadWrite, Category = "Simulation")
 	bool bUseWorldCollision = true;
 
-	/** World collision detection method */
 	UPROPERTY(BlueprintReadWrite, Category = "Simulation")
 	EWorldCollisionMethod WorldCollisionMethod = EWorldCollisionMethod::SDF;
 
-	/** Particle render radius (for collision detection) */
 	UPROPERTY(BlueprintReadWrite, Category = "Simulation")
 	float ParticleRadius = 5.0f;
 
-	/** Actor to ignore in collision queries */
 	UPROPERTY(BlueprintReadWrite, Category = "Simulation")
 	TWeakObjectPtr<AActor> IgnoreActor;
 
-	//========================================
-	// GPU Simulation
-	//========================================
-
-	/** Grid resolution preset for Z-Order sorting (determines shader permutation) */
 	EGridResolutionPreset GridResolutionPreset = EGridResolutionPreset::Medium;
 
-	/**
-	 * Simulation origin (component world location)
-	 * Used to offset preset simulation bounds to world space
-	 * Preset bounds are defined relative to component, not absolute world coordinates
-	 */
 	FVector SimulationOrigin = FVector::ZeroVector;
 
-	/** World bounds for GPU AABB collision (optional) */
 	UPROPERTY(BlueprintReadWrite, Category = "Simulation")
 	FBox WorldBounds = FBox(EForceInit::ForceInit);
 
-	/** Bounds center (world space) - for OBB collision */
 	FVector BoundsCenter = FVector::ZeroVector;
 
-	/** Bounds half-extent (local space) - for OBB collision */
 	FVector BoundsExtent = FVector::ZeroVector;
 
-	/** Bounds rotation - for OBB collision (identity = AABB mode) */
 	FQuat BoundsRotation = FQuat::Identity;
 
-	/** Bounds collision restitution (bounciness) - used for Containment on GPU */
 	float BoundsRestitution = 0.3f;
 
-	/** Bounds collision friction - used for Containment on GPU */
 	float BoundsFriction = 0.1f;
 
-	/** Skip bounds collision entirely (Unlimited Size mode)
-	 * When true, particles are not constrained by the volume box */
 	bool bSkipBoundsCollision = false;
 
-	//========================================
-	// Static Boundary Particles (Akinci 2012)
-	//========================================
-
-	/** Enable static boundary particles for density contribution at walls/floors
-	 * This helps prevent density deficit near boundaries which causes wall climbing artifacts */
 	bool bEnableStaticBoundaryParticles = true;
 
-	/** Static boundary particle spacing in cm */
 	float StaticBoundaryParticleSpacing = 5.0f;
 
-	//========================================
-	// Collision Event Settings
-	//========================================
-
-	/** Enable collision events */
 	bool bEnableCollisionEvents = false;
 
-	/** Minimum velocity for collision event (cm/s) */
 	float MinVelocityForEvent = 50.0f;
 
-	/** Max events per frame */
 	int32 MaxEventsPerFrame = 10;
 
-	/**
-	 * Pointer to atomic event counter (thread-safe, managed externally)
-	 * Must be set before simulation if collision events are enabled
-	 */
 	std::atomic<int32>* EventCountPtr = nullptr;
 
-	/** Per-particle event cooldown in seconds (prevents same particle spamming events) */
 	float EventCooldownPerParticle = 0.1f;
 
-	/** Pointer to per-particle last event time map (managed by component) */
 	TMap<int32, float>* ParticleLastEventTimePtr = nullptr;
 
-	/** Current game time for cooldown calculation */
 	float CurrentGameTime = 0.0f;
 
-	/** Collision event callback (non-UPROPERTY, set by component) */
 	FOnFluidCollisionEvent OnCollisionEvent;
 
-	/** Source ID for filtering collision events (only events from this source trigger callback) */
 	int32 SourceID = -1;
 
-	//========================================
-	// Surface Detection (for surface-only rendering optimization)
-	//========================================
-
-	/** Neighbor count threshold for surface detection (fewer neighbors = surface particle) */
 	int32 SurfaceNeighborThreshold = 25;
 
-	//========================================
-	// CPU Collision Feedback Buffer (for deferred processing)
-	//========================================
-
-	/** CPU collision feedback buffer pointer (owned by Subsystem, written by Context) */
 	TArray<FKawaiiFluidCollisionEvent>* CPUCollisionFeedbackBufferPtr = nullptr;
 
-	/** CPU collision feedback buffer lock (ParallelFor safe) */
 	FCriticalSection* CPUCollisionFeedbackLockPtr = nullptr;
 
 	FKawaiiFluidSimulationParams() = default;
 };
 
 /**
- * Batching info for Module-based simulation
+ * @struct FKawaiiFluidModuleBatchInfo
+ * @brief Batching information for module-based fluid simulation.
+ * 
+ * @param Module Pointer to the module that owns these particles.
+ * @param StartIndex The start index of this module's particles in the merged buffer.
+ * @param ParticleCount The number of particles belonging to this module.
  */
 struct FKawaiiFluidModuleBatchInfo
 {
-	/** Module that owns these particles */
 	TObjectPtr<UKawaiiFluidSimulationModule> Module = nullptr;
 
-	/** Start index in merged buffer */
 	int32 StartIndex = 0;
 
-	/** Number of particles from this module */
 	int32 ParticleCount = 0;
 
 	FKawaiiFluidModuleBatchInfo() = default;

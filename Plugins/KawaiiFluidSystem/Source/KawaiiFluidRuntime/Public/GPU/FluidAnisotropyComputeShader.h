@@ -7,7 +7,7 @@
 #include "ShaderParameterStruct.h"
 #include "RenderGraphResources.h"
 #include "RenderGraphUtils.h"
-#include "Core/FluidAnisotropy.h"
+#include "Core/KawaiiFluidAnisotropy.h"
 #include "GPU/GPUFluidSimulatorShaders.h"  // For FGridResolutionDim, GridResolutionPermutation
 
 // Forward declaration

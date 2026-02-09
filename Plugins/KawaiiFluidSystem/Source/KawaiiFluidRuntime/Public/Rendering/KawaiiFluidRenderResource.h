@@ -6,7 +6,7 @@
 #include "RenderResource.h"
 #include "RHIResources.h"
 #include "RenderGraphResources.h"
-#include "Core/KawaiiRenderParticle.h"
+#include "Core/KawaiiFluidRenderParticle.h"
 #include <atomic>
 
 // Forward declaration

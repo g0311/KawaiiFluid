@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Core/FluidParticle.h"
+#include "Core/KawaiiFluidParticle.h"
 
 /**
  * Stack Pressure Solver
@@ -32,7 +32,7 @@ public:
 	 * @param DeltaTime - Simulation delta time (seconds)
 	 */
 	void Apply(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		const FVector& Gravity,
 		float StackPressureScale,
 		float SmoothingRadius,
@@ -50,8 +50,8 @@ private:
 	 * @return Height difference (positive if J is above I)
 	 */
 	float GetHeightDifference(
-		const FFluidParticle& ParticleI,
-		const FFluidParticle& ParticleJ,
+		const FKawaiiFluidParticle& ParticleI,
+		const FKawaiiFluidParticle& ParticleJ,
 		const FVector& TangentGravityDir
 	) const;
 };

@@ -400,7 +400,7 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 		else
 		{
 			// CPU Mode: Get positions from CPU particles
-			const TArray<FFluidParticle>& Particles = SimulationModule->GetParticles();
+			const TArray<FKawaiiFluidParticle>& Particles = SimulationModule->GetParticles();
 			NumParticles = Particles.Num();
 
 			if (NumParticles > 0)
@@ -1163,7 +1163,7 @@ void AKawaiiFluidVolume::DrawDebugParticles()
 	else
 	{
 		// CPU mode: Direct particle array
-		const TArray<FFluidParticle>& Particles = SimulationModule->GetParticles();
+		const TArray<FKawaiiFluidParticle>& Particles = SimulationModule->GetParticles();
 		const int32 TotalCount = Particles.Num();
 		if (TotalCount == 0)
 		{
@@ -1173,7 +1173,7 @@ void AKawaiiFluidVolume::DrawDebugParticles()
 		// Update bounds for position-based coloring
 		DebugDrawBoundsMin = Particles[0].Position;
 		DebugDrawBoundsMax = Particles[0].Position;
-		for (const FFluidParticle& P : Particles)
+		for (const FKawaiiFluidParticle& P : Particles)
 		{
 			DebugDrawBoundsMin = DebugDrawBoundsMin.ComponentMin(P.Position);
 			DebugDrawBoundsMax = DebugDrawBoundsMax.ComponentMax(P.Position);
@@ -1182,7 +1182,7 @@ void AKawaiiFluidVolume::DrawDebugParticles()
 		// Draw particles
 		for (int32 i = 0; i < TotalCount; ++i)
 		{
-			const FFluidParticle& P = Particles[i];
+			const FKawaiiFluidParticle& P = Particles[i];
 			FColor Color = ComputeDebugDrawColor(i, TotalCount, P.Position, P.Density);
 			DrawDebugPoint(World, P.Position, DebugPointSize, Color, false, -1.0f, 0);
 		}

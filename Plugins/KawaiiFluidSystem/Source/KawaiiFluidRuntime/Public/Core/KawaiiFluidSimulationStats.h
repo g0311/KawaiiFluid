@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -6,13 +6,8 @@
 #include "Stats/Stats.h"
 #include "HAL/IConsoleManager.h"
 
-//=============================================================================
-// Stat Group Declarations
-//=============================================================================
-
 DECLARE_STATS_GROUP(TEXT("KawaiiFluidSimulation"), STATGROUP_KawaiiFluidSimulation, STATCAT_Advanced);
 
-// Performance timing stats
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Total Simulation"), STAT_FluidTotalSimulation, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Spatial Hash"), STAT_FluidSpatialHash, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Density Solve"), STAT_FluidDensitySolve, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
@@ -22,107 +17,101 @@ DECLARE_CYCLE_STAT_EXTERN(TEXT("Collision"), STAT_FluidCollision, STATGROUP_Kawa
 DECLARE_CYCLE_STAT_EXTERN(TEXT("GPU Simulation"), STAT_FluidGPUSimulation, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 DECLARE_CYCLE_STAT_EXTERN(TEXT("GPU Readback"), STAT_FluidGPUReadback, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 
-// Counter stats
 DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("Particle Count"), STAT_FluidParticleCount, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("Active Particles"), STAT_FluidActiveParticles, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("Attached Particles"), STAT_FluidAttachedParticles, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("Substep Count"), STAT_FluidSubstepCount, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 
-// Float stats (displayed as integers with 2 decimal precision * 100)
 DECLARE_FLOAT_COUNTER_STAT_EXTERN(TEXT("Avg Velocity (cm/s)"), STAT_FluidAvgVelocity, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 DECLARE_FLOAT_COUNTER_STAT_EXTERN(TEXT("Max Velocity (cm/s)"), STAT_FluidMaxVelocity, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 DECLARE_FLOAT_COUNTER_STAT_EXTERN(TEXT("Avg Density"), STAT_FluidAvgDensity, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 DECLARE_FLOAT_COUNTER_STAT_EXTERN(TEXT("Density Error %"), STAT_FluidDensityError, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 DECLARE_FLOAT_COUNTER_STAT_EXTERN(TEXT("Avg Neighbors"), STAT_FluidAvgNeighbors, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 
-// Stability metrics (GPU detailed mode only)
 DECLARE_FLOAT_COUNTER_STAT_EXTERN(TEXT("Density StdDev"), STAT_FluidDensityStdDev, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 DECLARE_FLOAT_COUNTER_STAT_EXTERN(TEXT("Velocity StdDev"), STAT_FluidVelocityStdDev, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 DECLARE_FLOAT_COUNTER_STAT_EXTERN(TEXT("Per-Particle Error %"), STAT_FluidPerParticleError, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 DECLARE_FLOAT_COUNTER_STAT_EXTERN(TEXT("Kinetic Energy"), STAT_FluidKineticEnergy, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 DECLARE_FLOAT_COUNTER_STAT_EXTERN(TEXT("Stability Score"), STAT_FluidStabilityScore, STATGROUP_KawaiiFluidSimulation, KAWAIIFLUIDRUNTIME_API);
 
-//=============================================================================
-// Fluid Simulation Statistics Collector
-// Collects and aggregates statistics during simulation for debugging
-//=============================================================================
-
 /**
- * Statistics snapshot for a single frame
- * Used to compare CPU vs GPU simulation behavior
+ * @struct FKawaiiFluidSimulationStats
+ * @brief Statistics snapshot for a single frame used to monitor and compare simulation behavior.
+ * 
+ * @param ParticleCount Total number of particles in the system.
+ * @param ActiveParticleCount Number of particles currently being simulated (non-attached).
+ * @param AttachedParticleCount Number of particles currently attached to actors or bones.
+ * @param AvgVelocity Average velocity magnitude across all particles (cm/s).
+ * @param MinVelocity Minimum velocity magnitude (cm/s).
+ * @param MaxVelocity Maximum velocity magnitude (cm/s).
+ * @param AvgDensity Average density calculated across all particles.
+ * @param MinDensity Minimum calculated density.
+ * @param MaxDensity Maximum calculated density.
+ * @param DensityError Average relative deviation from rest density (%).
+ * @param RestDensity Target rest density used for error calculation.
+ * @param DensityStdDev Standard deviation of density values (GPU detailed mode).
+ * @param VelocityStdDev Standard deviation of velocity magnitudes (GPU detailed mode).
+ * @param PerParticleDensityError Mean absolute density error per particle (%).
+ * @param KineticEnergy Average kinetic energy of the fluid system (0.5 * m * v²).
+ * @param StabilityScore Composite score (0-100) indicating simulation stability.
+ * @param AvgNeighborCount Average number of neighbors per particle.
+ * @param MinNeighborCount Minimum neighbor count found.
+ * @param MaxNeighborCount Maximum neighbor count found.
+ * @param AvgPressureCorrection Average displacement correction from density solver.
+ * @param AvgViscosityForce Average force magnitude from viscosity solver.
+ * @param AvgCohesionForce Average force magnitude from cohesion/surface tension solver.
+ * @param BoundsCollisionCount Number of collisions with simulation volume boundaries.
+ * @param PrimitiveCollisionCount Number of collisions with explicitly registered colliders.
+ * @param GroundContactCount Number of particles in contact with the world geometry/ground.
+ * @param SubstepCount Number of substeps executed in the current frame.
+ * @param SolverIterations Number of solver iterations per substep.
+ * @param TotalSimulationTimeMs Total CPU/GPU time for simulation in milliseconds.
+ * @param SpatialHashTimeMs Time spent building and querying the spatial hash.
+ * @param DensitySolveTimeMs Time spent in the PBF density constraint solver.
+ * @param ViscosityTimeMs Time spent in the viscosity solver.
+ * @param CohesionTimeMs Time spent in the cohesion/surface tension solver.
+ * @param CollisionTimeMs Time spent resolving all types of collisions.
+ * @param GPUSimulationTimeMs Time spent on GPU compute shaders.
+ * @param GPUReadbackTimeMs Time spent transferring data from GPU to CPU.
+ * @param bIsGPUSimulation Flag indicating if this is a GPU-based simulation.
  */
 struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidSimulationStats
 {
-	//========================================
-	// Particle Statistics
-	//========================================
-
+public:
 	int32 ParticleCount = 0;
 	int32 ActiveParticleCount = 0;
 	int32 AttachedParticleCount = 0;
-
-	//========================================
-	// Velocity Statistics (cm/s)
-	//========================================
 
 	float AvgVelocity = 0.0f;
 	float MinVelocity = 0.0f;
 	float MaxVelocity = 0.0f;
 
-	//========================================
-	// Density Statistics
-	//========================================
-
 	float AvgDensity = 0.0f;
 	float MinDensity = 0.0f;
 	float MaxDensity = 0.0f;
-	float DensityError = 0.0f;  // Average |density - restDensity| / restDensity (%)
-	float RestDensity = 1000.0f;  // Reference rest density
+	float DensityError = 0.0f;
+	float RestDensity = 1000.0f;
 
-	//========================================
-	// Stability Metrics (GPU Detailed Mode)
-	//========================================
-
-	float DensityStdDev = 0.0f;        // Standard deviation of density
-	float VelocityStdDev = 0.0f;       // Standard deviation of velocity magnitude
-	float PerParticleDensityError = 0.0f;  // Mean of |ρᵢ - ρ₀| / ρ₀ * 100 (%)
-	float KineticEnergy = 0.0f;        // Average kinetic energy (0.5 * m * v²)
-	float StabilityScore = 0.0f;       // 0-100 composite stability score (100 = perfectly stable)
-
-	//========================================
-	// Neighbor Statistics
-	//========================================
+	float DensityStdDev = 0.0f;
+	float VelocityStdDev = 0.0f;
+	float PerParticleDensityError = 0.0f;
+	float KineticEnergy = 0.0f;
+	float StabilityScore = 0.0f;
 
 	float AvgNeighborCount = 0.0f;
 	int32 MinNeighborCount = 0;
 	int32 MaxNeighborCount = 0;
 
-	//========================================
-	// Force Statistics (magnitude)
-	//========================================
-
-	float AvgPressureCorrection = 0.0f;  // Average position correction from density solve
+	float AvgPressureCorrection = 0.0f;
 	float AvgViscosityForce = 0.0f;
 	float AvgCohesionForce = 0.0f;
-
-	//========================================
-	// Collision Statistics
-	//========================================
 
 	int32 BoundsCollisionCount = 0;
 	int32 PrimitiveCollisionCount = 0;
 	int32 GroundContactCount = 0;
 
-	//========================================
-	// Solver Statistics
-	//========================================
-
 	int32 SubstepCount = 0;
 	int32 SolverIterations = 0;
-
-	//========================================
-	// Performance (milliseconds)
-	//========================================
 
 	double TotalSimulationTimeMs = 0.0;
 	double SpatialHashTimeMs = 0.0;
@@ -133,98 +122,77 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidSimulationStats
 	double GPUSimulationTimeMs = 0.0;
 	double GPUReadbackTimeMs = 0.0;
 
-	//========================================
-	// Simulation Mode
-	//========================================
-
 	bool bIsGPUSimulation = false;
 
-	/** Reset all statistics to zero */
-	void Reset()
-	{
-		*this = FKawaiiFluidSimulationStats();
-	}
+	void Reset();
 
-	/** Log statistics to output log */
 	void LogStats(const FString& Label = TEXT("")) const;
 
-	/** Get formatted string for display */
 	FString ToString() const;
 
-	/** Compare with another stats snapshot and return differences */
 	FString CompareWith(const FKawaiiFluidSimulationStats& Other, const FString& OtherLabel = TEXT("Other")) const;
 };
 
 /**
- * Statistics collector that accumulates data during simulation
- * Call Begin() at start of frame, collect during simulation, call End() to finalize
+ * @class FKawaiiFluidSimulationStatsCollector
+ * @brief Collector class that accumulates and aggregates statistics during the simulation loop.
+ * 
+ * @param CurrentStats Statistics currently being collected for the active frame.
+ * @param PreviousStats Finalized statistics from the last completed frame.
+ * @param VelocitySum Accumulator for averaging particle velocity.
+ * @param VelocitySampleCount Number of velocity samples collected.
+ * @param DensitySum Accumulator for averaging particle density.
+ * @param DensitySampleCount Number of density samples collected.
+ * @param NeighborSum Accumulator for averaging neighbor counts.
+ * @param NeighborSampleCount Number of neighbor count samples.
+ * @param PressureCorrectionSum Accumulator for averaging pressure correction displacement.
+ * @param PressureCorrectionSampleCount Number of pressure correction samples.
+ * @param ViscosityForceSum Accumulator for averaging viscosity forces.
+ * @param ViscosityForceSampleCount Number of viscosity force samples.
+ * @param CohesionForceSum Accumulator for averaging cohesion forces.
+ * @param CohesionForceSampleCount Number of cohesion force samples.
+ * @param bEnabled Global flag to enable or disable statistics collection.
+ * @param bDetailedGPU Enable detailed GPU metrics that require expensive readbacks.
+ * @param bReadbackRequested Flag indicating if a debug readback is needed for visualization.
+ * @param bFrameActive Internal state flag ensuring BeginFrame/EndFrame pairing.
  */
 class KAWAIIFLUIDRUNTIME_API FKawaiiFluidSimulationStatsCollector
 {
 public:
 	FKawaiiFluidSimulationStatsCollector() = default;
 
-	/** Begin collecting stats for a new frame */
 	void BeginFrame();
 
-	/** End frame and finalize statistics */
 	void EndFrame();
 
-	/** Get the current frame's statistics */
 	const FKawaiiFluidSimulationStats& GetStats() const { return CurrentStats; }
 
-	/** Get previous frame's statistics for comparison */
 	const FKawaiiFluidSimulationStats& GetPreviousStats() const { return PreviousStats; }
 
-	/** Check if collection is enabled */
 	bool IsEnabled() const { return bEnabled; }
 
-	/** Enable/disable stat collection */
 	void SetEnabled(bool bInEnabled) { bEnabled = bInEnabled; }
 
-	/** Check if detailed GPU stats are enabled (requires readback) */
 	bool IsDetailedGPUEnabled() const { return bDetailedGPU; }
 
-	/** Enable/disable detailed GPU stats (causes GPU readback - expensive!) */
 	void SetDetailedGPUEnabled(bool bInDetailedGPU) { bDetailedGPU = bInDetailedGPU; }
 
-	/** Check if debug readback is requested (for debug visualization) */
 	bool IsReadbackRequested() const { return bReadbackRequested; }
 
-	/** Request debug readback (for debug draw/visualization) */
 	void SetReadbackRequested(bool bInRequested) { bReadbackRequested = bInRequested; }
 
-	/** Check if any readback is needed (detailed stats OR debug visualization) */
 	bool IsAnyReadbackNeeded() const { return bDetailedGPU || bReadbackRequested; }
 
-	//========================================
-	// Particle Data Collection
-	//========================================
-
-	/** Set particle counts */
 	void SetParticleCounts(int32 Total, int32 Active, int32 Attached);
 
-	/** Add velocity sample */
 	void AddVelocitySample(float VelocityMagnitude);
 
-	/** Add density sample */
 	void AddDensitySample(float Density);
 
-	/** Add neighbor count sample */
 	void AddNeighborCountSample(int32 NeighborCount);
 
-	/** Set rest density for error calculation */
 	void SetRestDensity(float InRestDensity) { CurrentStats.RestDensity = InRestDensity; }
 
-	/**
-	 * Calculate stability metrics from GPU readback data
-	 * Call this after GPU readback is complete (in detailed mode)
-	 * @param Densities - Array of particle densities
-	 * @param Velocities - Array of particle velocity magnitudes
-	 * @param Masses - Array of particle masses (can be nullptr if all masses are 1.0)
-	 * @param Count - Number of particles
-	 * @param RestDensity - Target rest density for error calculation
-	 */
 	void CalculateStabilityMetrics(
 		const float* Densities,
 		const float* Velocities,
@@ -232,48 +200,23 @@ public:
 		int32 Count,
 		float RestDensity);
 
-	//========================================
-	// Force Data Collection
-	//========================================
-
-	/** Add pressure correction sample */
 	void AddPressureCorrectionSample(float CorrectionMagnitude);
 
-	/** Add viscosity force sample */
 	void AddViscosityForceSample(float ForceMagnitude);
 
-	/** Add cohesion force sample */
 	void AddCohesionForceSample(float ForceMagnitude);
 
-	//========================================
-	// Collision Data Collection
-	//========================================
-
-	/** Increment bounds collision count */
 	void AddBoundsCollision() { CurrentStats.BoundsCollisionCount++; }
 
-	/** Increment primitive collision count */
 	void AddPrimitiveCollision() { CurrentStats.PrimitiveCollisionCount++; }
 
-	/** Increment ground contact count */
 	void AddGroundContact() { CurrentStats.GroundContactCount++; }
 
-	//========================================
-	// Solver Settings
-	//========================================
-
-	/** Set substep count */
 	void SetSubstepCount(int32 Count) { CurrentStats.SubstepCount = Count; }
 
-	/** Set solver iterations */
 	void SetSolverIterations(int32 Iterations) { CurrentStats.SolverIterations = Iterations; }
 
-	/** Set GPU simulation mode */
 	void SetGPUSimulation(bool bGPU) { CurrentStats.bIsGPUSimulation = bGPU; }
-
-	//========================================
-	// Performance Timing
-	//========================================
 
 	void SetTotalSimulationTime(double Ms) { CurrentStats.TotalSimulationTimeMs = Ms; }
 	void SetSpatialHashTime(double Ms) { CurrentStats.SpatialHashTimeMs = Ms; }
@@ -284,14 +227,12 @@ public:
 	void SetGPUSimulationTime(double Ms) { CurrentStats.GPUSimulationTimeMs = Ms; }
 	void SetGPUReadbackTime(double Ms) { CurrentStats.GPUReadbackTimeMs = Ms; }
 
-	/** Update UE4 stat system with current values */
 	void UpdateEngineStats() const;
 
 private:
 	FKawaiiFluidSimulationStats CurrentStats;
 	FKawaiiFluidSimulationStats PreviousStats;
 
-	// Accumulators for averaging
 	double VelocitySum = 0.0;
 	int32 VelocitySampleCount = 0;
 
@@ -311,31 +252,26 @@ private:
 	int32 CohesionForceSampleCount = 0;
 
 	bool bEnabled = false;
-	bool bDetailedGPU = false;  // Enable detailed GPU stats (requires readback)
-	bool bReadbackRequested = false;  // Debug draw/visualization requests readback
+	bool bDetailedGPU = false;
+	bool bReadbackRequested = false;
 	bool bFrameActive = false;
 };
 
-/**
- * Global stat collector instance
- * Access via GetFluidStatsCollector()
- */
 KAWAIIFLUIDRUNTIME_API FKawaiiFluidSimulationStatsCollector& GetFluidStatsCollector();
 
 /**
- * Console command handler for fluid stats
- * Registered as "KawaiiFluid.Stats" command
+ * @class FKawaiiFluidStatsCommand
+ * @brief Console command handler for the "KawaiiFluidSimulation.Stats" command.
+ * 
+ * @param StatsCommand The auto-registered console command instance.
  */
 class KAWAIIFLUIDRUNTIME_API FKawaiiFluidStatsCommand
 {
 public:
-	/** Register console commands */
 	static void Register();
 
-	/** Unregister console commands */
 	static void Unregister();
 
-	/** Handle stats command */
 	static void HandleStatsCommand(const TArray<FString>& Args, UWorld* World);
 
 private:

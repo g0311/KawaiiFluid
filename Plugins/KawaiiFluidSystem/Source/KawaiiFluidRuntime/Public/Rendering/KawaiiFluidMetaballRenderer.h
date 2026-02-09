@@ -5,10 +5,10 @@
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
 #include "Components/SceneComponent.h"
-#include "Core/FluidParticle.h"
-#include "Core/KawaiiRenderParticle.h"
+#include "Core/KawaiiFluidParticle.h"
+#include "Core/KawaiiFluidRenderParticle.h"
 #include "Rendering/FluidRenderingParameters.h"
-#include "Core/FluidAnisotropy.h"
+#include "Core/KawaiiFluidAnisotropy.h"
 #include "Data/KawaiiFluidPresetDataAsset.h"
 #include "KawaiiFluidMetaballRenderer.generated.h"
 
@@ -118,7 +118,7 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidMetaballRendererSettings
 
 	/** Anisotropy parameters for ellipsoid rendering */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anisotropy", meta = (EditCondition = "bEnabled"))
-	FFluidAnisotropyParams AnisotropyParams;
+	FKawaiiFluidAnisotropyParams AnisotropyParams;
 
 	//========================================
 	// Performance

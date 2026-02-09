@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Core/FluidParticle.h"
+#include "Core/KawaiiFluidParticle.h"
 
 class UKawaiiFluidCollider;
 
@@ -29,7 +29,7 @@ public:
 	 * @param ColliderContactOffset Contact distance offset (positive allows deeper penetration)
 	 */
 	void Apply(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		const TArray<TObjectPtr<UKawaiiFluidCollider>>& Colliders,
 		float AdhesionStrength,
 		float AdhesionRadius,
@@ -45,7 +45,7 @@ public:
 	 * @param SmoothingRadius Kernel radius
 	 */
 	void ApplyCohesion(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		float CohesionStrength,
 		float SmoothingRadius
 	);
@@ -67,7 +67,7 @@ private:
 	 * @brief Update attachment state.
 	 */
 	void UpdateAttachmentState(
-		FFluidParticle& Particle,
+		FKawaiiFluidParticle& Particle,
 		AActor* Collider,
 		float Force,
 		float DetachThreshold,

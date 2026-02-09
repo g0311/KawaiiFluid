@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -6,75 +6,60 @@
 #include "KawaiiFluidRenderingTypes.generated.h"
 
 /**
- * Shadow mesh quality levels for ISM shadow casting.
- * Controls the polygon count of instanced spheres used for fluid shadows.
+ * @enum EFluidShadowMeshQuality
+ * @brief Shadow mesh quality levels for ISM (Instanced Static Mesh) shadow casting.
  */
 UENUM(BlueprintType)
 enum class EFluidShadowMeshQuality : uint8
 {
-	/** 8 triangles (Octahedron) - Best performance, angular shadows */
-	Low UMETA(DisplayName = "Low (8 tri)"),
-
-	/** 20 triangles (Icosphere) - Balanced performance and quality */
-	Medium UMETA(DisplayName = "Medium (20 tri)"),
-
-	/** 80 triangles (Icosphere subdivided) - Smooth shadows */
-	High UMETA(DisplayName = "High (80 tri)")
+	Low UMETA(DisplayName = "Low (8 tri)", ToolTip = "8 triangles (Octahedron) - Best performance, but results in angular shadows."),
+	Medium UMETA(DisplayName = "Medium (20 tri)", ToolTip = "20 triangles (Icosphere) - Balanced performance and quality."),
+	High UMETA(DisplayName = "High (80 tri)", ToolTip = "80 triangles (Icosphere subdivided) - High quality, smooth shadows.")
 };
 
 /**
- * Debug draw mode for particle visualization.
- * Controls both rendering method and coloring scheme.
- * All debug modes use simulation ParticleRadius for accurate size representation.
+ * @enum EKawaiiFluidDebugDrawMode
+ * @brief Debug draw mode for particle visualization.
  */
 UENUM(BlueprintType)
 enum class EKawaiiFluidDebugDrawMode : uint8
 {
-	/** No debug visualization (normal Metaball rendering) */
-	None UMETA(DisplayName = "None"),
-
-	//--- ISM (Instanced Static Mesh) ---
-
-	/** Render particles as instanced spheres with solid color */
-	ISM UMETA(DisplayName = "ISM Sphere"),
-
-	//--- Debug Point (DrawDebugPoint) ---
-
-	/** Debug points colored by array index (Z-Order verification) */
-	Point_ZOrderArrayIndex UMETA(DisplayName = "Z-Order Array Index"),
-	/** Debug points colored by Morton code (Z-Order verification) */
-	Point_ZOrderMortonCode UMETA(DisplayName = "Z-Order Morton Code"),
-	/** Debug points colored by X position (Red gradient) */
-	Point_PositionX UMETA(DisplayName = "Position X"),
-	/** Debug points colored by Y position (Green gradient) */
-	Point_PositionY UMETA(DisplayName = "Position Y"),
-	/** Debug points colored by Z position (Blue gradient) */
-	Point_PositionZ UMETA(DisplayName = "Position Z"),
-	/** Debug points colored by density value */
-	Point_Density UMETA(DisplayName = "Density"),
-	/** Debug points colored by attachment status (boundary debug) */
-	Point_IsAttached UMETA(DisplayName = "Is Attached (Boundary)"),
-
-	//--- Legacy (for backwards compatibility) ---
-	DebugDraw UMETA(DisplayName = "Debug Point (Legacy)", Hidden),
+	None UMETA(DisplayName = "None", ToolTip = "No debug visualization (normal Metaball rendering)."),
+	ISM UMETA(DisplayName = "ISM Sphere", ToolTip = "Render particles as instanced spheres with a solid color."),
+	Point_ZOrderArrayIndex UMETA(DisplayName = "Z-Order Array Index", ToolTip = "Debug points colored by their array index to verify Z-Order sorting."),
+	Point_ZOrderMortonCode UMETA(DisplayName = "Z-Order Morton Code", ToolTip = "Debug points colored by their Morton code to verify Z-Order consistency."),
+	Point_PositionX UMETA(DisplayName = "Position X", ToolTip = "Debug points colored based on their X-axis position (Red gradient)."),
+	Point_PositionY UMETA(DisplayName = "Position Y", ToolTip = "Debug points colored based on their Y-axis position (Green gradient)."),
+	Point_PositionZ UMETA(DisplayName = "Position Z", ToolTip = "Debug points colored based on their Z-axis position (Blue gradient)."),
+	Point_Density UMETA(DisplayName = "Density", ToolTip = "Debug points colored based on their calculated density value."),
+	Point_IsAttached UMETA(DisplayName = "Is Attached (Boundary)", ToolTip = "Debug points colored based on attachment status for boundary debugging."),
+	DebugDraw UMETA(DisplayName = "Debug Point (Legacy)", ToolTip = "Legacy debug draw mode for backwards compatibility.", Hidden)
 };
 
-/** Helper to check if mode is a Point debug mode */
+/** 
+ * @brief Helper function to check if a debug mode uses point rendering.
+ * @param Mode The debug draw mode to check.
+ * @return True if it is a point-based debug mode.
+ */
 FORCEINLINE bool IsPointDebugMode(EKawaiiFluidDebugDrawMode Mode)
 {
 	return Mode >= EKawaiiFluidDebugDrawMode::Point_ZOrderArrayIndex &&
 	       Mode <= EKawaiiFluidDebugDrawMode::Point_IsAttached;
 }
 
-/** Helper to check if mode requires GPU readback */
+/** 
+ * @brief Helper function to check if a debug mode requires reading back particle data from the GPU.
+ * @param Mode The debug draw mode to check.
+ * @return True if GPU readback is required for this mode.
+ */
 FORCEINLINE bool RequiresGPUReadback(EKawaiiFluidDebugDrawMode Mode)
 {
 	return Mode == EKawaiiFluidDebugDrawMode::ISM || IsPointDebugMode(Mode);
 }
 
 /**
- * Splash VFX condition mode
- * Determines when splash/spray VFX are spawned.
+ * @enum ESplashConditionMode
+ * @brief Splash VFX condition mode determining when splash or spray effects should be spawned.
  */
 UENUM(BlueprintType)
 enum class ESplashConditionMode : uint8

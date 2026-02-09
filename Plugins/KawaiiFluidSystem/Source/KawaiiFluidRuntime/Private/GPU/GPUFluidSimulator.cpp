@@ -9,7 +9,7 @@
 #include "GPU/Managers/GPUZOrderSortManager.h"
 #include "GPU/Managers/GPUBoundarySkinningManager.h"
 #include "GPU/GPUBoundaryAttachment.h"  // For FGPUBoneDeltaAttachment
-#include "Core/FluidParticle.h"
+#include "Core/KawaiiFluidParticle.h"
 #include "Core/KawaiiFluidSimulationStats.h"
 #include "Rendering/Shaders/FluidSpatialHashShaders.h"
 
@@ -2680,7 +2680,7 @@ FRDGBufferRef FGPUFluidSimulator::ExecuteZOrderSortingPipeline(
 // Data Transfer (CPU <-> GPU)
 //=============================================================================
 
-FGPUFluidParticle FGPUFluidSimulator::ConvertToGPU(const FFluidParticle& CPUParticle)
+FGPUFluidParticle FGPUFluidSimulator::ConvertToGPU(const FKawaiiFluidParticle& CPUParticle)
 {
 	FGPUFluidParticle GPUParticle;
 
@@ -2707,7 +2707,7 @@ FGPUFluidParticle FGPUFluidSimulator::ConvertToGPU(const FFluidParticle& CPUPart
 	return GPUParticle;
 }
 
-void FGPUFluidSimulator::ConvertFromGPU(FFluidParticle& OutCPUParticle, const FGPUFluidParticle& GPUParticle)
+void FGPUFluidSimulator::ConvertFromGPU(FKawaiiFluidParticle& OutCPUParticle, const FGPUFluidParticle& GPUParticle)
 {
 	// Safety check: validate GPU data before converting
 	// If data is NaN or invalid, keep the original CPU values
@@ -2746,7 +2746,7 @@ void FGPUFluidSimulator::ConvertFromGPU(FFluidParticle& OutCPUParticle, const FG
 	OutCPUParticle.bNearBoundary = (GPUParticle.Flags & EGPUParticleFlags::NearBoundary) != 0;
 }
 
-void FGPUFluidSimulator::UploadParticles(const TArray<FFluidParticle>& CPUParticles, bool bAppend)
+void FGPUFluidSimulator::UploadParticles(const TArray<FKawaiiFluidParticle>& CPUParticles, bool bAppend)
 {
 	if (!bIsInitialized)
 	{
@@ -3079,7 +3079,7 @@ void FGPUFluidSimulator::CreateImmediatePersistentBufferFromCopy(const TArray<FG
 	FlushRenderingCommands();
 }
 
-void FGPUFluidSimulator::DownloadParticles(TArray<FFluidParticle>& OutCPUParticles)
+void FGPUFluidSimulator::DownloadParticles(TArray<FKawaiiFluidParticle>& OutCPUParticles)
 {
 	if (!bIsInitialized || CurrentParticleCount == 0)
 	{
@@ -3225,7 +3225,7 @@ void FGPUFluidSimulator::DownloadParticles(TArray<FFluidParticle>& OutCPUParticl
 	UE_LOG(LogGPUFluidSimulator, Verbose, TEXT("DownloadParticles: Updated %d/%d particles"), UpdatedCount, Count);
 }
 
-bool FGPUFluidSimulator::GetAllGPUParticles(TArray<FFluidParticle>& OutParticles)
+bool FGPUFluidSimulator::GetAllGPUParticles(TArray<FKawaiiFluidParticle>& OutParticles)
 {
 	if (!bIsInitialized || CurrentParticleCount == 0)
 	{
@@ -3242,7 +3242,7 @@ bool FGPUFluidSimulator::GetAllGPUParticles(TArray<FFluidParticle>& OutParticles
 	return GetAllGPUParticlesSync(OutParticles);
 }
 
-bool FGPUFluidSimulator::GetAllGPUParticlesSync(TArray<FFluidParticle>& OutParticles)
+bool FGPUFluidSimulator::GetAllGPUParticlesSync(TArray<FKawaiiFluidParticle>& OutParticles)
 {
 	if (!bIsInitialized || CurrentParticleCount == 0)
 	{
@@ -3300,9 +3300,9 @@ bool FGPUFluidSimulator::GetAllGPUParticlesSync(TArray<FFluidParticle>& OutParti
 	for (int32 i = 0; i < Count; ++i)
 	{
 		const FGPUFluidParticle& GPUParticle = SyncReadbackBuffer[i];
-		FFluidParticle& OutParticle = OutParticles[i];
+		FKawaiiFluidParticle& OutParticle = OutParticles[i];
 
-		OutParticle = FFluidParticle();
+		OutParticle = FKawaiiFluidParticle();
 
 		FVector NewPosition = FVector(GPUParticle.Position);
 		FVector NewVelocity = FVector(GPUParticle.Velocity);
@@ -3345,7 +3345,7 @@ bool FGPUFluidSimulator::GetAllGPUParticlesSync(TArray<FFluidParticle>& OutParti
 	return true;
 }
 
-bool FGPUFluidSimulator::GetParticlesBySourceID(int32 SourceID, TArray<FFluidParticle>& OutParticles)
+bool FGPUFluidSimulator::GetParticlesBySourceID(int32 SourceID, TArray<FKawaiiFluidParticle>& OutParticles)
 {
 	OutParticles.Reset();
 
@@ -3424,7 +3424,7 @@ bool FGPUFluidSimulator::GetParticlesBySourceID(int32 SourceID, TArray<FFluidPar
 			continue;
 		}
 
-		FFluidParticle OutParticle;
+		FKawaiiFluidParticle OutParticle;
 
 		FVector NewPosition = FVector(GPUParticle.Position);
 		FVector NewVelocity = FVector(GPUParticle.Velocity);

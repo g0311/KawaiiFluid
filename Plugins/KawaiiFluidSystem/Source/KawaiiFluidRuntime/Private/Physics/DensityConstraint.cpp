@@ -60,11 +60,11 @@ void FDensityConstraint::ResizeSoAArrays(int32 NumParticles)
 	}
 }
 
-void FDensityConstraint::CopyToSoA(const TArray<FFluidParticle>& Particles)
+void FDensityConstraint::CopyToSoA(const TArray<FKawaiiFluidParticle>& Particles)
 {
 	ParallelFor(Particles.Num(), [&](int32 i)
 	{
-		const FFluidParticle& P = Particles[i];
+		const FKawaiiFluidParticle& P = Particles[i];
 		PosX[i] = P.PredictedPosition.X;
 		PosY[i] = P.PredictedPosition.Y;
 		PosZ[i] = P.PredictedPosition.Z;
@@ -72,11 +72,11 @@ void FDensityConstraint::CopyToSoA(const TArray<FFluidParticle>& Particles)
 	});
 }
 
-void FDensityConstraint::ApplyFromSoA(TArray<FFluidParticle>& Particles)
+void FDensityConstraint::ApplyFromSoA(TArray<FKawaiiFluidParticle>& Particles)
 {
 	ParallelFor(Particles.Num(), [&](int32 i)
 	{
-		FFluidParticle& P = Particles[i];
+		FKawaiiFluidParticle& P = Particles[i];
 		P.PredictedPosition.X += DeltaPX[i];
 		P.PredictedPosition.Y += DeltaPY[i];
 		P.PredictedPosition.Z += DeltaPZ[i];
@@ -88,7 +88,7 @@ void FDensityConstraint::ApplyFromSoA(TArray<FFluidParticle>& Particles)
 //========================================
 // Main Solver
 //========================================
-void FDensityConstraint::Solve(TArray<FFluidParticle>& Particles, float InSmoothingRadius, float InRestDensity, float InCompliance, float DeltaTime)
+void FDensityConstraint::Solve(TArray<FKawaiiFluidParticle>& Particles, float InSmoothingRadius, float InRestDensity, float InCompliance, float DeltaTime)
 {
 	SmoothingRadius = InSmoothingRadius;
 	RestDensity = InRestDensity;
@@ -130,7 +130,7 @@ void FDensityConstraint::Solve(TArray<FFluidParticle>& Particles, float InSmooth
 // Main Solver (with Tensile Instability Correction)
 //========================================
 void FDensityConstraint::SolveWithTensileCorrection(
-	TArray<FFluidParticle>& Particles,
+	TArray<FKawaiiFluidParticle>& Particles,
 	float InSmoothingRadius,
 	float InRestDensity,
 	float InCompliance,
@@ -189,7 +189,7 @@ void FDensityConstraint::SolveWithTensileCorrection(
 // Step 1: Density + Lambda (SIMD)
 //========================================
 void FDensityConstraint::ComputeDensityAndLambda_SIMD(
-	const TArray<FFluidParticle>& Particles,
+	const TArray<FKawaiiFluidParticle>& Particles,
 	const FSPHKernelCoeffs& Coeffs)
 {
 	const int32 NumParticles = Particles.Num();
@@ -383,7 +383,7 @@ void FDensityConstraint::ComputeDensityAndLambda_SIMD(
 // Step 2: DeltaP (SIMD) - with Tensile Instability (scorr) Correction
 //========================================
 void FDensityConstraint::ComputeDeltaP_SIMD(
-	const TArray<FFluidParticle>& Particles,
+	const TArray<FKawaiiFluidParticle>& Particles,
 	const FSPHKernelCoeffs& Coeffs)
 {
 	const int32 NumParticles = Particles.Num();
@@ -576,7 +576,7 @@ void FDensityConstraint::ComputeDeltaP_SIMD(
 // Legacy Functions (backward compatibility)
 //========================================
 
-void FDensityConstraint::ComputeDensities(TArray<FFluidParticle>& Particles)
+void FDensityConstraint::ComputeDensities(TArray<FKawaiiFluidParticle>& Particles)
 {
 	ParallelFor(Particles.Num(), [&](int32 i)
 	{
@@ -584,7 +584,7 @@ void FDensityConstraint::ComputeDensities(TArray<FFluidParticle>& Particles)
 	}, EParallelForFlags::Unbalanced);
 }
 
-void FDensityConstraint::ComputeLambdas(TArray<FFluidParticle>& Particles)
+void FDensityConstraint::ComputeLambdas(TArray<FKawaiiFluidParticle>& Particles)
 {
 	ParallelFor(Particles.Num(), [&](int32 i)
 	{
@@ -592,7 +592,7 @@ void FDensityConstraint::ComputeLambdas(TArray<FFluidParticle>& Particles)
 	}, EParallelForFlags::Unbalanced);
 }
 
-void FDensityConstraint::ApplyPositionCorrection(TArray<FFluidParticle>& Particles)
+void FDensityConstraint::ApplyPositionCorrection(TArray<FKawaiiFluidParticle>& Particles)
 {
 	TArray<FVector> DeltaPositions;
 	DeltaPositions.SetNum(Particles.Num());
@@ -608,19 +608,19 @@ void FDensityConstraint::ApplyPositionCorrection(TArray<FFluidParticle>& Particl
 	});
 }
 
-float FDensityConstraint::ComputeParticleDensity(const FFluidParticle& Particle, const TArray<FFluidParticle>& Particles)
+float FDensityConstraint::ComputeParticleDensity(const FKawaiiFluidParticle& Particle, const TArray<FKawaiiFluidParticle>& Particles)
 {
 	float Density = 0.0f;
 	for (int32 NeighborIdx : Particle.NeighborIndices)
 	{
-		const FFluidParticle& Neighbor = Particles[NeighborIdx];
+		const FKawaiiFluidParticle& Neighbor = Particles[NeighborIdx];
 		FVector r = Particle.PredictedPosition - Neighbor.PredictedPosition;
 		Density += Neighbor.Mass * SPHKernels::Poly6(r, SmoothingRadius);
 	}
 	return Density;
 }
 
-float FDensityConstraint::ComputeParticleLambda(const FFluidParticle& Particle, const TArray<FFluidParticle>& Particles)
+float FDensityConstraint::ComputeParticleLambda(const FKawaiiFluidParticle& Particle, const TArray<FKawaiiFluidParticle>& Particles)
 {
 	float C_i = (Particle.Density / RestDensity) - 1.0f;
 	if (C_i < 0.0f) return Particle.Lambda;  // Compressed state: preserve Lambda
@@ -630,7 +630,7 @@ float FDensityConstraint::ComputeParticleLambda(const FFluidParticle& Particle, 
 
 	for (int32 NeighborIdx : Particle.NeighborIndices)
 	{
-		const FFluidParticle& Neighbor = Particles[NeighborIdx];
+		const FKawaiiFluidParticle& Neighbor = Particles[NeighborIdx];
 		FVector r = Particle.PredictedPosition - Neighbor.PredictedPosition;
 		FVector GradW = SPHKernels::SpikyGradient(r, SmoothingRadius);
 
@@ -647,16 +647,16 @@ float FDensityConstraint::ComputeParticleLambda(const FFluidParticle& Particle, 
 	return Lambda_prev + DeltaLambda;
 }
 
-FVector FDensityConstraint::ComputeDeltaPosition(int32 ParticleIndex, const TArray<FFluidParticle>& Particles)
+FVector FDensityConstraint::ComputeDeltaPosition(int32 ParticleIndex, const TArray<FKawaiiFluidParticle>& Particles)
 {
-	const FFluidParticle& Particle = Particles[ParticleIndex];
+	const FKawaiiFluidParticle& Particle = Particles[ParticleIndex];
 	FVector DeltaP = FVector::ZeroVector;
 
 	for (int32 NeighborIdx : Particle.NeighborIndices)
 	{
 		if (NeighborIdx == ParticleIndex) continue;
 
-		const FFluidParticle& Neighbor = Particles[NeighborIdx];
+		const FKawaiiFluidParticle& Neighbor = Particles[NeighborIdx];
 		FVector r = Particle.PredictedPosition - Neighbor.PredictedPosition;
 		FVector GradW = SPHKernels::SpikyGradient(r, SmoothingRadius);
 		DeltaP += (Particle.Lambda + Neighbor.Lambda) * GradW;

@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
-#include "Core/FluidParticle.h"
+#include "Core/KawaiiFluidParticle.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
 #include "Interfaces/IKawaiiFluidDataProvider.h"
 #include "GPU/GPUFluidSimulator.h"
@@ -14,7 +14,7 @@
 /** Collision event callback type */
 DECLARE_DELEGATE_OneParam(FOnModuleCollisionEvent, const FKawaiiFluidCollisionEvent&);
 
-class FSpatialHash;
+class FKawaiiFluidSpatialHash;
 class UKawaiiFluidPresetDataAsset;
 class UKawaiiFluidCollider;
 class UKawaiiFluidInteractionComponent;
@@ -235,10 +235,10 @@ public:
 	//========================================
 
 	/** Particle array (read-only) - IKawaiiFluidDataProvider::GetParticles() */
-	virtual const TArray<FFluidParticle>& GetParticles() const override { return Particles; }
+	virtual const TArray<FKawaiiFluidParticle>& GetParticles() const override { return Particles; }
 
 	/** Particle array (mutable - for Subsystem/Context) */
-	TArray<FFluidParticle>& GetParticlesMutable() { return Particles; }
+	TArray<FKawaiiFluidParticle>& GetParticlesMutable() { return Particles; }
 
 	/** Particle count - IKawaiiFluidDataProvider::GetParticleCount() */
 	/** GPU mode: returns GPU particle count, CPU mode: returns Particles.Num() */
@@ -529,7 +529,7 @@ public:
 	//========================================
 
 	/** Get SpatialHash */
-	FSpatialHash* GetSpatialHash() const { return SpatialHash.Get(); }
+	FKawaiiFluidSpatialHash* GetSpatialHash() const { return SpatialHash.Get(); }
 
 	/** Initialize SpatialHash */
 	void InitializeSpatialHash(float InCellSize);
@@ -698,10 +698,10 @@ private:
 
 	/** Particle array - supports both editor serialization + SaveGame */
 	UPROPERTY()
-	TArray<FFluidParticle> Particles;
+	TArray<FKawaiiFluidParticle> Particles;
 
 	/** Spatial hashing (for Independent mode) */
-	TSharedPtr<FSpatialHash> SpatialHash;
+	TSharedPtr<FKawaiiFluidSpatialHash> SpatialHash;
 
 	/** Registered colliders */
 	UPROPERTY()

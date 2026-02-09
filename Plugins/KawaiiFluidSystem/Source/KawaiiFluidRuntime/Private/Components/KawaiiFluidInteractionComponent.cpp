@@ -234,9 +234,9 @@ void UKawaiiFluidInteractionComponent::DetachAllFluid()
 {
 	AActor* Owner = GetOwner();
 
-	auto DetachFromParticles = [Owner](TArray<FFluidParticle>& Particles)
+	auto DetachFromParticles = [Owner](TArray<FKawaiiFluidParticle>& Particles)
 	{
-		for (FFluidParticle& Particle : Particles)
+		for (FKawaiiFluidParticle& Particle : Particles)
 		{
 			if (Particle.bIsAttached && Particle.AttachedActor.Get() == Owner)
 			{
@@ -271,9 +271,9 @@ void UKawaiiFluidInteractionComponent::PushFluid(FVector Direction, float Force)
 	FVector NormalizedDir = Direction.GetSafeNormal();
 	FVector OwnerLocation = Owner->GetActorLocation();
 
-	auto PushParticles = [Owner, NormalizedDir, OwnerLocation, Force](TArray<FFluidParticle>& Particles)
+	auto PushParticles = [Owner, NormalizedDir, OwnerLocation, Force](TArray<FKawaiiFluidParticle>& Particles)
 	{
-		for (FFluidParticle& Particle : Particles)
+		for (FKawaiiFluidParticle& Particle : Particles)
 		{
 			float Distance = FVector::Dist(Particle.Position, OwnerLocation);
 

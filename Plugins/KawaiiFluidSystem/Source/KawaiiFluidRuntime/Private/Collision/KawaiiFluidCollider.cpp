@@ -29,7 +29,7 @@ void UKawaiiFluidCollider::BeginPlay()
  * @param Particles Array of fluid particles to process
  * @param SubstepDT Delta time for the current simulation substep
  */
-void UKawaiiFluidCollider::ResolveCollisions(TArray<FFluidParticle>& Particles, float SubstepDT)
+void UKawaiiFluidCollider::ResolveCollisions(TArray<FKawaiiFluidParticle>& Particles, float SubstepDT)
 {
 	if (!bColliderEnabled)
 	{
@@ -118,7 +118,7 @@ bool UKawaiiFluidCollider::IsPointInside(const FVector& Point) const
  * @param Particle Fluid particle to process
  * @param SubstepDT Delta time for the current simulation substep
  */
-void UKawaiiFluidCollider::ResolveParticleCollision(FFluidParticle& Particle, float SubstepDT)
+void UKawaiiFluidCollider::ResolveParticleCollision(FKawaiiFluidParticle& Particle, float SubstepDT)
 {
 	// Use SDF-based collision
 	FVector Gradient;

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Core/FluidParticle.h"
+#include "Core/KawaiiFluidParticle.h"
 
 /**
  * @brief Viscosity solver.
@@ -28,6 +28,6 @@ public:
 	 * @param ViscosityCoeff Viscosity coefficient (0.0 ~ 1.0)
 	 * @param SmoothingRadius Kernel radius
 	 */
-	void ApplyXSPH(TArray<FFluidParticle>& Particles, float ViscosityCoeff, float SmoothingRadius);
+	void ApplyXSPH(TArray<FKawaiiFluidParticle>& Particles, float ViscosityCoeff, float SmoothingRadius);
 
 };

@@ -15,14 +15,14 @@
 #include "GPU/Managers/GPUAdhesionManager.h"
 #include "GPU/Managers/GPUStaticBoundaryManager.h"
 #include "GPU/GPUBoundaryAttachment.h"
-#include "Core/FluidAnisotropy.h"
+#include "Core/KawaiiFluidAnisotropy.h"
 #include <atomic>
 
 // Log category
 DECLARE_LOG_CATEGORY_EXTERN(LogGPUFluidSimulator, Log, All);
 
 // Forward declarations
-struct FFluidParticle;
+struct FKawaiiFluidParticle;
 class FRDGBuilder;
 class FRHIGPUBufferReadback;
 class USkeletalMeshComponent;
@@ -73,7 +73,7 @@ public:
 	 * @param CPUParticles - Source particles (will be converted to GPU format)
 	 * @param bAppend - If true, append to existing particles instead of replacing (for batched multi-component uploads)
 	 */
-	void UploadParticles(const TArray<FFluidParticle>& CPUParticles, bool bAppend = false);
+	void UploadParticles(const TArray<FKawaiiFluidParticle>& CPUParticles, bool bAppend = false);
 
 	/**
 	 * Finalize batch upload after multiple UploadParticles(bAppend=true) calls
@@ -93,7 +93,7 @@ public:
 	 * Call this after simulation to get results
 	 * @param OutCPUParticles - Destination particles (will be updated from GPU data)
 	 */
-	void DownloadParticles(TArray<FFluidParticle>& OutCPUParticles);
+	void DownloadParticles(TArray<FKawaiiFluidParticle>& OutCPUParticles);
 
 	/**
 	 * Get all GPU particles directly from readback buffer
@@ -102,7 +102,7 @@ public:
 	 * @param OutParticles - Output array (will be populated with all GPU particles)
 	 * @return true if valid GPU data was retrieved
 	 */
-	bool GetAllGPUParticles(TArray<FFluidParticle>& OutParticles);
+	bool GetAllGPUParticles(TArray<FKawaiiFluidParticle>& OutParticles);
 
 	/**
 	 * Synchronous version of GetAllGPUParticles
@@ -110,7 +110,7 @@ public:
 	 * @param OutParticles - Output array (will be populated with all GPU particles)
 	 * @return true if valid GPU data was retrieved
 	 */
-	bool GetAllGPUParticlesSync(TArray<FFluidParticle>& OutParticles);
+	bool GetAllGPUParticlesSync(TArray<FKawaiiFluidParticle>& OutParticles);
 
 	/**
 	 * Get particles filtered by SourceID (for batched simulation)
@@ -119,7 +119,7 @@ public:
 	 * @param OutParticles - Output array (will be populated with filtered particles)
 	 * @return true if valid GPU data was retrieved
 	 */
-	bool GetParticlesBySourceID(int32 SourceID, TArray<FFluidParticle>& OutParticles);
+	bool GetParticlesBySourceID(int32 SourceID, TArray<FKawaiiFluidParticle>& OutParticles);
 
 	/**
 	 * Get current particle count on GPU
@@ -301,7 +301,7 @@ public:
 	void SetMaxVelocity(float MaxVel) { MaxVelocity = FMath::Max(MaxVel, 0.0f); }
 
 	/** Set anisotropy parameters for ellipsoid rendering */
-	void SetAnisotropyParams(const FFluidAnisotropyParams& InParams) { CachedAnisotropyParams = InParams; }
+	void SetAnisotropyParams(const FKawaiiFluidAnisotropyParams& InParams) { CachedAnisotropyParams = InParams; }
 
 	/**
 	 * Set simulation bounds for Morton code computation
@@ -374,7 +374,7 @@ public:
 	}
 
 	/** Get anisotropy parameters */
-	const FFluidAnisotropyParams& GetAnisotropyParams() const { return CachedAnisotropyParams; }
+	const FKawaiiFluidAnisotropyParams& GetAnisotropyParams() const { return CachedAnisotropyParams; }
 
 	/** Check if anisotropy is enabled */
 	bool IsAnisotropyEnabled() const { return CachedAnisotropyParams.bEnabled; }
@@ -898,10 +898,10 @@ private:
 	void ResizeBuffers(FRHICommandListBase& RHICmdList, int32 NewCapacity);
 
 	/** Convert CPU particle to GPU format */
-	static FGPUFluidParticle ConvertToGPU(const FFluidParticle& CPUParticle);
+	static FGPUFluidParticle ConvertToGPU(const FKawaiiFluidParticle& CPUParticle);
 
 	/** Update CPU particle from GPU data */
-	static void ConvertFromGPU(FFluidParticle& OutCPUParticle, const FGPUFluidParticle& GPUParticle);
+	static void ConvertFromGPU(FKawaiiFluidParticle& OutCPUParticle, const FGPUFluidParticle& GPUParticle);
 
 	//=============================================================================
 	// RDG Pass Helpers
@@ -1254,7 +1254,7 @@ private:
 	float MaxVelocity;       // Safety clamp to prevent divergence (default: 50000 cm/s = 500 m/s)
 
 	// Anisotropy parameters
-	FFluidAnisotropyParams CachedAnisotropyParams;
+	FKawaiiFluidAnisotropyParams CachedAnisotropyParams;
 
 	// Anisotropy buffers (computed by FluidAnisotropyCS, used by FluidDepthPass)
 	TRefCountPtr<FRDGPooledBuffer> PersistentAnisotropyAxis1Buffer;

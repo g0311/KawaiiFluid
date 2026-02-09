@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Core/FluidParticle.h"
+#include "Core/KawaiiFluidParticle.h"
 
 /**
  * Tensile Instability Correction Parameters (PBF Eq.13-14)
@@ -49,11 +49,11 @@ public:
 	FDensityConstraint(float InRestDensity, float InSmoothingRadius, float InEpsilon);
 
 	/** Solve density constraint (single iteration) - XPBD */
-	void Solve(TArray<FFluidParticle>& Particles, float InSmoothingRadius, float InRestDensity, float InCompliance, float DeltaTime);
+	void Solve(TArray<FKawaiiFluidParticle>& Particles, float InSmoothingRadius, float InRestDensity, float InCompliance, float DeltaTime);
 
 	/** Solve density constraint (with Tensile Instability correction) - XPBD + scorr */
 	void SolveWithTensileCorrection(
-		TArray<FFluidParticle>& Particles,
+		TArray<FKawaiiFluidParticle>& Particles,
 		float InSmoothingRadius,
 		float InRestDensity,
 		float InCompliance,
@@ -82,8 +82,8 @@ private:
 	// SoA Management Functions
 	//========================================
 	void ResizeSoAArrays(int32 NumParticles);
-	void CopyToSoA(const TArray<FFluidParticle>& Particles);
-	void ApplyFromSoA(TArray<FFluidParticle>& Particles);
+	void CopyToSoA(const TArray<FKawaiiFluidParticle>& Particles);
+	void ApplyFromSoA(TArray<FKawaiiFluidParticle>& Particles);
 
 	//========================================
 	// SIMD Optimized Functions (used internally by Solve)
@@ -91,21 +91,21 @@ private:
 
 	/** Step 1: Compute density + Lambda simultaneously (SIMD) */
 	void ComputeDensityAndLambda_SIMD(
-		const TArray<FFluidParticle>& Particles,
+		const TArray<FKawaiiFluidParticle>& Particles,
 		const FSPHKernelCoeffs& Coeffs);
 
 	/** Step 2: Compute position corrections (SIMD) */
 	void ComputeDeltaP_SIMD(
-		const TArray<FFluidParticle>& Particles,
+		const TArray<FKawaiiFluidParticle>& Particles,
 		const FSPHKernelCoeffs& Coeffs);
 
 	//========================================
 	// Legacy Functions (backward compatibility)
 	//========================================
-	void ComputeDensities(TArray<FFluidParticle>& Particles);
-	void ComputeLambdas(TArray<FFluidParticle>& Particles);
-	void ApplyPositionCorrection(TArray<FFluidParticle>& Particles);
-	float ComputeParticleDensity(const FFluidParticle& Particle, const TArray<FFluidParticle>& Particles);
-	float ComputeParticleLambda(const FFluidParticle& Particle, const TArray<FFluidParticle>& Particles);
-	FVector ComputeDeltaPosition(int32 ParticleIndex, const TArray<FFluidParticle>& Particles);
+	void ComputeDensities(TArray<FKawaiiFluidParticle>& Particles);
+	void ComputeLambdas(TArray<FKawaiiFluidParticle>& Particles);
+	void ApplyPositionCorrection(TArray<FKawaiiFluidParticle>& Particles);
+	float ComputeParticleDensity(const FKawaiiFluidParticle& Particle, const TArray<FKawaiiFluidParticle>& Particles);
+	float ComputeParticleLambda(const FKawaiiFluidParticle& Particle, const TArray<FKawaiiFluidParticle>& Particles);
+	FVector ComputeDeltaPosition(int32 ParticleIndex, const TArray<FKawaiiFluidParticle>& Particles);
 };

@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
 #include "Interfaces/IKawaiiFluidDataProvider.h"
-#include "Core/KawaiiRenderParticle.h"
+#include "Core/KawaiiFluidRenderParticle.h"
 #include "KawaiiFluidRenderingModule.generated.h"
 
 class UKawaiiFluidISMRenderer;
@@ -135,5 +135,5 @@ protected:
 	TObjectPtr<UKawaiiFluidMetaballRenderer> MetaballRenderer;
 
 	/** Render particles cache (for data conversion) */
-	TArray<FKawaiiRenderParticle> RenderParticlesCache;
+	TArray<FKawaiiFluidRenderParticle> RenderParticlesCache;
 };

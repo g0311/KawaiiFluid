@@ -1,10 +1,10 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
-#include "Engine/EngineBaseTypes.h"  // For ELevelTick
+#include "Engine/EngineBaseTypes.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
 #include "Components/KawaiiFluidInteractionComponent.h"
 #include "GPU/GPUFluidParticle.h"
@@ -20,20 +20,22 @@ class UKawaiiFluidCollider;
 class UKawaiiFluidInteractionComponent;
 class AActor;
 class ULevel;
-class FSpatialHash;
-struct FFluidParticle;
+class FKawaiiFluidSpatialHash;
+struct FKawaiiFluidParticle;
 class FGPUFluidSimulator;
 
 /**
- * Cache key for Context lookup
- * Different VolumeComponents use different Z-Order spaces
+ * @struct FContextCacheKey
+ * @brief Cache key for looking up simulation contexts based on volume and preset.
+ * 
+ * @param VolumeComponent Target Volume for Z-Order space bounds (nullptr = component-relative bounds).
+ * @param Preset Associated fluid preset data asset.
  */
 USTRUCT()
 struct FContextCacheKey
 {
 	GENERATED_BODY()
 
-	/** Target Volume for Z-Order space bounds (nullptr = component-relative bounds) */
 	UPROPERTY()
 	TObjectPtr<UKawaiiFluidVolumeComponent> VolumeComponent = nullptr;
 
@@ -44,7 +46,6 @@ struct FContextCacheKey
 	FContextCacheKey(UKawaiiFluidVolumeComponent* InVolumeComponent, UKawaiiFluidPresetDataAsset* InPreset)
 		: VolumeComponent(InVolumeComponent), Preset(InPreset) {}
 
-	// Legacy constructor for backward compatibility
 	explicit FContextCacheKey(UKawaiiFluidPresetDataAsset* InPreset)
 		: VolumeComponent(nullptr), Preset(InPreset) {}
 
@@ -62,15 +63,31 @@ struct FContextCacheKey
 };
 
 /**
- * Kawaii Fluid Simulator Subsystem
- *
- * Orchestration (Conductor) - manages all fluid simulations in the world
- *
- * Responsibilities:
- * - Manages all SimulationComponents
- * - Batching: Same preset components are merged -> simulated -> split
- * - Global collider management
- * - Query API
+ * @class UKawaiiFluidSimulatorSubsystem
+ * @brief Orchestration subsystem that manages all fluid simulations in the world.
+ * 
+ * Responsible for component registration, batched simulation management,
+ * global collider coordination, and providing a query API for fluid particles.
+ * 
+ * @param AllModules All currently registered simulation modules.
+ * @param UsedSourceIDs Bitfield tracking assigned SourceIDs for GPU tracking.
+ * @param NextSourceIDHint Optimization hint for the next SourceID allocation.
+ * @param AllVolumes All registered fluid volume actors (New Architecture).
+ * @param AllVolumeComponents All registered simulation volume components (Legacy).
+ * @param GlobalColliders Colliders that affect all fluid simulations globally.
+ * @param GlobalInteractionComponents Interaction components used for global bone tracking.
+ * @param ContextCache Mapping of Volume/Preset pairs to active simulation contexts.
+ * @param DefaultContext Fallback context used when no specific volume is assigned.
+ * @param SharedSpatialHash Shared resource used for neighbor finding in batched simulations.
+ * @param ModuleBatchInfos Metadata describing the current simulation batches.
+ * @param MergedFluidParticleBuffer Temporary buffer holding merged particles for batch processing.
+ * @param EventCountThisFrame Atomic counter for tracking collision events within a frame.
+ * @param CPUCollisionFeedbackBuffer Buffer for deferred collision event processing on the CPU.
+ * @param CPUCollisionFeedbackLock Synchronization lock for the CPU feedback buffer.
+ * @param OnActorSpawnedHandle Delegate handle for tracking actor spawning.
+ * @param OnLevelAddedHandle Delegate handle for tracking level addition.
+ * @param OnLevelRemovedHandle Delegate handle for tracking level removal.
+ * @param OnPostActorTickHandle Delegate handle for the post-actor tick simulation pass.
  */
 UCLASS()
 class KAWAIIFLUIDRUNTIME_API UKawaiiFluidSimulatorSubsystem : public UTickableWorldSubsystem
@@ -93,141 +110,101 @@ public:
 	virtual bool IsTickableInEditor() const override { return false; }
 
 	//========================================
-	// Module Registration (New)
+	// Module Registration
 	//========================================
 
-	/** Register simulation module */
 	void RegisterModule(UKawaiiFluidSimulationModule* Module);
 
-	/** Unregister simulation module */
 	void UnregisterModule(UKawaiiFluidSimulationModule* Module);
 
-	/** Get all registered modules */
 	const TArray<TObjectPtr<UKawaiiFluidSimulationModule>>& GetAllModules() const { return AllModules; }
 
 	//========================================
-	// SourceID Allocation (Per-Component GPU Counter)
+	// SourceID Allocation
 	//========================================
 
-	/** Allocate a unique SourceID (0 ~ MaxSourceCount-1) for GPU counter tracking */
 	int32 AllocateSourceID();
 
-	/** Release a SourceID back to the pool */
 	void ReleaseSourceID(int32 SourceID);
 
 	//========================================
-	// Volume Actor Registration (New Architecture)
+	// Volume Actor Registration
 	//========================================
 
-	/** Register a fluid volume actor (new architecture - solver unit) */
 	void RegisterVolume(AKawaiiFluidVolume* Volume);
 
-	/** Unregister a fluid volume actor */
 	void UnregisterVolume(AKawaiiFluidVolume* Volume);
 
-	/** Get all registered volume actors */
 	const TArray<TObjectPtr<AKawaiiFluidVolume>>& GetAllVolumes() const { return AllVolumes; }
 
 	//========================================
 	// Volume Component Registration (Legacy)
 	//========================================
 
-	/** Register a simulation volume component (defines Z-Order space bounds) */
 	void RegisterVolumeComponent(UKawaiiFluidVolumeComponent* VolumeComponent);
 
-	/** Unregister a simulation volume component */
 	void UnregisterVolumeComponent(UKawaiiFluidVolumeComponent* VolumeComponent);
 
-	/** Get all registered volume components */
 	const TArray<TObjectPtr<UKawaiiFluidVolumeComponent>>& GetAllVolumeComponents() const { return AllVolumeComponents; }
 
 	//========================================
 	// Global Colliders
 	//========================================
 
-	/** Register global collider (affects all fluids) */
 	UFUNCTION(BlueprintCallable, Category = "KawaiiFluid")
 	void RegisterGlobalCollider(UKawaiiFluidCollider* Collider);
 
-	/** Unregister global collider */
 	UFUNCTION(BlueprintCallable, Category = "KawaiiFluid")
 	void UnregisterGlobalCollider(UKawaiiFluidCollider* Collider);
 
-	/** Get all global colliders */
 	const TArray<TObjectPtr<UKawaiiFluidCollider>>& GetGlobalColliders() const { return GlobalColliders; }
 
 	//========================================
 	// Global Interaction Components
 	//========================================
 
-	/** Register global interaction component (for bone tracking) */
 	void RegisterGlobalInteractionComponent(UKawaiiFluidInteractionComponent* Component);
 
-	/** Unregister global interaction component */
 	void UnregisterGlobalInteractionComponent(UKawaiiFluidInteractionComponent* Component);
 
-	/** Get all global interaction components */
 	const TArray<TObjectPtr<UKawaiiFluidInteractionComponent>>& GetGlobalInteractionComponents() const { return GlobalInteractionComponents; }
 
 	//========================================
 	// Query API
 	//========================================
 
-	/** Get all particles within radius (across all components) */
 	UFUNCTION(BlueprintCallable, Category = "KawaiiFluid|Query")
-	TArray<FFluidParticle> GetAllParticlesInRadius(FVector Location, float Radius) const;
+	TArray<FKawaiiFluidParticle> GetAllParticlesInRadius(FVector Location, float Radius) const;
 
-	/** Get total particle count */
 	UFUNCTION(BlueprintCallable, Category = "KawaiiFluid|Query")
 	int32 GetTotalParticleCount() const;
 
-	/** Get module count */
 	UFUNCTION(BlueprintCallable, Category = "KawaiiFluid|Query")
 	int32 GetModuleCount() const { return AllModules.Num(); }
 
-	/**
-	 * Get Preset by SourceID (for collision event filtering)
-	 * @param SourceID Particle source slot ID (AllocateSourceID, 0~MaxSourceCount-1)
-	 * @return Preset of the module that owns this source, or nullptr if not found
-	 */
 	UFUNCTION(BlueprintPure, Category = "KawaiiFluid|Query")
 	UKawaiiFluidPresetDataAsset* GetPresetBySourceID(int32 SourceID) const;
 
-	/**
-	 * Get Module by SourceID
-	 * @param SourceID Particle source slot ID (AllocateSourceID, 0~MaxSourceCount-1)
-	 * @return Module that owns this source, or nullptr if not found
-	 */
 	UKawaiiFluidSimulationModule* GetModuleBySourceID(int32 SourceID) const;
 
 	//========================================
 	// Context Management
 	//========================================
 
-	/** Get or create context for volume component and preset
-	 *  Same VolumeComponent = same Z-Order space = particles can interact
-	 *  Always uses GPU simulation
-	 */
 	UKawaiiFluidSimulationContext* GetOrCreateContext(UKawaiiFluidVolumeComponent* VolumeComponent, UKawaiiFluidPresetDataAsset* Preset);
 
-	/** Legacy: Get or create context without volume (uses component-relative bounds) */
 	UKawaiiFluidSimulationContext* GetOrCreateContext(UKawaiiFluidPresetDataAsset* Preset)
 	{
 		return GetOrCreateContext(nullptr, Preset);
 	}
 
-	/**
-	 * Get all active GPUSimulators (for ViewExtension deferred simulation execution)
-	 * @param OutSimulators Array to fill with GPUSimulator pointers
-	 */
 	void GetAllGPUSimulators(TArray<FGPUFluidSimulator*>& OutSimulators) const;
 
 private:
 	//========================================
-	// Module Management (New)
+	// Module Management
 	//========================================
 
-	/** All registered simulation modules */
 	UPROPERTY()
 	TArray<TObjectPtr<UKawaiiFluidSimulationModule>> AllModules;
 
@@ -235,17 +212,14 @@ private:
 	// SourceID Allocation State
 	//========================================
 
-	/** Bitfield tracking used SourceIDs (index = SourceID, true = in use) */
 	TBitArray<> UsedSourceIDs;
 
-	/** Next SourceID hint for faster allocation */
 	int32 NextSourceIDHint = 0;
 
 	//========================================
-	// Volume Actor Management (New Architecture)
+	// Volume Actor Management
 	//========================================
 
-	/** All registered fluid volume actors (new architecture) */
 	UPROPERTY()
 	TArray<TObjectPtr<AKawaiiFluidVolume>> AllVolumes;
 
@@ -253,80 +227,63 @@ private:
 	// Volume Component Management (Legacy)
 	//========================================
 
-	/** All registered simulation volume components (legacy) */
 	UPROPERTY()
 	TArray<TObjectPtr<UKawaiiFluidVolumeComponent>> AllVolumeComponents;
 
 	//========================================
-	// Component Management (Deprecated)
+	// Component Management
 	//========================================
 
-	/** Global colliders */
 	UPROPERTY()
 	TArray<TObjectPtr<UKawaiiFluidCollider>> GlobalColliders;
 
-	/** Global interaction components */
 	UPROPERTY()
 	TArray<TObjectPtr<UKawaiiFluidInteractionComponent>> GlobalInteractionComponents;
 
-	/** Context cache (Preset + VolumeComponent -> Instance) */
 	UPROPERTY()
 	TMap<FContextCacheKey, TObjectPtr<UKawaiiFluidSimulationContext>> ContextCache;
 
-	/** Default context for presets without custom context */
 	UPROPERTY()
 	TObjectPtr<UKawaiiFluidSimulationContext> DefaultContext;
 
 	//========================================
-	// Batching Resources (Module-based)
+	// Batching Resources
 	//========================================
 
-	/** Shared spatial hash for batching */
-	TSharedPtr<FSpatialHash> SharedSpatialHash;
+	TSharedPtr<FKawaiiFluidSpatialHash> SharedSpatialHash;
 
-	/** Batch info array (Module-based) */
 	TArray<FKawaiiFluidModuleBatchInfo> ModuleBatchInfos;
 
-	/** Merged particle buffer for module batching */
-	TArray<FFluidParticle> MergedFluidParticleBuffer;
+	TArray<FKawaiiFluidParticle> MergedFluidParticleBuffer;
 
-	/** Atomic event counter for thread-safe collision event tracking */
 	std::atomic<int32> EventCountThisFrame{0};
 
 	//========================================
 	// CPU Collision Feedback Buffer
 	//========================================
 
-	/** CPU collision feedback buffer (written by Context, processed after simulation) */
 	TArray<FKawaiiFluidCollisionEvent> CPUCollisionFeedbackBuffer;
 
-	/** CPU collision feedback buffer lock (ParallelFor safe) */
 	FCriticalSection CPUCollisionFeedbackLock;
 
 	//========================================
 	// Simulation Methods
 	//========================================
 
-	/** Simulate independent modules */
 	void SimulateIndependentFluidComponents(float DeltaTime);
 
-	/** Simulate batched modules */
 	void SimulateBatchedFluidComponents(float DeltaTime);
 
-	/** Group modules by Preset + VolumeComponent */
 	TMap<FContextCacheKey, TArray<TObjectPtr<UKawaiiFluidSimulationModule>>> GroupModulesByContext() const;
 
-	/** Merge particles from modules */
 	void MergeModuleParticles(const TArray<TObjectPtr<UKawaiiFluidSimulationModule>>& Modules);
 
-	/** Split particles back to modules */
 	void SplitModuleParticles(const TArray<TObjectPtr<UKawaiiFluidSimulationModule>>& Modules);
 
-	/** Build merged params from modules */
 	FKawaiiFluidSimulationParams BuildMergedModuleSimulationParams(const TArray<TObjectPtr<UKawaiiFluidSimulationModule>>& Modules);
 
 	//========================================
-	// World Change Tracking (GPU world collision cache)
+	// World Change Tracking
 	//========================================
 
 	void HandleActorSpawned(AActor* Actor);
@@ -335,13 +292,6 @@ private:
 	void HandleLevelRemoved(ULevel* InLevel, UWorld* InWorld);
 	void MarkAllContextsWorldCollisionDirty();
 
-	/**
-	 * Post-actor tick handler - runs simulation AFTER animation evaluation
-	 * This fixes 1-frame delay in bone attachment following
-	 * @param World - The world being ticked
-	 * @param TickType - Type of tick (viewports only, time only, etc.)
-	 * @param DeltaTime - Frame delta time
-	 */
 	void HandlePostActorTick(UWorld* World, ELevelTick TickType, float DeltaTime);
 
 	FDelegateHandle OnActorSpawnedHandle;
