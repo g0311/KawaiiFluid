@@ -20,6 +20,9 @@
 // Batched Thickness Pass
 //=============================================================================
 
+/**
+ * @brief Fluid Thickness rendering pass (Batched path).
+ */
 void RenderFluidThicknessPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,

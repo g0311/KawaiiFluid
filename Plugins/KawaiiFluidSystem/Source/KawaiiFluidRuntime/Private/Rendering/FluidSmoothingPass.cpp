@@ -507,6 +507,40 @@ IMPLEMENT_GLOBAL_SHADER(FFluidThicknessUpsampleCS,
 // Pipeline: FullRes -> Downsample -> Filter@HalfRes -> Upsample -> FullRes
 //=============================================================================
 
+/**
+ * @brief Narrow-Range Filter for Fluid Depth Smoothing (Truong & Yuksel, i3D 2018).
+ * 
+ * Uses a hard threshold with dynamic range expansion instead of continuous Gaussian range weighting. 
+ * Better edge preservation than bilateral filter. Blur radius automatically scales based on distance from camera.
+ * 
+ * @param GraphBuilder RDG builder.
+ * @param View Current scene view.
+ * @param InputDepthTexture Raw fluid depth texture.
+ * @param OutSmoothedDepthTexture Output smoothed depth texture.
+ * @param ParticleRadius Physical particle radius for threshold calculation.
+ * @param ThresholdRatio Multiplier for particle radius to determine discrepancy threshold.
+ * @param ClampRatio Maximum displacement limit for smoothing.
+ * @param NumIterations Number of bilateral filter passes.
+ * @param GrazingBoost Threshold boost factor for steep viewing angles.
+ * @param DistanceBasedParams Settings for depth-adaptive blur radius.
+ */
+/**
+ * @brief Narrow-Range Filter for Fluid Depth Smoothing (Truong & Yuksel, i3D 2018).
+ * 
+ * Uses a hard threshold with dynamic range expansion instead of continuous Gaussian range weighting. 
+ * Better edge preservation than bilateral filter. Blur radius automatically scales based on distance from camera.
+ * 
+ * @param GraphBuilder RDG builder.
+ * @param View Current scene view.
+ * @param InputDepthTexture Raw fluid depth texture.
+ * @param OutSmoothedDepthTexture Output smoothed depth texture.
+ * @param ParticleRadius Physical particle radius for threshold calculation.
+ * @param ThresholdRatio Multiplier for particle radius to determine discrepancy threshold.
+ * @param ClampRatio Maximum displacement limit for smoothing.
+ * @param NumIterations Number of bilateral filter passes.
+ * @param GrazingBoost Threshold boost factor for steep viewing angles.
+ * @param DistanceBasedParams Settings for depth-adaptive blur radius.
+ */
 void RenderFluidNarrowRangeSmoothingPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
@@ -765,6 +799,34 @@ void RenderFluidNarrowRangeSmoothingPass(
 // O(n²) → O(2n): 41x41=1681 samples → 41+41=82 samples (20x faster)
 //=============================================================================
 
+/**
+ * @brief Separable Gaussian Blur for Fluid Thickness Smoothing.
+ * 
+ * Uses horizontal + vertical passes for O(2n) performance. Smooths out individual particle 
+ * contributions for cleaner Beer's Law absorption.
+ * 
+ * @param GraphBuilder RDG builder.
+ * @param View Current scene view.
+ * @param InputThicknessTexture Raw thickness texture.
+ * @param OutSmoothedThicknessTexture Output smoothed thickness texture.
+ * @param BlurRadius Spatial filter radius in pixels.
+ * @param NumIterations Number of blur passes.
+ * @param bUseHalfRes Optimization flag to perform blurring at half resolution.
+ */
+/**
+ * @brief Separable Gaussian Blur for Fluid Thickness Smoothing.
+ * 
+ * Uses horizontal + vertical passes for O(2n) performance. Smooths out individual particle 
+ * contributions for cleaner Beer's Law absorption.
+ * 
+ * @param GraphBuilder RDG builder.
+ * @param View Current scene view.
+ * @param InputThicknessTexture Raw thickness texture.
+ * @param OutSmoothedThicknessTexture Output smoothed thickness texture.
+ * @param BlurRadius Spatial filter radius in pixels.
+ * @param NumIterations Number of blur passes.
+ * @param bUseHalfRes Optimization flag to perform blurring at half resolution.
+ */
 void RenderFluidThicknessSmoothingPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,

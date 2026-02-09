@@ -108,6 +108,16 @@ void FFluidSceneViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewFam
 	// Note: Per-frame deduplication is handled by Preset-based TMap batching
 }
 
+/**
+ * @brief Called before ViewFamily rendering on the render thread.
+ * 
+ * Performs data extraction from the GPU simulator to render resources and enqueues particle bounds readbacks.
+ */
+/**
+ * @brief Called before ViewFamily rendering on the render thread.
+ * 
+ * Performs data extraction from the GPU simulator to render resources and enqueues particle bounds readbacks.
+ */
 void FFluidSceneViewExtension::PreRenderViewFamily_RenderThread(
 	FRDGBuilder& GraphBuilder,
 	FSceneViewFamily& InViewFamily)
@@ -297,6 +307,12 @@ bool FFluidSceneViewExtension::IsViewFromOurWorld(const FSceneView& InView) cons
 }
 
 
+/**
+ * @brief Subscribes to post-processing passes to inject custom fluid rendering.
+ */
+/**
+ * @brief Subscribe to post-processing passes to inject custom fluid rendering.
+ */
 void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 	EPostProcessingPass Pass,
 	const FSceneView& InView,
@@ -338,6 +354,16 @@ void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 	}
 }
 
+/**
+ * @brief Core fluid rendering entry point executed at the PrePostProcess stage.
+ * 
+ * Collects active renderers, sorts batches by distance, and executes the rendering pipeline.
+ */
+/**
+ * @brief Core fluid rendering entry point executed at the PrePostProcess stage.
+ * 
+ * Collects active renderers, sorts batches by distance, and executes the rendering pipeline.
+ */
 void FFluidSceneViewExtension::PrePostProcessPass_RenderThread(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,

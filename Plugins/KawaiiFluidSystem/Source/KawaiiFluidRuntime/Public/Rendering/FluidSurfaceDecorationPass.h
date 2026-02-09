@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -9,21 +9,20 @@
 class FSceneView;
 
 /**
- * Renders surface decoration effects on top of the fluid.
- * This pass applies foam, emissive, texture overlays, and flow-based effects.
- *
- * @param GraphBuilder  RDG builder
- * @param View  Scene view
- * @param Params  Surface decoration parameters
- * @param DepthTexture  Smoothed fluid depth texture (from SSFR)
- * @param NormalTexture  Fluid normal texture (from SSFR)
- * @param ThicknessTexture  Fluid thickness texture (from SSFR)
- * @param SceneColorTexture  Current scene color (fluid already composited)
- * @param VelocityMapTexture  Optional screen-space velocity texture (for flow/foam, from Depth pass)
- * @param AccumulatedFlowTexture  Optional accumulated flow UV offset (for velocity-based flow)
- * @param OcclusionMaskTexture  Optional occlusion mask texture (1.0 = visible, 0.0 = occluded by scene geometry)
- * @param OutputViewRect  ViewRect where fluid was rendered in SceneColorTexture
- * @param OutDecoratedTexture  Output with decorations applied
+ * @brief Renders surface decoration effects (foam, emissive, flow) on top of the fluid.
+ * 
+ * @param GraphBuilder RDG builder.
+ * @param View Current scene view.
+ * @param Params Surface decoration parameters.
+ * @param DepthTexture Smoothed fluid depth.
+ * @param NormalTexture Reconstructed fluid normals.
+ * @param ThicknessTexture Smoothed fluid thickness.
+ * @param SceneColorTexture Background scene color.
+ * @param VelocityMapTexture Screen-space velocity buffer.
+ * @param AccumulatedFlowTexture Temporal flow offset texture.
+ * @param OcclusionMaskTexture Mask for culling decoration in occluded areas.
+ * @param OutputViewRect Screen rectangle for rendering.
+ * @param OutDecoratedTexture Output: Final texture with all surface decorations.
  */
 void RenderFluidSurfaceDecorationPass(
 	FRDGBuilder& GraphBuilder,

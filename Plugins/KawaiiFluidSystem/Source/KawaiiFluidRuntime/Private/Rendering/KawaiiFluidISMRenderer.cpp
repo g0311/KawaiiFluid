@@ -13,6 +13,13 @@ UKawaiiFluidISMRenderer::UKawaiiFluidISMRenderer()
 	// No component tick needed - UObject doesn't tick
 }
 
+/**
+ * @brief Initialize the ISM renderer with world context, owner, and physical preset.
+ * 
+ * @param InWorld World context for accessing subsystems.
+ * @param InOwnerComponent Parent component for attaching the internal ISM.
+ * @param InPreset Physical property asset.
+ */
 void UKawaiiFluidISMRenderer::Initialize(UWorld* InWorld, USceneComponent* InOwnerComponent, UKawaiiFluidPresetDataAsset* InPreset)
 {
 	CachedWorld = InWorld;
@@ -68,6 +75,14 @@ void UKawaiiFluidISMRenderer::SetEnabled(bool bInEnabled)
 	}
 }
 
+/**
+ * @brief Synchronizes ISM instance transforms with current particle data from the provider.
+ * 
+ * Handles both CPU and GPU simulation modes by reading back positions and velocities.
+ * 
+ * @param DataProvider Source of particle simulation data.
+ * @param DeltaTime Current frame's time step.
+ */
 void UKawaiiFluidISMRenderer::UpdateRendering(const IKawaiiFluidDataProvider* DataProvider, float DeltaTime)
 {
 	static int32 UpdateLogCounter = 0;

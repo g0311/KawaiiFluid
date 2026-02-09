@@ -14,6 +14,19 @@
 #include "HAL/IConsoleManager.h"
 #include "EngineGlobals.h"
 
+/**
+ * @brief Render the fluid surface using a custom post-process shading pass.
+ * 
+ * Applies lighting, refraction, and absorption using intermediate textures.
+ * 
+ * @param GraphBuilder RDG builder.
+ * @param View Current scene view.
+ * @param RenderParams Fluid physical and rendering parameters.
+ * @param IntermediateTextures Smoothed depth, normal, and thickness textures.
+ * @param SceneDepthTexture Background depth for refraction.
+ * @param SceneColorTexture Background color for refraction.
+ * @param Output Final render target.
+ */
 void KawaiiScreenSpaceShading::RenderPostProcessShading(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,

@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -7,16 +7,15 @@
 #include "Rendering/Pipeline/IKawaiiFluidRenderingPipeline.h"
 
 /**
- * ScreenSpace Pipeline for Metaball Rendering
- *
- * Surface computation method:
- * 1. Depth Pass - Render fluid particles to depth buffer
- * 2. Smoothing Pass - Bilateral filter on depth for smooth surface
- * 3. Normal Pass - Reconstruct normals from smoothed depth
- * 4. Thickness Pass - Accumulate particle thickness
- * 5. Shading - Apply PostProcess shading (Blinn-Phong, Fresnel, Beer's Law)
- *
- * All rendering happens at PrePostProcess timing.
+ * @class FKawaiiFluidScreenSpacePipeline
+ * @brief Standard screen-space rendering pipeline for fluid surfaces.
+ * 
+ * Computes fluid surfaces using a series of screen-space passes:
+ * 1. Depth Pass - Particle rasterization.
+ * 2. Smoothing Pass - Narrow-range bilateral filtering.
+ * 3. Normal Pass - Normal reconstruction from depth.
+ * 4. Thickness Pass - View-space thickness accumulation.
+ * 5. Shading - Blinn-Phong lighting with Beer's law absorption.
  */
 class FKawaiiFluidScreenSpacePipeline : public IKawaiiMetaballRenderingPipeline
 {
@@ -24,11 +23,6 @@ public:
 	FKawaiiFluidScreenSpacePipeline() = default;
 	virtual ~FKawaiiFluidScreenSpacePipeline() = default;
 
-	//========================================
-	// IKawaiiMetaballRenderingPipeline Interface
-	//========================================
-
-	/** Prepare intermediate textures for rendering (depth, normal, thickness) */
 	virtual void PrepareRender(
 		FRDGBuilder& GraphBuilder,
 		const FSceneView& View,
@@ -39,7 +33,6 @@ public:
 		FRDGTextureRef GlobalVelocityTexture = nullptr,
 		FRDGTextureRef GlobalOcclusionMask = nullptr) override;
 
-	/** Execute rendering - applies PostProcess shading */
 	virtual void ExecuteRender(
 		FRDGBuilder& GraphBuilder,
 		const FSceneView& View,
@@ -56,18 +49,11 @@ public:
 	}
 
 private:
-	/** Cached intermediate textures from PostBasePass for use in Tonemap */
 	FMetaballIntermediateTextures CachedIntermediateTextures;
 
-	/** Pooled texture for previous frame's accumulated flow (for temporal accumulation) */
 	TRefCountPtr<IPooledRenderTarget> PrevAccumulatedFlowRT;
 
-	/** Previous frame's ViewProjectionMatrix for temporal reprojection */
 	FMatrix PrevViewProjectionMatrix = FMatrix::Identity;
 
-	/** Flag to indicate if we have valid previous frame data */
 	bool bHasPrevFrameData = false;
-
-	// Note: Shading methods are in KawaiiScreenSpaceShadingImpl.h/cpp
-	// This pipeline delegates to KawaiiScreenSpaceShading::* namespace functions
 };

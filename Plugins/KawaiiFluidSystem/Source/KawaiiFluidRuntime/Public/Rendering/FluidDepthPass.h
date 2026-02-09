@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -12,10 +12,18 @@ typedef FRDGTexture* FRDGTextureRef;
 
 /**
  * @brief Fluid Depth rendering pass (Batched path).
- * Renders only the specified renderer list (for batch optimization).
- * @param OutLinearDepthTexture Output: Linear depth texture (R32F).
- * @param OutVelocityTexture Output: Screen-space velocity texture (RG16F) for flow effects.
- * @param OutOcclusionMaskTexture Output: Occlusion mask texture (R8) - 1.0=visible, 0.0=occluded.
+ * 
+ * Renders fluid particles from a list of renderers into linear depth, velocity, and occlusion mask textures.
+ * 
+ * @param GraphBuilder RDG builder for pass registration.
+ * @param View Current scene view.
+ * @param Renderers List of metaball renderers to process.
+ * @param SceneDepthTexture Reference scene depth for Z-testing.
+ * @param OutLinearDepthTexture Output: Normalized linear depth texture (R32F).
+ * @param OutVelocityTexture Output: Screen-space velocity texture (RG16F).
+ * @param OutOcclusionMaskTexture Output: Binary occlusion mask (R8).
+ * @param OutHardwareDepth Output: Final hardware depth texture after fluid rendering.
+ * @param bIncremental If true, the pass starts with existing scene depth instead of clearing.
  */
 void RenderFluidDepthPass(
 	FRDGBuilder& GraphBuilder,

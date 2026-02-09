@@ -13,16 +13,67 @@
 static constexpr int32 FLUID_MAX_LIGHTS = 8;
 
 /**
- * @brief Shader parameters for composite pass.
+ * @struct FFluidCompositeParameters
+ * @brief Shader parameters for the fluid composite post-process pass.
+ * 
+ * @param FluidDepthTexture Linear depth texture containing fluid surface distances (R32F).
+ * @param FluidNormalTexture Texture containing reconstructed world-space normals.
+ * @param FluidThicknessTexture Texture representing accumulated view-space thickness.
+ * @param OcclusionMaskTexture Binary mask where 1.0 indicates visible fluid.
+ * @param SceneDepthTexture The existing hardware scene depth texture.
+ * @param SceneColorTexture The existing scene color texture used as background.
+ * @param View Reference to the scene view uniform buffer.
+ * @param InputSampler Bilinear sampler for textures.
+ * @param PointClampSampler Point sampler for depth/mask textures.
+ * @param SceneUVScale UV scaling vector for scene textures.
+ * @param SceneUVOffset UV offset vector for scene textures.
+ * @param FluidUVScale UV scaling vector for fluid textures.
+ * @param FluidUVOffset UV offset vector for fluid textures.
+ * @param InverseProjectionMatrix Inverse camera projection matrix.
+ * @param ProjectionMatrix Camera projection matrix.
+ * @param ViewMatrix Camera view matrix.
+ * @param FluidColor Base diffuse/absorption color of the fluid.
+ * @param FresnelStrength Intensity of the Fresnel reflection.
+ * @param RefractiveIndex Index of refraction (IOR).
+ * @param Opacity Global fluid opacity multiplier.
+ * @param AbsorptionColorCoefficients RGB absorption coefficients (Beer's Law).
+ * @param SpecularStrength Specular highlight intensity.
+ * @param SpecularRoughness Specular BRDF roughness.
+ * @param AmbientIntensity SkyLight contribution scale.
+ * @param LightingScale Overall lighting multiplier for HDR.
+ * @param NumLights Number of active lights (0 = directional fallback).
+ * @param LightDirectionsAndIntensity Packed array of light directions and intensities.
+ * @param LightColors Array of light RGB colors.
+ * @param ThicknessSensitivity Controls thickness-dependent transmittance.
+ * @param bEnableThicknessClamping Toggle for restricting thickness range.
+ * @param ThicknessMin Minimum thickness floor.
+ * @param ThicknessMax Maximum thickness ceiling.
+ * @param FresnelReflectionBlend Fresnel reflection blend factor.
+ * @param bEnableRefraction Toggle for screen-space refraction.
+ * @param RefractionScale Refraction distortion magnitude.
+ * @param bEnableCaustics Toggle for synthetic caustic projection.
+ * @param CausticIntensity Caustic pattern brightness.
+ * @param ReflectionCubemap Environment cubemap for reflections.
+ * @param ReflectionCubemapSampler Sampler for the cubemap.
+ * @param ReflectionIntensity Cubemap reflection strength.
+ * @param ReflectionMipLevel Mip level used for reflection sampling.
+ * @param bUseReflectionCubemap Flag for valid cubemap presence.
+ * @param ReflectionMode Current reflection technique (SSR/Cubemap).
+ * @param ScreenSpaceReflectionMaxSteps Max ray march steps for SSR.
+ * @param ScreenSpaceReflectionStepSize Distance between SSR steps.
+ * @param ScreenSpaceReflectionThickness Ray hit detection thickness.
+ * @param ScreenSpaceReflectionIntensity Magnitude of the SSR effect.
+ * @param ScreenSpaceReflectionEdgeFade Screen edge fade-out for SSR.
+ * @param ViewportSize Current viewport dimensions in pixels.
  */
 BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
     // ------------------------------------------------------
     // Fluid Input Textures
     // ------------------------------------------------------
-    SHADER_PARAMETER_RDG_TEXTURE(Texture2D, FluidDepthTexture)     // Linear Depth (R32F)
-    SHADER_PARAMETER_RDG_TEXTURE(Texture2D, FluidNormalTexture)    // Reconstructed Normal
-    SHADER_PARAMETER_RDG_TEXTURE(Texture2D, FluidThicknessTexture) // Thickness
-    SHADER_PARAMETER_RDG_TEXTURE(Texture2D, OcclusionMaskTexture)  // 1.0=visible, 0.0=occluded
+    SHADER_PARAMETER_RDG_TEXTURE(Texture2D, FluidDepthTexture)
+    SHADER_PARAMETER_RDG_TEXTURE(Texture2D, FluidNormalTexture)
+    SHADER_PARAMETER_RDG_TEXTURE(Texture2D, FluidThicknessTexture)
+    SHADER_PARAMETER_RDG_TEXTURE(Texture2D, OcclusionMaskTexture)
 
     // ------------------------------------------------------
     // Scene Input
@@ -32,10 +83,8 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
     SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 
     SHADER_PARAMETER_SAMPLER(SamplerState, InputSampler)
-    SHADER_PARAMETER_SAMPLER(SamplerState, PointClampSampler)  // Point sampling for depth textures
+    SHADER_PARAMETER_SAMPLER(SamplerState, PointClampSampler)
 
-    // UV scaling for SceneColor/SceneDepth (ViewRect / TextureSize)
-    // Needed when texture size differs from ViewRect (e.g., Screen Percentage)
     SHADER_PARAMETER(FVector2f, SceneUVScale)
     SHADER_PARAMETER(FVector2f, SceneUVOffset)
     SHADER_PARAMETER(FVector2f, FluidUVScale)
@@ -54,43 +103,40 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
     SHADER_PARAMETER(FLinearColor, FluidColor)
     SHADER_PARAMETER(float, FresnelStrength)
     SHADER_PARAMETER(float, RefractiveIndex)
-    SHADER_PARAMETER(float, Opacity)              // Fluid opacity (0 = transparent, 1 = opaque)
-    SHADER_PARAMETER(FLinearColor, AbsorptionColorCoefficients)  // Per-channel absorption (Beer's Law)
+    SHADER_PARAMETER(float, Opacity)
+    SHADER_PARAMETER(FLinearColor, AbsorptionColorCoefficients)
     SHADER_PARAMETER(float, SpecularStrength)
     SHADER_PARAMETER(float, SpecularRoughness)
-    SHADER_PARAMETER(float, AmbientIntensity)  // SkyLight contribution scale (default 0.15)
-    SHADER_PARAMETER(float, LightingScale)    // Overall lighting scale for HDR compensation (default 0.2)
+    SHADER_PARAMETER(float, AmbientIntensity)
+    SHADER_PARAMETER(float, LightingScale)
 
     // ------------------------------------------------------
     // Multi-Light Support
-    // Packed as float4 arrays for shader compatibility:
-    // - LightDirectionsAndIntensity[i] = (Direction.xyz, Intensity)
-    // - LightColors[i] = (Color.rgb, unused)
     // ------------------------------------------------------
-    SHADER_PARAMETER(int, NumLights)  // Number of active lights (0 = use View.DirectionalLight fallback)
+    SHADER_PARAMETER(int, NumLights)
     SHADER_PARAMETER_ARRAY(FVector4f, LightDirectionsAndIntensity, [FLUID_MAX_LIGHTS])
     SHADER_PARAMETER_ARRAY(FVector4f, LightColors, [FLUID_MAX_LIGHTS])
 
     // ------------------------------------------------------
     // Lighting Scale Parameters
     // ------------------------------------------------------
-    SHADER_PARAMETER(float, ThicknessSensitivity)  // How much thickness affects transparency (0 = uniform, 1 = thickness-dependent)
-    SHADER_PARAMETER(int, bEnableThicknessClamping)  // 1 = clamp thickness to min/max, 0 = no clamping
-    SHADER_PARAMETER(float, ThicknessMin)  // Minimum thickness value (when clamping enabled)
-    SHADER_PARAMETER(float, ThicknessMax)  // Maximum thickness value (when clamping enabled)
+    SHADER_PARAMETER(float, ThicknessSensitivity)
+    SHADER_PARAMETER(int, bEnableThicknessClamping)
+    SHADER_PARAMETER(float, ThicknessMin)
+    SHADER_PARAMETER(float, ThicknessMax)
     SHADER_PARAMETER(float, FresnelReflectionBlend)
 
     // ------------------------------------------------------
     // Refraction
     // ------------------------------------------------------
-    SHADER_PARAMETER(int, bEnableRefraction)  // 1 = enabled, 0 = disabled
+    SHADER_PARAMETER(int, bEnableRefraction)
     SHADER_PARAMETER(float, RefractionScale)
 
     // ------------------------------------------------------
     // Caustics
     // ------------------------------------------------------
-    SHADER_PARAMETER(int, bEnableCaustics)    // 1 = enabled, 0 = disabled
-    SHADER_PARAMETER(float, CausticIntensity) // Brightness multiplier for caustic patterns
+    SHADER_PARAMETER(int, bEnableCaustics)
+    SHADER_PARAMETER(float, CausticIntensity)
 
     // ------------------------------------------------------
     // Reflection Cubemap
@@ -99,18 +145,18 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
     SHADER_PARAMETER_SAMPLER(SamplerState, ReflectionCubemapSampler)
     SHADER_PARAMETER(float, ReflectionIntensity)
     SHADER_PARAMETER(float, ReflectionMipLevel)
-    SHADER_PARAMETER(int, bUseReflectionCubemap)  // 1 = use Cubemap, 0 = fallback color
+    SHADER_PARAMETER(int, bUseReflectionCubemap)
 
     // ------------------------------------------------------
-    // Reflection Mode (0=None, 1=Cubemap, 2=SSR, 3=SSR+Cubemap)
+    // Reflection Mode
     // ------------------------------------------------------
-    SHADER_PARAMETER(int, ReflectionMode)                         // Reflection mode enum
-    SHADER_PARAMETER(int, ScreenSpaceReflectionMaxSteps)          // Ray march max steps
-    SHADER_PARAMETER(float, ScreenSpaceReflectionStepSize)        // Step size (pixels)
-    SHADER_PARAMETER(float, ScreenSpaceReflectionThickness)       // Hit detection thickness
-    SHADER_PARAMETER(float, ScreenSpaceReflectionIntensity)       // SSR intensity
-    SHADER_PARAMETER(float, ScreenSpaceReflectionEdgeFade)        // Screen edge fade
-    SHADER_PARAMETER(FVector2f, ViewportSize)   // Viewport size (pixels)
+    SHADER_PARAMETER(int, ReflectionMode)
+    SHADER_PARAMETER(int, ScreenSpaceReflectionMaxSteps)
+    SHADER_PARAMETER(float, ScreenSpaceReflectionStepSize)
+    SHADER_PARAMETER(float, ScreenSpaceReflectionThickness)
+    SHADER_PARAMETER(float, ScreenSpaceReflectionIntensity)
+    SHADER_PARAMETER(float, ScreenSpaceReflectionEdgeFade)
+    SHADER_PARAMETER(FVector2f, ViewportSize)
 
     // ------------------------------------------------------
     // Render Targets (Output)
@@ -118,6 +164,10 @@ BEGIN_SHADER_PARAMETER_STRUCT(FFluidCompositeParameters, )
     RENDER_TARGET_BINDING_SLOTS()
 END_SHADER_PARAMETER_STRUCT()
 
+/**
+ * @class FFluidCompositeVS
+ * @brief Vertex shader for the fluid composite post-process triangle.
+ */
 class FFluidCompositeVS : public FGlobalShader
 {
 public:
@@ -133,7 +183,8 @@ public:
 };
 
 /**
- * Fluid Composite Pixel Shader
+ * @class FFluidCompositePS
+ * @brief Pixel shader implementing Blinn-Phong, Fresnel, and Beer's Law for fluid composite shading.
  */
 class FFluidCompositePS : public FGlobalShader
 {

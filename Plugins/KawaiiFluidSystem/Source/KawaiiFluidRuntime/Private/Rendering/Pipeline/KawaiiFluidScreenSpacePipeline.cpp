@@ -20,7 +20,9 @@
 #include "SceneRendering.h"
 #include "SceneTextures.h"
 
-// Helper function to generate intermediate textures (depth, normal, thickness)
+/**
+ * @brief Internal helper to generate surface textures (depth, normal, thickness) for a batch of renderers.
+ */
 static bool GenerateIntermediateTextures(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
@@ -175,6 +177,20 @@ static bool GenerateIntermediateTextures(
 }
 
 
+/**
+ * @brief Prepare intermediate textures for rendering (depth, normal, thickness).
+ * 
+ * Generates surface data needed for shading and handles temporal flow accumulation.
+ * 
+ * @param GraphBuilder RDG builder.
+ * @param View Current scene view.
+ * @param RenderParams Global fluid parameters.
+ * @param Renderers Batch of renderers to process.
+ * @param SceneDepthTexture Background depth for occlusion.
+ * @param GlobalDepthTexture Unified depth buffer for batching.
+ * @param GlobalVelocityTexture Unified velocity buffer.
+ * @param GlobalOcclusionMask Unified occlusion mask.
+ */
 void FKawaiiFluidScreenSpacePipeline::PrepareRender(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
@@ -276,6 +292,20 @@ void FKawaiiFluidScreenSpacePipeline::PrepareRender(
 }
 
 
+/**
+ * @brief Execute the final shading pass and output to the target.
+ * 
+ * Applies PostProcess shading using intermediate data generated in PrepareRender.
+ * 
+ * @param GraphBuilder RDG builder.
+ * @param View Current scene view.
+ * @param RenderParams Global fluid parameters.
+ * @param Renderers Batch of renderers.
+ * @param SceneDepthTexture Background depth.
+ * @param GlobalDepthTexture Smoothed fluid depth.
+ * @param SceneColorTexture Background color.
+ * @param Output Final render target.
+ */
 void FKawaiiFluidScreenSpacePipeline::ExecuteRender(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,

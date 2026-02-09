@@ -43,6 +43,13 @@ public:
 IMPLEMENT_GLOBAL_SHADER(FFluidNormalCS, "/Plugin/KawaiiFluidSystem/Private/FluidNormal.usf",
                         "ReconstructNormalCS", SF_Compute);
 
+/**
+ * @brief Reconstructs world-space normals from the smoothed depth buffer using neighbor reconstruction.
+ * @param GraphBuilder RDG builder.
+ * @param View Scene view.
+ * @param SmoothedDepthTexture Fluid depth texture after bilateral filtering.
+ * @param OutNormalTexture Output world-space normal texture (RGBA16F).
+ */
 void RenderFluidNormalPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,

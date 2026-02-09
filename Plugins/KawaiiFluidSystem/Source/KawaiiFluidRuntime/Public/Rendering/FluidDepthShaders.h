@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -14,31 +14,66 @@
 class FUseAnisotropyDim : SHADER_PERMUTATION_BOOL("USE_ANISOTROPY");
 
 /**
- * Shared parameter structure for Fluid Depth rendering
+ * @struct FFluidDepthParameters
+ * @brief Shared parameter structure for fluid depth rasterization passes.
+ * 
+ * @param ParticlePositions Buffer containing world-space particle positions.
+ * @param ParticleVelocities Buffer containing particle velocities for screen-space flow.
+ * @param RenderOffset Buffer for particle rendering offsets.
+ * @param ParticleRadius The base physical radius of the fluid particles.
+ * @param ViewMatrix Camera view matrix.
+ * @param ProjectionMatrix Camera projection matrix.
+ * @param ViewProjectionMatrix Combined camera view-projection matrix.
+ * @param SceneDepthTexture The current hardware scene depth texture.
+ * @param SceneDepthSampler Sampler for the scene depth texture.
+ * @param SceneViewRect Dimensions of the current view rectangle.
+ * @param SceneTextureSize Dimensions of the source scene texture.
+ * @param AnisotropyAxis1 Major axis vector and scale for anisotropic ellipsoids.
+ * @param AnisotropyAxis2 Intermediate axis vector and scale.
+ * @param AnisotropyAxis3 Minor axis vector and scale.
+ * @param IndirectArgsBuffer RDG buffer containing arguments for DrawPrimitiveIndirect.
  */
 BEGIN_SHADER_PARAMETER_STRUCT(FFluidDepthParameters, )
+	//=============================================================================
+	// Buffers
+	//=============================================================================
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float3>, ParticlePositions)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float3>, ParticleVelocities)
-	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float3>, RenderOffset)  // Surface particle render offset
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float3>, RenderOffset)
 	SHADER_PARAMETER(float, ParticleRadius)
+
+	//=============================================================================
+	// Matrices
+	//=============================================================================
 	SHADER_PARAMETER(FMatrix44f, ViewMatrix)
 	SHADER_PARAMETER(FMatrix44f, ProjectionMatrix)
 	SHADER_PARAMETER(FMatrix44f, ViewProjectionMatrix)
+
+	//=============================================================================
+	// Scene
+	//=============================================================================
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneDepthTexture)
 	SHADER_PARAMETER_SAMPLER(SamplerState, SceneDepthSampler)
 	SHADER_PARAMETER(FVector2f, SceneViewRect)
 	SHADER_PARAMETER(FVector2f, SceneTextureSize)
-	// Anisotropy buffers (float4: direction.xyz + scale.w)
+
+	//=============================================================================
+	// Anisotropy
+	//=============================================================================
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, AnisotropyAxis1)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, AnisotropyAxis2)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, AnisotropyAxis3)
-	// DrawPrimitiveIndirect args buffer (RDG dependency tracking)
+
+	//=============================================================================
+	// Indirect Arguments
+	//=============================================================================
 	RDG_BUFFER_ACCESS(IndirectArgsBuffer, ERHIAccess::IndirectArgs)
 	RENDER_TARGET_BINDING_SLOTS()
 END_SHADER_PARAMETER_STRUCT()
 
 /**
- * Fluid Depth rendering Vertex Shader
+ * @class FFluidDepthVS
+ * @brief Vertex shader for fluid particle depth rasterization (billboards or ellipsoids).
  */
 class FFluidDepthVS : public FGlobalShader
 {
@@ -62,7 +97,8 @@ class FFluidDepthVS : public FGlobalShader
 };
 
 /**
- * Fluid Depth rendering Pixel Shader
+ * @class FFluidDepthPS
+ * @brief Pixel shader for fluid depth, outputting linear depth, velocity, and occlusion.
  */
 class FFluidDepthPS : public FGlobalShader
 {

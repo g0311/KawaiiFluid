@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -11,29 +11,14 @@ struct FMetaballIntermediateTextures;
 class FSceneView;
 
 /**
- * ScreenSpace Pipeline Shading Implementation
- *
- * Contains shading functions for the ScreenSpace rendering pipeline.
- * These are stateless functions called by FKawaiiMetaballScreenSpacePipeline.
- *
- * Supports PostProcess shading mode (custom shading with Blinn-Phong, Fresnel, Beer's Law).
+ * @namespace KawaiiScreenSpaceShading
+ * @brief Stateless shading functions for the ScreenSpace fluid rendering pipeline.
+ * 
+ * Implements custom post-process shading including Blinn-Phong lighting, Fresnel reflections, 
+ * and Beer's Law based absorption for volumetric fluid appearance.
  */
 namespace KawaiiScreenSpaceShading
 {
-	/**
-	 * Render PostProcess shading pass
-	 *
-	 * Applies Blinn-Phong lighting, Fresnel, and Beer's Law absorption
-	 * using intermediate textures (depth, normal, thickness) from ScreenSpace pipeline.
-	 *
-	 * @param GraphBuilder - RDG builder
-	 * @param View - Scene view
-	 * @param RenderParams - Fluid rendering parameters
-	 * @param IntermediateTextures - Cached textures from PrepareForTonemap (depth, normal, thickness)
-	 * @param SceneDepthTexture - Scene depth for depth comparison
-	 * @param SceneColorTexture - Scene color for background sampling
-	 * @param Output - Render target to composite onto
-	 */
 	void RenderPostProcessShading(
 		FRDGBuilder& GraphBuilder,
 		const FSceneView& View,

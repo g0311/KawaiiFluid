@@ -184,7 +184,23 @@ static FRHITexture* GetTextureRHIOrDefault(UTexture2D* Texture, FRHITexture* Def
 //=============================================================================
 
 /**
- * @brief Renders surface decoration effects on the fluid.
+ * @brief Renders surface decoration effects (foam, emissive, flow) on top of the fluid.
+ * 
+ * Applies visual overlays based on surface normal, thickness, and accumulated flow. 
+ * Composites effects onto the existing scene.
+ * 
+ * @param GraphBuilder RDG builder for pass registration.
+ * @param View The current scene view.
+ * @param Params Parameters for foam, texture, and flow map effects.
+ * @param DepthTexture Smoothed fluid depth.
+ * @param NormalTexture Reconstructed fluid normals.
+ * @param ThicknessTexture Smoothed fluid thickness.
+ * @param SceneColorTexture Background scene color.
+ * @param VelocityMapTexture Screen-space velocity buffer.
+ * @param AccumulatedFlowTexture Temporal flow offset texture.
+ * @param OcclusionMaskTexture Mask for culling decoration in occluded areas.
+ * @param OutputViewRect Screen rectangle for rendering.
+ * @param OutDecoratedTexture Output: Final texture with all surface decorations applied.
  */
 void RenderFluidSurfaceDecorationPass(
 	FRDGBuilder& GraphBuilder,

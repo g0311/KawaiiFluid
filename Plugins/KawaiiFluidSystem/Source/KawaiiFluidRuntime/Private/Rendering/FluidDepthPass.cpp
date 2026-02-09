@@ -44,6 +44,9 @@ static FRDGBufferSRVRef GetOrCreateDummyVelocitySRV(FRDGBuilder& GraphBuilder)
 // Batched Depth Pass
 //=============================================================================
 
+/**
+ * @brief Fluid Depth rendering pass (Batched path).
+ */
 void RenderFluidDepthPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,

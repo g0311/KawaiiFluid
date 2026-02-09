@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -8,46 +8,36 @@
 class FSceneView;
 
 /**
- * @brief Parameters for flow accumulation pass
+ * @struct FFlowAccumulationParams
+ * @brief Parameters for the screen-space flow accumulation pass, used to track temporal motion of fluid surfaces.
+ * 
+ * @param VelocityScale Multiplier for screen-space velocity contribution to flow offset.
+ * @param FlowDecay Rate at which accumulated flow returns to zero in static regions (0 = no decay).
+ * @param MaxFlowOffset Cap for accumulated offset to ensure seamless dual-phase texture wrapping.
+ * @param InvViewProjectionMatrix Current frame's inverse view-projection matrix.
+ * @param InvViewMatrix Current frame's inverse view matrix.
+ * @param InvProjectionMatrix Current frame's inverse projection matrix.
+ * @param PrevViewProjectionMatrix Previous frame's view-projection matrix for temporal reprojection.
  */
 struct FFlowAccumulationParams
 {
-	/** Scale factor for velocity contribution to flow */
 	float VelocityScale = 1.0f;
 
-	/** How quickly flow decays when velocity is zero (0 = no decay) */
 	float FlowDecay = 0.0f;
 
-	/** Maximum accumulated offset before wrapping (for seamless dual-phase) */
 	float MaxFlowOffset = 10.0f;
 
-	/** Current frame's inverse view-projection matrix (for world position reconstruction) */
 	FMatrix InvViewProjectionMatrix = FMatrix::Identity;
 
-	/** Current frame's inverse view matrix (for view->world transform) */
 	FMatrix InvViewMatrix = FMatrix::Identity;
 
-	/** Current frame's inverse projection matrix (for clip->view transform) */
 	FMatrix InvProjectionMatrix = FMatrix::Identity;
 
-	/** Previous frame's view-projection matrix (for temporal reprojection) */
 	FMatrix PrevViewProjectionMatrix = FMatrix::Identity;
 };
 
 /**
- * @brief Accumulates screen-space velocity into UV offset for flow texture effects.
- *
- * This pass implements the "Accumulated Screen-Space Flow" technique where:
- * - Still water: offset stays constant (no texture movement)
- * - Flowing water: offset accumulates based on velocity (texture moves)
- *
- * @param GraphBuilder RDG builder
- * @param View Scene view
- * @param Params Flow accumulation parameters
- * @param VelocityTexture Current frame's screen-space velocity (from Depth pass, RG16F)
- * @param DepthTexture Fluid depth texture (for masking non-fluid areas)
- * @param PrevAccumulatedFlowTexture Previous frame's accumulated flow (nullptr for first frame)
- * @param OutAccumulatedFlowTexture Output accumulated flow texture (RG16F)
+ * @brief Accumulates screen-space velocity into a temporal UV offset texture for flowing effects.
  */
 void RenderFluidFlowAccumulationPass(
 	FRDGBuilder& GraphBuilder,

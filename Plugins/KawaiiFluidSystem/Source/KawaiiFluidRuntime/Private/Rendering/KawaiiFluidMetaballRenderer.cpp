@@ -20,6 +20,13 @@ UKawaiiFluidMetaballRenderer::UKawaiiFluidMetaballRenderer()
 	// No component tick needed - UObject doesn't tick
 }
 
+/**
+ * @brief Initialize the metaball renderer with context and rendering parameters.
+ * 
+ * @param InWorld World context.
+ * @param InOwnerComponent Parent component reference.
+ * @param InPreset Rendering property asset.
+ */
 void UKawaiiFluidMetaballRenderer::Initialize(UWorld* InWorld, USceneComponent* InOwnerComponent, UKawaiiFluidPresetDataAsset* InPreset)
 {
 	CachedWorld = InWorld;
@@ -128,6 +135,14 @@ void UKawaiiFluidMetaballRenderer::SetEnabled(bool bInEnabled)
 	}
 }
 
+/**
+ * @brief Updates GPU-side render resources with latest simulation data.
+ * 
+ * Sets the simulator reference and anisotropy parameters needed for the screen-space pipeline.
+ * 
+ * @param DataProvider Source of simulation particle data.
+ * @param DeltaTime Frame time step.
+ */
 void UKawaiiFluidMetaballRenderer::UpdateRendering(const IKawaiiFluidDataProvider* DataProvider, float DeltaTime)
 {
 	

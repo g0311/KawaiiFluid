@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -11,8 +11,15 @@ class UKawaiiFluidMetaballRenderer;
 typedef FRDGTexture* FRDGTextureRef;
 
 /**
- * Fluid Thickness rendering pass (Batched path)
- * Renders only specified renderer list (for batch optimization)
+ * @brief Fluid Thickness rendering pass (Batched path).
+ * 
+ * Accumulates the view-space thickness of fluid particles into a single-channel texture.
+ * 
+ * @param GraphBuilder RDG builder for pass registration.
+ * @param View The current scene view.
+ * @param Renderers List of metaball renderers to process.
+ * @param SceneDepthTexture Background scene depth for depth-testing.
+ * @param OutThicknessTexture Output: Accumulated thickness texture (R32F).
  */
 void RenderFluidThicknessPass(
 	FRDGBuilder& GraphBuilder,

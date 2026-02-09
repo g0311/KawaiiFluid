@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -8,8 +8,7 @@
 class FSceneView;
 
 /**
- * Normal Reconstruction Pass
- * Reconstructs world-space normals from the smoothed depth buffer.
+ * @brief Reconstructs world-space normals from the smoothed depth buffer.
  */
 void RenderFluidNormalPass(
 	FRDGBuilder& GraphBuilder,

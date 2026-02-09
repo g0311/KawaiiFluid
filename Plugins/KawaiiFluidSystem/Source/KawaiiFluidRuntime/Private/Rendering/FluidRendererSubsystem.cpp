@@ -13,6 +13,11 @@
 #include "MeshDescription.h"
 #include "StaticMeshAttributes.h"
 
+/**
+ * @brief Determine if the subsystem should be created for the given world context.
+ * @param Outer World object.
+ * @return True if the world type is supported.
+ */
 bool UFluidRendererSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 {
 	if (!IsValid(Outer))
@@ -32,6 +37,10 @@ bool UFluidRendererSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 	       WorldType == EWorldType::GamePreview;
 }
 
+/**
+ * @brief Initializes the subsystem and its rendering extensions.
+ * @param Collection Subsystem collection.
+ */
 void UFluidRendererSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
@@ -42,6 +51,9 @@ void UFluidRendererSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	UE_LOG(LogTemp, Log, TEXT("FluidRendererSubsystem Initialized"));
 }
 
+/**
+ * @brief Cleanup resources during subsystem shutdown.
+ */
 void UFluidRendererSubsystem::Deinitialize()
 {
 	// Cleanup shadow resources
@@ -61,6 +73,10 @@ void UFluidRendererSubsystem::Deinitialize()
 // FTickableGameObject Implementation
 //========================================
 
+/**
+ * @brief Returns the stat ID for profiling.
+ * @return Stat ID.
+ */
 TStatId UFluidRendererSubsystem::GetStatId() const
 {
 	RETURN_QUICK_DECLARE_CYCLE_STAT(UFluidRendererSubsystem, STATGROUP_Tickables);
@@ -68,7 +84,7 @@ TStatId UFluidRendererSubsystem::GetStatId() const
 
 /**
  * @brief Subsystem tick - flushes aggregated shadow particles to ISM components.
- * Called after all Volume/Component ticks have registered their particles.
+ * @param DeltaTime Time elapsed since last frame.
  */
 void UFluidRendererSubsystem::Tick(float DeltaTime)
 {
@@ -90,6 +106,10 @@ void UFluidRendererSubsystem::Tick(float DeltaTime)
 // RenderingModule management
 //========================================
 
+/**
+ * @brief Registers a rendering module to be managed by this subsystem.
+ * @param Module The module to register.
+ */
 void UFluidRendererSubsystem::RegisterRenderingModule(UKawaiiFluidRenderingModule* Module)
 {
 	if (!Module)
@@ -112,6 +132,10 @@ void UFluidRendererSubsystem::RegisterRenderingModule(UKawaiiFluidRenderingModul
 		RegisteredRenderingModules.Num());
 }
 
+/**
+ * @brief Unregisters a rendering module.
+ * @param Module The module to unregister.
+ */
 void UFluidRendererSubsystem::UnregisterRenderingModule(UKawaiiFluidRenderingModule* Module)
 {
 	if (!Module)
@@ -351,9 +375,8 @@ static UStaticMesh* CreateLowPolySphere(float Radius, EFluidShadowMeshQuality Qu
 
 /**
  * @brief Get or create shadow sphere mesh for specified quality level.
- * Uses lazy creation and caches meshes per quality level.
- * @param Quality The quality level for the shadow mesh.
- * @return The shadow sphere mesh, or nullptr on failure.
+ * @param Quality Shadow mesh quality level.
+ * @return Static mesh pointer.
  */
 UStaticMesh* UFluidRendererSubsystem::GetOrCreateShadowMesh(EFluidShadowMeshQuality Quality)
 {
@@ -385,8 +408,8 @@ UStaticMesh* UFluidRendererSubsystem::GetOrCreateShadowMesh(EFluidShadowMeshQual
 
 /**
  * @brief Get or create ISM component for specified quality level.
- * @param Quality The quality level for the ISM component.
- * @return The ISM component, or nullptr on failure.
+ * @param Quality Shadow mesh quality level.
+ * @return ISM component pointer.
  */
 UInstancedStaticMeshComponent* UFluidRendererSubsystem::GetOrCreateShadowISM(EFluidShadowMeshQuality Quality)
 {
@@ -487,11 +510,10 @@ UInstancedStaticMeshComponent* UFluidRendererSubsystem::GetOrCreateShadowISM(EFl
 
 /**
  * @brief Register shadow particles for aggregation.
- * Particles are aggregated per quality level and rendered in Subsystem Tick.
  * @param ParticlePositions Array of particle world positions.
  * @param NumParticles Number of particles.
  * @param ParticleRadius Radius of each particle.
- * @param Quality Shadow mesh quality level (Low/Medium/High).
+ * @param Quality Shadow mesh quality level.
  */
 void UFluidRendererSubsystem::RegisterShadowParticles(const FVector* ParticlePositions, int32 NumParticles, float ParticleRadius, EFluidShadowMeshQuality Quality)
 {
@@ -528,8 +550,7 @@ void UFluidRendererSubsystem::RegisterShadowParticles(const FVector* ParticlePos
 }
 
 /**
- * @brief Flush aggregated particles to ISM components.
- * Creates transforms from aggregated positions and updates ISM per quality level.
+ * @brief Flush aggregated particles to ISM components and update their transforms.
  */
 void UFluidRendererSubsystem::FlushShadowInstances()
 {
@@ -614,7 +635,7 @@ void UFluidRendererSubsystem::FlushShadowInstances()
 }
 
 /**
- * @brief Clear aggregation buffers for next frame.
+ * @brief Clear aggregation buffers for the next frame.
  */
 void UFluidRendererSubsystem::ClearAggregationBuffers()
 {
@@ -627,7 +648,7 @@ void UFluidRendererSubsystem::ClearAggregationBuffers()
 }
 
 /**
- * @brief Cleanup all shadow resources.
+ * @brief Cleanup all shadow-related resources (actor, components, meshes).
  */
 void UFluidRendererSubsystem::CleanupShadowResources()
 {
