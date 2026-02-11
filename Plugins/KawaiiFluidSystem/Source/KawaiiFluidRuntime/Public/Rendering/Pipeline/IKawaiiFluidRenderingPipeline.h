@@ -1,29 +1,23 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "RenderGraphDefinitions.h"
 #include "ScreenPass.h"
-#include "Rendering/FluidRenderingParameters.h"
-#include "Rendering/MetaballRenderingData.h"
+#include "Rendering/KawaiiFluidRenderingParameters.h"
+#include "Rendering/KawaiiFluidMetaballRenderingData.h"
 
-// Forward declarations
 class FRDGBuilder;
 class FSceneView;
 class UKawaiiFluidMetaballRenderer;
 
 /**
- * Interface for Metaball Rendering Pipelines
- *
- * A Pipeline handles surface computation (how the fluid surface is determined):
- * - ScreenSpace: Depth -> Smoothing -> Normal -> Thickness passes
- *
- * Each Pipeline provides two execution points:
- * - PrepareRender(): Generate intermediate data (depth, normals, thickness, etc.)
- * - ExecuteRender(): Apply PostProcess shading (custom lighting)
- *
- * All pipelines use PostProcess shading mode.
+ * @class IKawaiiMetaballRenderingPipeline
+ * @brief Interface for metaball rendering pipelines responsible for surface computation and shading.
+ * 
+ * Pipelines manage the generation of intermediate surface data (depth, normals, thickness) 
+ * and apply final lighting/shading in a post-process pass.
  */
 class IKawaiiMetaballRenderingPipeline
 {
@@ -31,24 +25,21 @@ public:
 	virtual ~IKawaiiMetaballRenderingPipeline() = default;
 
 	/**
-	 * Prepare data for rendering (called at PrePostProcess timing)
-	 * Generates intermediate textures/buffers needed by ExecuteRender.
-	 *
-	 * - ScreenSpace: Depth, Normal, Thickness textures
-	 *
-	 * @param GraphBuilder     RDG builder for pass registration
-	 * @param View             Scene view for rendering
-	 * @param RenderParams     Fluid rendering parameters
-	 * @param Renderers        Array of renderers to process
-	 * @param SceneDepthTexture Scene depth texture
-	 * @param GlobalDepthTexture Unified depth texture for all batches
-	 * @param GlobalVelocityTexture Unified velocity texture for all batches (Optional)
-	 * @param GlobalOcclusionMask Unified occlusion mask for all batches (Optional)
+	 * @brief Prepare intermediate textures and buffers needed for rendering.
+	 * 
+	 * @param GraphBuilder RDG builder for pass registration.
+	 * @param View Current scene view.
+	 * @param RenderParams Global fluid rendering parameters.
+	 * @param Renderers Array of active metaball renderers to process.
+	 * @param SceneDepthTexture The existing scene depth texture for occlusion.
+	 * @param GlobalDepthTexture Output unified depth texture for all batches.
+	 * @param GlobalVelocityTexture Optional unified velocity texture.
+	 * @param GlobalOcclusionMask Optional unified occlusion mask.
 	 */
 	virtual void PrepareRender(
 		FRDGBuilder& GraphBuilder,
 		const FSceneView& View,
-		const FFluidRenderingParameters& RenderParams,
+		const FKawaiiFluidRenderingParameters& RenderParams,
 		const TArray<UKawaiiFluidMetaballRenderer*>& Renderers,
 		FRDGTextureRef SceneDepthTexture,
 		FRDGTextureRef& GlobalDepthTexture,
@@ -56,26 +47,21 @@ public:
 		FRDGTextureRef GlobalOcclusionMask = nullptr) = 0;
 
 	/**
-	 * Execute rendering (called at PrePostProcess timing)
-	 * Applies PostProcess shading using intermediate data from PrepareRender.
-	 *
-	 * All pipelines use custom lighting (Blinn-Phong, Fresnel, Beer's Law).
-	 *
-	 * NOTE: PrepareRender must be called before this.
-	 *
-	 * @param GraphBuilder     RDG builder for pass registration
-	 * @param View             Scene view for rendering
-	 * @param RenderParams     Fluid rendering parameters
-	 * @param Renderers        Array of renderers to process
-	 * @param SceneDepthTexture Scene depth texture
-	 * @param GlobalDepthTexture Unified depth texture for all batches
-	 * @param SceneColorTexture Scene color texture
-	 * @param Output           Final render target
+	 * @brief Execute the final shading pass and output to the target.
+	 * 
+	 * @param GraphBuilder RDG builder for pass registration.
+	 * @param View Current scene view.
+	 * @param RenderParams Global fluid rendering parameters.
+	 * @param Renderers Array of active metaball renderers.
+	 * @param SceneDepthTexture The existing scene depth texture.
+	 * @param GlobalDepthTexture Unified depth texture from the prepare pass.
+	 * @param SceneColorTexture Source scene color texture.
+	 * @param Output Final render target for the fluid composite.
 	 */
 	virtual void ExecuteRender(
 		FRDGBuilder& GraphBuilder,
 		const FSceneView& View,
-		const FFluidRenderingParameters& RenderParams,
+		const FKawaiiFluidRenderingParameters& RenderParams,
 		const TArray<UKawaiiFluidMetaballRenderer*>& Renderers,
 		FRDGTextureRef SceneDepthTexture,
 		FRDGTextureRef GlobalDepthTexture,
@@ -83,22 +69,14 @@ public:
 		FScreenPassRenderTarget Output) = 0;
 
 	/**
-	 * Get cached intermediate textures for shadow history storage.
-	 * Only valid after PrepareForTonemap has been called.
-	 *
-	 * @return Pointer to cached intermediate textures, or nullptr if not available.
+	 * @brief Retrieve cached intermediate textures if available.
+	 * @return Pointer to internal textures or nullptr.
 	 */
 	virtual const FMetaballIntermediateTextures* GetCachedIntermediateTextures() const { return nullptr; }
 
 protected:
 	/**
-	 * Utility: Calculate particle bounding box
-	 *
-	 * @param Positions Particle positions
-	 * @param ParticleRadius Average particle radius
-	 * @param Margin Additional margin to add
-	 * @param OutMin Output minimum bounds
-	 * @param OutMax Output maximum bounds
+	 * @brief Utility to calculate the combined bounding box of a set of particles.
 	 */
 	static void CalculateParticleBoundingBox(
 		const TArray<FVector3f>& Positions,
@@ -123,7 +101,6 @@ protected:
 			OutMax = FVector3f::Max(OutMax, Pos);
 		}
 
-		// Expand by particle radius + margin
 		const float Expansion = ParticleRadius + Margin;
 		OutMin -= FVector3f(Expansion);
 		OutMax += FVector3f(Expansion);

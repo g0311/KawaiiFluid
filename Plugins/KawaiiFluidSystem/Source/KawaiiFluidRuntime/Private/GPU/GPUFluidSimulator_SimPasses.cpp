@@ -14,12 +14,21 @@
 // Predict Positions Pass
 //=============================================================================
 
+/**
+ * @brief Add RDG pass to predict particle positions.
+ * @param GraphBuilder RDG builder.
+ * @param ParticlesUAV Read-write access to particle buffer.
+ * @param Params Current simulation parameters.
+ */
 void FGPUFluidSimulator::AddPredictPositionsPass(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferUAVRef ParticlesUAV,
 	const FGPUFluidSimulationParams& Params)
 {
-	if (!bEverHadParticles) return;
+	if (!bEverHadParticles)
+	{
+		return;
+	}
 
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 	TShaderMapRef<FPredictPositionsCS> ComputeShader(ShaderMap);
@@ -27,7 +36,10 @@ void FGPUFluidSimulator::AddPredictPositionsPass(
 	FPredictPositionsCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FPredictPositionsCS::FParameters>();
 	PassParameters->Particles = ParticlesUAV;
 	PassParameters->ParticleCount = CurrentParticleCount;
-	if (CurrentIndirectArgsBuffer) PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+	if (CurrentIndirectArgsBuffer)
+	{
+		PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+	}
 	PassParameters->DeltaTime = Params.DeltaTime;
 	PassParameters->Gravity = Params.Gravity;
 	PassParameters->ExternalForce = ExternalForce;
@@ -121,6 +133,14 @@ void FGPUFluidSimulator::AddPredictPositionsPass(
 // Extract Positions Pass
 //=============================================================================
 
+/**
+ * @brief Add RDG pass to extract particle positions for spatial hashing.
+ * @param GraphBuilder RDG builder.
+ * @param ParticlesSRV Read-only access to particle buffer.
+ * @param PositionsUAV Read-write access to extracted positions buffer.
+ * @param ParticleCount Number of particles to process.
+ * @param bUsePredictedPosition Whether to extract predicted or current positions.
+ */
 void FGPUFluidSimulator::AddExtractPositionsPass(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferSRVRef ParticlesSRV,
@@ -128,7 +148,10 @@ void FGPUFluidSimulator::AddExtractPositionsPass(
 	int32 ParticleCount,
 	bool bUsePredictedPosition)
 {
-	if (!bEverHadParticles || ParticleCount <= 0) return;
+	if (!bEverHadParticles || ParticleCount <= 0)
+	{
+		return;
+	}
 
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 	TShaderMapRef<FExtractPositionsCS> ComputeShader(ShaderMap);
@@ -137,7 +160,10 @@ void FGPUFluidSimulator::AddExtractPositionsPass(
 	PassParameters->Particles = ParticlesSRV;
 	PassParameters->Positions = PositionsUAV;
 	PassParameters->ParticleCount = ParticleCount;
-	if (CurrentIndirectArgsBuffer) PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+	if (CurrentIndirectArgsBuffer)
+	{
+		PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+	}
 	PassParameters->bUsePredictedPosition = bUsePredictedPosition ? 1 : 0;
 
 	if (CurrentIndirectArgsBuffer)
@@ -160,6 +186,20 @@ void FGPUFluidSimulator::AddExtractPositionsPass(
 // Solve Density Pressure Pass (PBF with Neighbor Cache)
 //=============================================================================
 
+/**
+ * @brief Add RDG pass to solve PBF density and pressure constraints.
+ * @param GraphBuilder RDG builder.
+ * @param InParticlesUAV Read-write access to particle buffer.
+ * @param InCellCountsSRV Legacy hash table cell counts.
+ * @param InParticleIndicesSRV Legacy hash table particle indices.
+ * @param InCellStartSRV Z-Order sorted cell start indices.
+ * @param InCellEndSRV Z-Order sorted cell end indices.
+ * @param InNeighborListUAV Neighbor list cache.
+ * @param InNeighborCountsUAV Neighbor count cache.
+ * @param IterationIndex Current solver iteration.
+ * @param Params Simulation parameters.
+ * @param SpatialData Cached spatial structures.
+ */
 void FGPUFluidSimulator::AddSolveDensityPressurePass(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferUAVRef InParticlesUAV,
@@ -228,7 +268,10 @@ void FGPUFluidSimulator::AddSolveDensityPressurePass(
 	PassParameters->NeighborList = InNeighborListUAV;
 	PassParameters->NeighborCounts = InNeighborCountsUAV;
 	PassParameters->ParticleCount = CurrentParticleCount;
-	if (CurrentIndirectArgsBuffer) PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+	if (CurrentIndirectArgsBuffer)
+	{
+		PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+	}
 	PassParameters->SmoothingRadius = Params.SmoothingRadius;
 	PassParameters->RestDensity = Params.RestDensity;
 	PassParameters->Poly6Coeff = Params.Poly6Coeff;
@@ -405,6 +448,17 @@ void FGPUFluidSimulator::AddSolveDensityPressurePass(
 // Kept for backward compatibility but no longer called by ExecutePostSimulation.
 //=============================================================================
 
+/**
+ * @brief Add RDG pass to apply fluid and boundary viscosity (Deprecated - now integrated into Phase 2/3).
+ * @param GraphBuilder RDG builder.
+ * @param InParticlesUAV Read-write access to particle buffer.
+ * @param InCellCountsSRV Legacy hash table cell counts.
+ * @param InParticleIndicesSRV Legacy hash table particle indices.
+ * @param InNeighborListSRV Neighbor list cache.
+ * @param InNeighborCountsSRV Neighbor count cache.
+ * @param Params Simulation parameters.
+ * @param SpatialData Cached spatial structures.
+ */
 void FGPUFluidSimulator::AddApplyViscosityPass(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferUAVRef InParticlesUAV,
@@ -415,7 +469,10 @@ void FGPUFluidSimulator::AddApplyViscosityPass(
 	const FGPUFluidSimulationParams& Params,
 	const FSimulationSpatialData& SpatialData)
 {
-	if (!bEverHadParticles) return;
+	if (!bEverHadParticles)
+	{
+		return;
+	}
 
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 	TShaderMapRef<FApplyViscosityCS> ComputeShader(ShaderMap);
@@ -427,7 +484,10 @@ void FGPUFluidSimulator::AddApplyViscosityPass(
 	PassParameters->NeighborList = InNeighborListSRV;
 	PassParameters->NeighborCounts = InNeighborCountsSRV;
 	PassParameters->ParticleCount = CurrentParticleCount;
-	if (CurrentIndirectArgsBuffer) PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+	if (CurrentIndirectArgsBuffer)
+	{
+		PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+	}
 	PassParameters->SmoothingRadius = Params.SmoothingRadius;
 	PassParameters->ViscosityCoefficient = Params.ViscosityCoefficient;
 	PassParameters->Poly6Coeff = Params.Poly6Coeff;
@@ -585,6 +645,15 @@ void FGPUFluidSimulator::AddApplyViscosityPass(
 // Particle Sleeping Pass (NVIDIA Flex Stabilization)
 //=============================================================================
 
+/**
+ * @brief Add RDG pass to put slow-moving particles to sleep for stability.
+ * @param GraphBuilder RDG builder.
+ * @param InParticlesUAV Read-write access to particle buffer.
+ * @param InSleepCountersUAV Persistence counters for sleep state.
+ * @param InNeighborListSRV Neighbor list cache.
+ * @param InNeighborCountsSRV Neighbor count cache.
+ * @param Params Simulation parameters.
+ */
 void FGPUFluidSimulator::AddParticleSleepingPass(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferUAVRef InParticlesUAV,
@@ -593,8 +662,14 @@ void FGPUFluidSimulator::AddParticleSleepingPass(
 	FRDGBufferSRVRef InNeighborCountsSRV,
 	const FGPUFluidSimulationParams& Params)
 {
-	if (!bEverHadParticles) return;
-	if (!Params.bEnableParticleSleeping) return;
+	if (!bEverHadParticles)
+	{
+		return;
+	}
+	if (!Params.bEnableParticleSleeping)
+	{
+		return;
+	}
 
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 	TShaderMapRef<FParticleSleepingCS> ComputeShader(ShaderMap);
@@ -605,7 +680,10 @@ void FGPUFluidSimulator::AddParticleSleepingPass(
 	PassParameters->NeighborList = InNeighborListSRV;
 	PassParameters->NeighborCounts = InNeighborCountsSRV;
 	PassParameters->ParticleCount = CurrentParticleCount;
-	if (CurrentIndirectArgsBuffer) PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+	if (CurrentIndirectArgsBuffer)
+	{
+		PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+	}
 	PassParameters->SleepVelocityThreshold = Params.SleepVelocityThreshold;
 	PassParameters->SleepFrameThreshold = Params.SleepFrameThreshold;
 	PassParameters->WakeVelocityThreshold = Params.WakeVelocityThreshold;
@@ -630,12 +708,21 @@ void FGPUFluidSimulator::AddParticleSleepingPass(
 // Finalize Positions Pass
 //=============================================================================
 
+/**
+ * @brief Add RDG pass to finalize particle positions and update velocities.
+ * @param GraphBuilder RDG builder.
+ * @param SpatialData Cached spatial structures.
+ * @param Params Simulation parameters.
+ */
 void FGPUFluidSimulator::AddFinalizePositionsPass(
 	FRDGBuilder& GraphBuilder,
 	const FSimulationSpatialData& SpatialData,
 	const FGPUFluidSimulationParams& Params)
 {
-	if (!bEverHadParticles) return;
+	if (!bEverHadParticles)
+	{
+		return;
+	}
 
 	FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 	TShaderMapRef<FFinalizePositionsCS> ComputeShader(ShaderMap);
@@ -646,7 +733,10 @@ void FGPUFluidSimulator::AddFinalizePositionsPass(
 	PassParameters->PackedVelocities = GraphBuilder.CreateUAV(SpatialData.SoA_PackedVelocities, PF_R32G32_UINT);  // B plan
 	PassParameters->Flags = GraphBuilder.CreateUAV(SpatialData.SoA_Flags, PF_R32_UINT);
 	PassParameters->ParticleCount = CurrentParticleCount;
-	if (CurrentIndirectArgsBuffer) PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+	if (CurrentIndirectArgsBuffer)
+	{
+		PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+	}
 	PassParameters->DeltaTime = Params.DeltaTime;
 	PassParameters->MaxVelocity = MaxVelocity;  // Safety clamp (50000 cm/s = 500 m/s)
 	PassParameters->GlobalDamping = Params.GlobalDamping;
@@ -671,6 +761,18 @@ void FGPUFluidSimulator::AddFinalizePositionsPass(
 // Bone Delta Attachment Passes (NEW simplified bone-following system)
 //=============================================================================
 
+/**
+ * @brief Add RDG pass to apply bone transforms to attached particles.
+ * @param GraphBuilder RDG builder.
+ * @param ParticlesUAV Read-write access to particle buffer.
+ * @param BoneDeltaAttachmentSRV Read-only access to attachment data.
+ * @param LocalBoundaryParticlesSRV Read-only access to local boundary data.
+ * @param BoundaryParticleCount Number of boundary particles.
+ * @param BoneTransformsSRV Read-only access to bone transforms.
+ * @param BoneCount Number of bones in the skeleton.
+ * @param ComponentTransform World transform of the component.
+ * @param DeltaTime Simulation time step.
+ */
 void FGPUFluidSimulator::AddApplyBoneTransformPass(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferUAVRef ParticlesUAV,
@@ -695,7 +797,10 @@ void FGPUFluidSimulator::AddApplyBoneTransformPass(
 	FApplyBoneTransformCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FApplyBoneTransformCS::FParameters>();
 	PassParameters->Particles = ParticlesUAV;
 	PassParameters->ParticleCount = CurrentParticleCount;
-	if (CurrentIndirectArgsBuffer) PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+	if (CurrentIndirectArgsBuffer)
+	{
+		PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+	}
 	PassParameters->BoneDeltaAttachments = BoneDeltaAttachmentSRV;
 	PassParameters->LocalBoundaryParticles = LocalBoundaryParticlesSRV;
 	PassParameters->BoundaryParticleCount = BoundaryParticleCount;
@@ -721,6 +826,19 @@ void FGPUFluidSimulator::AddApplyBoneTransformPass(
 	}
 }
 
+/**
+ * @brief Add RDG pass to update bone delta attachment data after simulation.
+ * @param GraphBuilder RDG builder.
+ * @param ParticlesUAV Read-write access to particle buffer.
+ * @param BoneDeltaAttachmentUAV Read-write access to attachment data.
+ * @param SortedBoundaryParticlesSRV Read-only access to sorted boundary data.
+ * @param BoundaryCellStartSRV Z-Order sorted cell start indices for boundaries.
+ * @param BoundaryCellEndSRV Z-Order sorted cell end indices for boundaries.
+ * @param BoundaryParticleCount Number of boundary particles.
+ * @param WorldBoundaryParticlesSRV Read-only access to unsorted world boundary data.
+ * @param WorldBoundaryParticleCount Total world boundary particle count.
+ * @param Params Simulation parameters.
+ */
 void FGPUFluidSimulator::AddUpdateBoneDeltaAttachmentPass(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferUAVRef ParticlesUAV,
@@ -756,7 +874,10 @@ void FGPUFluidSimulator::AddUpdateBoneDeltaAttachmentPass(
 	FUpdateBoneDeltaAttachmentCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FUpdateBoneDeltaAttachmentCS::FParameters>();
 	PassParameters->Particles = ParticlesUAV;
 	PassParameters->ParticleCount = CurrentParticleCount;
-	if (CurrentIndirectArgsBuffer) PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+	if (CurrentIndirectArgsBuffer)
+	{
+		PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+	}
 	PassParameters->BoneDeltaAttachments = BoneDeltaAttachmentUAV;
 
 	// Boundary particles for attachment search (Z-Order sorted, contains OriginalIndex)

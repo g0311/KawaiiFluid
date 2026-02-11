@@ -11,38 +11,46 @@
 #include "GPU/GPUFluidParticle.h"
 #include "GPU/GPUFluidSimulator.h"
 
+/**
+ * @brief Default constructor for the render resource.
+ */
 FKawaiiFluidRenderResource::FKawaiiFluidRenderResource()
 	: ParticleCount(0)
 	, BufferCapacity(0)
 {
 }
 
+/**
+ * @brief Destructor ensuring resources are released before object destruction.
+ */
 FKawaiiFluidRenderResource::~FKawaiiFluidRenderResource()
 {
-	// Ensure render resource has been properly cleaned up
 	check(!IsInitialized() && "RenderResource must be released before destruction!");
 }
 
+/**
+ * @brief Initialize the RHI resources, creating initial small buffers.
+ */
 void FKawaiiFluidRenderResource::InitRHI(FRHICommandListBase& RHICmdList)
 {
-	// Initially create small buffer (will resize when actual data is updated)
 	if (BufferCapacity == 0)
 	{
-		BufferCapacity = 100; // Default 100 particles
+		BufferCapacity = 100;
 	}
 
 	ResizeBuffer(RHICmdList, BufferCapacity);
 }
 
+/**
+ * @brief Release all GPU buffers and views.
+ */
 void FKawaiiFluidRenderResource::ReleaseRHI()
 {
-	// Release Legacy AoS buffers
 	ParticleBuffer.SafeRelease();
 	ParticleSRV.SafeRelease();
 	ParticleUAV.SafeRelease();
 	PooledParticleBuffer.SafeRelease();
 
-	// Release SoA buffers
 	PooledPositionBuffer.SafeRelease();
 	PooledVelocityBuffer.SafeRelease();
 
@@ -51,11 +59,11 @@ void FKawaiiFluidRenderResource::ReleaseRHI()
 	bBufferReadyForRendering.store(false);
 }
 
+/**
+ * @brief Internal helper to determine if the buffer needs growth to accommodate a new particle count.
+ */
 bool FKawaiiFluidRenderResource::NeedsResize(int32 NewCount) const
 {
-	// Only resize if buffer is too SMALL (not for shrinking)
-	// This prevents flickering from resize during normal operation
-	// Buffer shrinking is disabled to improve stability
 	const bool bNeedGrow = NewCount > BufferCapacity;
 
 	if (bNeedGrow)
@@ -67,19 +75,22 @@ bool FKawaiiFluidRenderResource::NeedsResize(int32 NewCount) const
 	return bNeedGrow;
 }
 
+/**
+ * @brief Recreates all GPU buffers with a new capacity.
+ * 
+ * Uses the Render Graph (RDG) to atomically create and clear new buffers while 
+ * maintaining compatibility between legacy AoS and optimized SoA paths.
+ */
 void FKawaiiFluidRenderResource::ResizeBuffer(FRHICommandListBase& RHICmdList, int32 NewCapacity)
 {
-	// Release existing buffers (Legacy AoS)
 	ParticleBuffer.SafeRelease();
 	ParticleSRV.SafeRelease();
 	ParticleUAV.SafeRelease();
 	PooledParticleBuffer.SafeRelease();
 
-	// Release SoA buffers
 	PooledPositionBuffer.SafeRelease();
 	PooledVelocityBuffer.SafeRelease();
 
-	// Release Bounds/RenderParticle buffers
 	PooledBoundsBuffer.SafeRelease();
 	PooledRenderParticleBuffer.SafeRelease();
 
@@ -92,12 +103,11 @@ void FKawaiiFluidRenderResource::ResizeBuffer(FRHICommandListBase& RHICmdList, i
 
 	const uint32 ElementSize = sizeof(FKawaiiFluidRenderParticle);
 
-	// Create Pooled Buffer via RDG (Phase 2: single source of truth)
 	FRHICommandListImmediate& ImmediateCmdList = static_cast<FRHICommandListImmediate&>(RHICmdList);
 	FRDGBuilder GraphBuilder(ImmediateCmdList);
 
 	//========================================
-	// Create Legacy AoS buffers (maintain compatibility)
+	// Create Legacy AoS buffers
 	//========================================
 	FRDGBufferDesc RDGBufferDesc = FRDGBufferDesc::CreateStructuredDesc(ElementSize, NewCapacity);
 	RDGBufferDesc.Usage |= EBufferUsageFlags::UnorderedAccess;
@@ -108,10 +118,9 @@ void FKawaiiFluidRenderResource::ResizeBuffer(FRHICommandListBase& RHICmdList, i
 	GraphBuilder.QueueBufferExtraction(RDGBuffer, &PooledParticleBuffer, ERHIAccess::SRVMask);
 
 	//========================================
-	// Create SoA buffers (memory bandwidth optimization)
+	// Create SoA buffers
 	//========================================
 
-	// Position buffer (float3 = 12 bytes)
 	FRDGBufferDesc PositionBufferDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector3f), NewCapacity);
 	PositionBufferDesc.Usage |= EBufferUsageFlags::UnorderedAccess;
 	FRDGBufferRef PositionRDGBuffer = GraphBuilder.CreateBuffer(PositionBufferDesc, TEXT("RenderPositionsSoA"));
@@ -120,7 +129,6 @@ void FKawaiiFluidRenderResource::ResizeBuffer(FRHICommandListBase& RHICmdList, i
 	AddClearUAVPass(GraphBuilder, PositionUAV, 0u);
 	GraphBuilder.QueueBufferExtraction(PositionRDGBuffer, &PooledPositionBuffer, ERHIAccess::SRVMask);
 
-	// Velocity buffer (float3 = 12 bytes)
 	FRDGBufferDesc VelocityBufferDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector3f), NewCapacity);
 	VelocityBufferDesc.Usage |= EBufferUsageFlags::UnorderedAccess;
 	FRDGBufferRef VelocityRDGBuffer = GraphBuilder.CreateBuffer(VelocityBufferDesc, TEXT("RenderVelocitiesSoA"));
@@ -130,7 +138,7 @@ void FKawaiiFluidRenderResource::ResizeBuffer(FRHICommandListBase& RHICmdList, i
 	GraphBuilder.QueueBufferExtraction(VelocityRDGBuffer, &PooledVelocityBuffer, ERHIAccess::SRVMask);
 
 	//========================================
-	// Bounds buffer (float3 * 2 = Min, Max)
+	// Bounds and RenderParticle buffers
 	//========================================
 	FRDGBufferDesc BoundsBufferDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector3f), 2);
 	BoundsBufferDesc.Usage |= EBufferUsageFlags::UnorderedAccess;
@@ -140,9 +148,6 @@ void FKawaiiFluidRenderResource::ResizeBuffer(FRHICommandListBase& RHICmdList, i
 	AddClearUAVPass(GraphBuilder, BoundsUAV, 0u);
 	GraphBuilder.QueueBufferExtraction(BoundsRDGBuffer, &PooledBoundsBuffer, ERHIAccess::SRVMask);
 
-	//========================================
-	// RenderParticle buffer (FKawaiiRenderParticle)
-	//========================================
 	FRDGBufferDesc RenderParticleBufferDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(FKawaiiFluidRenderParticle), NewCapacity);
 	RenderParticleBufferDesc.Usage |= EBufferUsageFlags::UnorderedAccess;
 	FRDGBufferRef RenderParticleRDGBuffer = GraphBuilder.CreateBuffer(RenderParticleBufferDesc, TEXT("RenderParticles"));
@@ -153,19 +158,16 @@ void FKawaiiFluidRenderResource::ResizeBuffer(FRHICommandListBase& RHICmdList, i
 
 	GraphBuilder.Execute();
 
-	// Get RHI buffer from pooled buffer (Legacy AoS)
 	if (PooledParticleBuffer.IsValid())
 	{
 		ParticleBuffer = PooledParticleBuffer->GetRHI();
 
-		// Create Shader Resource View
 		ParticleSRV = ImmediateCmdList.CreateShaderResourceView(
 			ParticleBuffer,
 			FRHIViewDesc::CreateBufferSRV()
 				.SetTypeFromBuffer(ParticleBuffer)
 		);
 
-		// Create Unordered Access View (Phase 2)
 		ParticleUAV = ImmediateCmdList.CreateUnorderedAccessView(
 			ParticleBuffer,
 			FRHIViewDesc::CreateBufferUAV()
@@ -178,6 +180,9 @@ void FKawaiiFluidRenderResource::ResizeBuffer(FRHICommandListBase& RHICmdList, i
 // GPU simulator interface implementation
 //========================================
 
+/**
+ * @brief Sets the GPU simulator reference and triggers buffer resizing if necessary.
+ */
 void FKawaiiFluidRenderResource::SetGPUSimulatorReference(
 	FGPUFluidSimulator* InSimulator,
 	int32 InMaxParticleCount,

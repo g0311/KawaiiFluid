@@ -28,6 +28,9 @@ FGPUStaticBoundaryManager::~FGPUStaticBoundaryManager()
 // Lifecycle
 //=============================================================================
 
+/**
+ * @brief Initialize the manager.
+ */
 void FGPUStaticBoundaryManager::Initialize()
 {
 	if (bIsInitialized)
@@ -39,6 +42,9 @@ void FGPUStaticBoundaryManager::Initialize()
 	UE_LOG(LogGPUStaticBoundary, Log, TEXT("FGPUStaticBoundaryManager initialized"));
 }
 
+/**
+ * @brief Release all resources.
+ */
 void FGPUStaticBoundaryManager::Release()
 {
 	if (!bIsInitialized)
@@ -59,6 +65,13 @@ void FGPUStaticBoundaryManager::Release()
 // Primitive Key Generation
 //=============================================================================
 
+/**
+ * @brief Generate unique cache key for a primitive.
+ * @param Type Primitive type.
+ * @param OwnerID Owner ID.
+ * @param GeometryHash Geometry hash.
+ * @return 64-bit unique key.
+ */
 uint64 FGPUStaticBoundaryManager::MakePrimitiveKey(EPrimitiveType Type, int32 OwnerID, uint32 GeometryHash)
 {
 	// Key format: (Type:8 | OwnerID:32 | GeometryHash:24) = 64-bit
@@ -69,6 +82,9 @@ uint64 FGPUStaticBoundaryManager::MakePrimitiveKey(EPrimitiveType Type, int32 Ow
 	return Key;
 }
 
+/**
+ * @brief Compute geometry hash for a sphere.
+ */
 uint32 FGPUStaticBoundaryManager::ComputeGeometryHash(const FGPUCollisionSphere& Sphere)
 {
 	// Hash: Center position + Radius
@@ -79,6 +95,9 @@ uint32 FGPUStaticBoundaryManager::ComputeGeometryHash(const FGPUCollisionSphere&
 	return Hash & 0xFFFFFF;  // Truncate to 24 bits
 }
 
+/**
+ * @brief Compute geometry hash for a capsule.
+ */
 uint32 FGPUStaticBoundaryManager::ComputeGeometryHash(const FGPUCollisionCapsule& Capsule)
 {
 	// Hash: Start + End + Radius
@@ -92,6 +111,9 @@ uint32 FGPUStaticBoundaryManager::ComputeGeometryHash(const FGPUCollisionCapsule
 	return Hash & 0xFFFFFF;
 }
 
+/**
+ * @brief Compute geometry hash for a box.
+ */
 uint32 FGPUStaticBoundaryManager::ComputeGeometryHash(const FGPUCollisionBox& Box)
 {
 	// Hash: Center + Extent + Rotation
@@ -108,6 +130,9 @@ uint32 FGPUStaticBoundaryManager::ComputeGeometryHash(const FGPUCollisionBox& Bo
 	return Hash & 0xFFFFFF;
 }
 
+/**
+ * @brief Compute geometry hash for a convex hull.
+ */
 uint32 FGPUStaticBoundaryManager::ComputeGeometryHash(const FGPUCollisionConvex& Convex)
 {
 	// Hash: Center + BoundingRadius + PlaneStartIndex + PlaneCount
@@ -124,6 +149,17 @@ uint32 FGPUStaticBoundaryManager::ComputeGeometryHash(const FGPUCollisionConvex&
 // Boundary Particle Generation (with Primitive-based Caching)
 //=============================================================================
 
+/**
+ * @brief Generate boundary particles from collision primitives.
+ * @param Spheres Sphere colliders.
+ * @param Capsules Capsule colliders.
+ * @param Boxes Box colliders.
+ * @param Convexes Convex hull headers.
+ * @param ConvexPlanes Convex hull planes.
+ * @param SmoothingRadius Smoothing radius.
+ * @param RestDensity Rest density.
+ * @return true if changed.
+ */
 bool FGPUStaticBoundaryManager::GenerateBoundaryParticles(
 	const TArray<FGPUCollisionSphere>& Spheres,
 	const TArray<FGPUCollisionCapsule>& Capsules,
@@ -171,7 +207,7 @@ bool FGPUStaticBoundaryManager::GenerateBoundaryParticles(
 	// Process Spheres
 	for (const FGPUCollisionSphere& Sphere : Spheres)
 	{
-		if (Sphere.BoneIndex >= 0)  // Skip skinned colliders
+		if (Sphere.BoneIndex >= 0)
 		{
 			continue;
 		}
@@ -314,6 +350,9 @@ bool FGPUStaticBoundaryManager::GenerateBoundaryParticles(
 	return false;
 }
 
+/**
+ * @brief Clear all generated boundary particles and cache.
+ */
 void FGPUStaticBoundaryManager::ClearBoundaryParticles()
 {
 	BoundaryParticles.Reset();
@@ -323,6 +362,9 @@ void FGPUStaticBoundaryManager::ClearBoundaryParticles()
 	bCacheInvalidated = true;
 }
 
+/**
+ * @brief Invalidate cache.
+ */
 void FGPUStaticBoundaryManager::InvalidateCache()
 {
 	PrimitiveCache.Empty();
@@ -337,6 +379,12 @@ void FGPUStaticBoundaryManager::InvalidateCache()
 // Generation Helpers
 //=============================================================================
 
+/**
+ * @brief Calculate Psi value based on spacing and rest density.
+ * @param Spacing Particle spacing.
+ * @param RestDensity Rest density.
+ * @return Psi value.
+ */
 float FGPUStaticBoundaryManager::CalculatePsi(float Spacing, float RestDensity) const
 {
 	// Psi (ψ) - Boundary particle density contribution (Akinci 2012)
@@ -362,6 +410,15 @@ float FGPUStaticBoundaryManager::CalculatePsi(float Spacing, float RestDensity) 
 	return RestDensity * EffectiveVolume_m * 0.3f;
 }
 
+/**
+ * @brief Generate boundary particles on a sphere surface.
+ * @param Center Sphere center.
+ * @param Radius Sphere radius.
+ * @param Spacing Particle spacing.
+ * @param Psi Density contribution.
+ * @param OwnerID Owner ID.
+ * @param OutParticles Output array.
+ */
 void FGPUStaticBoundaryManager::GenerateSphereBoundaryParticles(
 	const FVector3f& Center,
 	float Radius,
@@ -406,6 +463,16 @@ void FGPUStaticBoundaryManager::GenerateSphereBoundaryParticles(
 	}
 }
 
+/**
+ * @brief Generate boundary particles on a capsule surface.
+ * @param Start Capsule start.
+ * @param End Capsule end.
+ * @param Radius Capsule radius.
+ * @param Spacing Particle spacing.
+ * @param Psi Density contribution.
+ * @param OwnerID Owner ID.
+ * @param OutParticles Output array.
+ */
 void FGPUStaticBoundaryManager::GenerateCapsuleBoundaryParticles(
 	const FVector3f& Start,
 	const FVector3f& End,
@@ -525,6 +592,16 @@ void FGPUStaticBoundaryManager::GenerateCapsuleBoundaryParticles(
 	}
 }
 
+/**
+ * @brief Generate boundary particles on a box surface.
+ * @param Center Box center.
+ * @param Extent Box extent.
+ * @param Rotation Box rotation.
+ * @param Spacing Particle spacing.
+ * @param Psi Density contribution.
+ * @param OwnerID Owner ID.
+ * @param OutParticles Output array.
+ */
 void FGPUStaticBoundaryManager::GenerateBoxBoundaryParticles(
 	const FVector3f& Center,
 	const FVector3f& Extent,
@@ -602,6 +679,15 @@ void FGPUStaticBoundaryManager::GenerateBoxBoundaryParticles(
 	}
 }
 
+/**
+ * @brief Generate boundary particles on a convex hull surface.
+ * @param Convex Convex header.
+ * @param AllPlanes Array of all planes.
+ * @param Spacing Particle spacing.
+ * @param Psi Density contribution.
+ * @param OwnerID Owner ID.
+ * @param OutParticles Output array.
+ */
 void FGPUStaticBoundaryManager::GenerateConvexBoundaryParticles(
 	const FGPUCollisionConvex& Convex,
 	const TArray<FGPUConvexPlane>& AllPlanes,

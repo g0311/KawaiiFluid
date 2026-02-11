@@ -12,11 +12,45 @@ class FRHIGPUBufferReadback;
 class FRDGBuilder;
 
 /**
- * FGPUSpawnManager
- *
- * Manages thread-safe particle spawn requests for GPU fluid simulation.
- * Game thread queues spawn requests, render thread processes them.
- * Uses double-buffering to avoid lock contention during simulation.
+ * @class FGPUSpawnManager
+ * @brief Manages thread-safe particle spawn requests for GPU fluid simulation.
+ * 
+ * @param bIsInitialized State of the manager.
+ * @param MaxParticleCapacity Maximum number of particles the system can handle.
+ * @param PendingSpawnRequests Queue for new spawn requests from any thread.
+ * @param ActiveSpawnRequests Buffer for requests being processed by the render thread.
+ * @param SpawnLock Critical section for spawn request thread safety.
+ * @param bHasPendingSpawnRequests Atomic flag for quick pending check.
+ * @param PendingGPUBrushDespawns Queue for brush-based despawn requests.
+ * @param ActiveGPUBrushDespawns Buffer for brush despawns being processed.
+ * @param PendingGPUSourceDespawns Queue for source-based despawn requests.
+ * @param ActiveGPUSourceDespawns Buffer for source despawns being processed.
+ * @param GPUDespawnLock Critical section for despawn request thread safety.
+ * @param bHasPendingGPUDespawnRequests Atomic flag for quick despawn pending check.
+ * @param PersistentIDHistogramBuffer GPU buffer for ID distribution histogram.
+ * @param PersistentOldestThresholdBuffer GPU buffer for oldest-particle ID thresholds.
+ * @param PersistentBoundaryCounterBuffer GPU buffer for atomic counter.
+ * @param EmitterMaxCountsCPU CPU-side per-source particle limits.
+ * @param bEmitterMaxCountsDirty Flag indicating need to update GPU emitter limits.
+ * @param ActiveEmitterMaxCount Number of sources with active limits.
+ * @param PersistentEmitterMaxCountsBuffer GPU buffer for source limits.
+ * @param PersistentPerSourceExcessBuffer GPU buffer for excess particle counts per source.
+ * @param NextParticleID Atomic counter for assigning unique particle IDs.
+ * @param DefaultSpawnRadius Default radius assigned to new particles.
+ * @param DefaultSpawnMass Default mass assigned to new particles.
+ * @param SourceCounterBuffer GPU buffer tracking particle count per source.
+ * @param SourceCounterReadbacks Ring buffer for async GPU->CPU source count transfers.
+ * @param SourceCounterWriteIndex Current write index in readback ring buffer.
+ * @param SourceCounterReadIndex Current read index in readback ring buffer.
+ * @param SourceCounterPendingCount Number of active readback operations.
+ * @param CachedSourceCounts Locally cached particle counts per source.
+ * @param SourceCountLock Critical section for source count access.
+ * @param PersistentAliveMaskBuffer Reusable GPU buffer for particle survival flags.
+ * @param PersistentPrefixSumsBuffer Reusable GPU buffer for parallel scan outputs.
+ * @param PersistentBlockSumsBuffer Reusable GPU buffer for block-level scan data.
+ * @param PersistentCompactedBuffer Reusable double-buffered GPU buffers for compaction output.
+ * @param CompactedBufferIndex Swap index for double-buffered output.
+ * @param StreamCompactionCapacity Current capacity of compaction buffers.
  */
 class KAWAIIFLUIDRUNTIME_API FGPUSpawnManager
 {
@@ -28,16 +62,12 @@ public:
 	// Lifecycle
 	//=========================================================================
 
-	/** Initialize the spawn manager with max particle capacity */
 	void Initialize(int32 InMaxParticleCount);
 
-	/** Release all resources */
 	void Release();
 
-	/** Check if initialized and ready */
 	bool IsReady() const { return bIsInitialized; }
 
-	/** Reset all state (clear all requests and reset NextParticleID) */
 	void Reset()
 	{
 		FScopeLock SpawnGuard(&SpawnLock);
@@ -55,10 +85,6 @@ public:
 		NextParticleID.store(0);
 	}
 
-	/** Clear only despawn tracking state (keeps NextParticleID intact)
-	 * Use this when uploading particles with new IDs - clears stale despawn requests
-	 * without disrupting the atomic ID allocation from AllocateParticleIDs()
-	 */
 	void ClearDespawnTracking()
 	{
 		FScopeLock Lock(&GPUDespawnLock);
@@ -73,83 +99,34 @@ public:
 	// Thread-Safe Public API (callable from any thread)
 	//=========================================================================
 
-	/**
-	 * Add a spawn request (thread-safe)
-	 * @param Position - World position to spawn at
-	 * @param Velocity - Initial velocity
-	 * @param Mass - Particle mass (0 = use default)
-	 */
 	void AddSpawnRequest(const FVector3f& Position, const FVector3f& Velocity, float Mass = 1.0f);
 
-	/**
-	 * Add multiple spawn requests at once (thread-safe, more efficient)
-	 * @param Requests - Array of spawn requests
-	 */
 	void AddSpawnRequests(const TArray<FGPUSpawnRequest>& Requests);
 
-	/** Clear all pending spawn requests */
 	void ClearSpawnRequests();
 
-	/**
-	 * Cancel pending spawn requests for a specific SourceID (thread-safe)
-	 * Used when despawning to prevent particles from spawning after despawn
-	 * @param SourceID - Source ID to cancel spawns for
-	 * @return Number of cancelled spawn requests
-	 */
 	int32 CancelPendingSpawnsForSource(int32 SourceID);
 
-	/** Get number of pending spawn requests (thread-safe) */
 	int32 GetPendingSpawnCount() const;
 
-	/** Check if there are pending spawn requests (lock-free) */
 	bool HasPendingSpawnRequests() const { return bHasPendingSpawnRequests.load(); }
 
 	//=========================================================================
 	// GPU-Driven Despawn API (Thread-Safe)
-	// Despawn decisions made entirely on GPU (no CPU readback dependency)
 	//=========================================================================
 
-	/**
-	 * Add a brush despawn request - removes particles within radius (thread-safe)
-	 * @param Center - World position of brush center
-	 * @param Radius - Brush radius (will be squared on construction)
-	 */
 	void AddGPUDespawnBrushRequest(const FVector3f& Center, float Radius);
 
-	/**
-	 * Add a source despawn request - removes all particles with matching SourceID (thread-safe)
-	 * @param SourceID - Source component ID to despawn
-	 */
 	void AddGPUDespawnSourceRequest(int32 SourceID);
 
-	/**
-	 * Set per-source emitter max particle count for GPU-driven recycling (thread-safe)
-	 * When set, GPU automatically removes oldest particles to keep each source under its limit
-	 * @param SourceID - Source component ID (0 to MaxSourceCount-1)
-	 * @param MaxCount - Max particles for this source (0 = no limit / disable)
-	 */
 	void SetSourceEmitterMax(int32 SourceID, int32 MaxCount);
 
-	/** Check if any per-source recycle limits are active */
 	bool HasPerSourceRecycle() const { return ActiveEmitterMaxCount > 0; }
 
-	/** Check if there are pending GPU despawn requests (lock-free) */
 	bool HasPendingGPUDespawnRequests() const { return bHasPendingGPUDespawnRequests.load(); }
 
-	/** Swap pending GPU despawn requests to active buffers (call at start of simulation frame)
-	 * @return true if any despawn requests were swapped
-	 */
 	bool SwapGPUDespawnBuffers();
 
-	/**
-	 * Add GPU-driven despawn RDG passes
-	 * Pipeline: ClearUAV(AliveMask,0) → InitAliveMask → [Brush] → [Source] → [PerSourceOldest] → UpdateSourceCounters → PrefixSum → Compact
-	 * @param GraphBuilder - RDG builder
-	 * @param InOutParticleBuffer - Particle buffer (updated to compacted output)
-	 * @param InOutParticleCount - Particle count (used for dispatch, not updated by GPU)
-	 * @param NextParticleIDHint - Hint for IDShiftBits computation (from NextParticleID)
-	 * @param ParticleCountBuffer - GPU particle count buffer for bounds checking in shaders
-	 */
 	void AddGPUDespawnPass(
 		FRDGBuilder& GraphBuilder,
 		FRDGBufferRef& InOutParticleBuffer,
@@ -161,82 +138,40 @@ public:
 	// Source Counter API (Per-Component Particle Count Tracking)
 	//=========================================================================
 
-	/**
-	 * Get persistent source counter buffer for RDG pass
-	 * Buffer contains [MaxSourceCount] uint32 counters, one per SourceID
-	 */
 	TRefCountPtr<FRDGPooledBuffer> GetSourceCounterBuffer() const { return SourceCounterBuffer; }
 
-	/**
-	 * Register source counter buffer for RDG and get UAV
-	 * Call this in simulation passes that need to update source counters
-	 */
 	FRDGBufferUAVRef RegisterSourceCounterUAV(FRDGBuilder& GraphBuilder);
 
-	/**
-	 * Get particle count for a specific source (component)
-	 * Returns cached value from last readback (2-3 frame latency)
-	 * @param SourceID - Source component ID (0 to MaxSourceCount-1)
-	 */
 	int32 GetParticleCountForSource(int32 SourceID) const;
 
-	/**
-	 * Get all source counts (returns copy of cached array)
-	 */
 	TArray<int32> GetAllSourceCounts() const;
 
-	/**
-	 * Enqueue source counter readback (call from render thread after simulation)
-	 */
 	void EnqueueSourceCounterReadback(FRHICommandListImmediate& RHICmdList);
 
-	/**
-	 * Process source counter readback (check completion, copy to cache)
-	 * Call from game thread or render thread before querying counts
-	 */
 	void ProcessSourceCounterReadback();
 
-	/**
-	 * Clear all source counters (call when clearing all particles)
-	 */
 	void ClearSourceCounters(FRDGBuilder& GraphBuilder);
 
-	/**
-	 * Initialize source counters from uploaded particles (for level load)
-	 * Counts particles by SourceID and uploads to GPU buffer + CPU cache
-	 * @param Particles - Array of particles to count by SourceID
-	 */
 	void InitializeSourceCountersFromParticles(const TArray<FGPUFluidParticle>& Particles);
 
 	//=========================================================================
 	// Configuration
 	//=========================================================================
 
-	/** Set default particle radius for spawning */
 	void SetDefaultRadius(float Radius) { DefaultSpawnRadius = Radius; }
 
-	/** Get default particle radius */
 	float GetDefaultRadius() const { return DefaultSpawnRadius; }
 
-	/** Set default particle mass (used when spawn request Mass = 0) */
 	void SetDefaultMass(float Mass) { DefaultSpawnMass = Mass; }
 
-	/** Get default particle mass */
 	float GetDefaultMass() const { return DefaultSpawnMass; }
 
-	/** Get next particle ID that will be assigned */
 	int32 GetNextParticleID() const { return NextParticleID.load(); }
 
-	/** Set next particle ID (for PIE transition - sync with uploaded particles) */
 	void SetNextParticleID(int32 ID) { NextParticleID.store(ID); }
 
-	/** Atomically allocate a range of particle IDs (thread-safe for multi-module upload)
-	 * @param Count - Number of IDs to allocate
-	 * @return Starting ID of allocated range [StartID, StartID + Count)
-	 */
 	int32 AllocateParticleIDs(int32 Count) { return NextParticleID.fetch_add(Count); }
 
-	/** Reset NextParticleID to 0 when particle count is 0 (prevents overflow) */
 	void TryResetParticleID(int32 CurrentParticleCount)
 	{
 		if (CurrentParticleCount == 0)
@@ -249,42 +184,22 @@ public:
 	// Render Thread API
 	//=========================================================================
 
-	/**
-	 * Swap pending requests to active buffer (call at start of simulation frame)
-	 * This moves pending requests from game thread buffer to render thread buffer.
-	 * Must be called from render thread.
-	 */
 	void SwapBuffers();
 
-	/** Check if there are active requests to process */
 	bool HasActiveRequests() const { return ActiveSpawnRequests.Num() > 0; }
 
-	/** Get number of active spawn requests for this frame */
 	int32 GetActiveRequestCount() const { return ActiveSpawnRequests.Num(); }
 
-	/** Get the active spawn requests array (render thread only) */
 	const TArray<FGPUSpawnRequest>& GetActiveRequests() const { return ActiveSpawnRequests; }
 
-	/** Clear active requests after processing */
 	void ClearActiveRequests() { ActiveSpawnRequests.Empty(); }
 
-	/**
-	 * Add spawn particles RDG pass
-	 * @param GraphBuilder - RDG builder
-	 * @param ParticlesUAV - Particle buffer UAV
-	 * @param ParticleCounterUAV - Atomic counter for particle allocation
-	 * @param MaxParticleCount - Maximum particle capacity (buffer size)
-	 */
 	void AddSpawnParticlesPass(
 		FRDGBuilder& GraphBuilder,
 		FRDGBufferUAVRef ParticlesUAV,
 		FRDGBufferUAVRef ParticleCounterUAV,
 		int32 MaxParticleCount);
 
-	/**
-	 * Update next particle ID after spawning
-	 * @param SpawnedCount - Number of particles successfully spawned
-	 */
 	void OnSpawnComplete(int32 SpawnedCount);
 
 private:

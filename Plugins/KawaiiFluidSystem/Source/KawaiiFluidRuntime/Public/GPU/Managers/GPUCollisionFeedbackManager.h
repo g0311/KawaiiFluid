@@ -13,24 +13,27 @@ class FRHIGPUBufferReadback;
 class FRDGBuilder;
 
 /**
- * FGPUCollisionFeedbackManager
+ * @class FGPUCollisionFeedbackManager
+ * @brief Manages GPU collision feedback system for particle-collider interaction.
  *
- * Manages GPU collision feedback system for particle-collider interaction.
- * Uses triple-buffered async GPU readback (FRHIGPUBufferReadback) for
- * efficient GPU->CPU data transfer without pipeline stalls.
- *
- * Features:
- * - Collision feedback entries (position, velocity, force for each collision)
- * - Per-collider contact counts (simple collision detection)
- * - Async readback with no FlushRenderingCommands
- *
- * Unified Buffer Layout:
- * - All feedback types merged into single buffer with embedded counters
- * - Buffer layout:
- *   [Header: 16 bytes] BoneCount, SMCount, FISMCount, Reserved
- *   [BoneFeedback: 4096 entries] offset 16
- *   [StaticMeshFeedback: 1024 entries] offset 393,232
- *   [FluidInteractionFeedback: 1024 entries] offset 491,536
+ * @param bIsInitialized State of the manager.
+ * @param bFeedbackEnabled Whether collision feedback recording is active.
+ * @param UnifiedFeedbackBuffer GPU buffer containing merged feedback data and counters.
+ * @param ColliderContactCountBuffer GPU buffer for per-collider contact counts.
+ * @param UnifiedFeedbackReadbacks Triple-buffered readback objects for unified feedback.
+ * @param ContactCountReadbacks Triple-buffered readback objects for contact counts.
+ * @param FeedbackLock Critical section for thread-safe access to ready data.
+ * @param ReadyFeedback Cached bone collider feedback data.
+ * @param ReadyFeedbackCount Number of bone feedback entries available.
+ * @param ReadyStaticMeshFeedback Cached StaticMesh collider feedback data.
+ * @param ReadyStaticMeshFeedbackCount Number of StaticMesh feedback entries available.
+ * @param ReadyFluidInteractionSMFeedback Cached FluidInteraction StaticMesh feedback data.
+ * @param ReadyFluidInteractionSMFeedbackCount Number of FISM feedback entries available.
+ * @param ReadyContactCounts Cached contact counts per collider.
+ * @param CurrentWriteIndex Index for triple buffering (0-2).
+ * @param FeedbackFrameNumber Frame counter for feedback processing.
+ * @param ContactCountFrameNumber Frame counter for contact count processing.
+ * @param CompletedFeedbackFrame Last completed feedback frame number.
  */
 class KAWAIIFLUIDRUNTIME_API FGPUCollisionFeedbackManager
 {
@@ -42,15 +45,9 @@ public:
 	// Constants
 	//=========================================================================
 
-	/** Max feedback entries for bone colliders (BoneIndex >= 0) */
 	static constexpr int32 MAX_COLLISION_FEEDBACK = 4096;
-
-	/** Max feedback entries for WorldCollision StaticMesh (BoneIndex < 0, bHasFluidInteraction = 0) */
 	static constexpr int32 MAX_STATICMESH_COLLISION_FEEDBACK = 1024;
-
-	/** Max feedback entries for FluidInteraction StaticMesh (BoneIndex < 0, bHasFluidInteraction = 1) */
 	static constexpr int32 MAX_FLUIDINTERACTION_SM_FEEDBACK = 1024;
-
 	static constexpr int32 NUM_FEEDBACK_BUFFERS = 3;
 	static constexpr int32 MAX_COLLIDER_COUNT = 256;
 
@@ -58,156 +55,89 @@ public:
 	// Unified Buffer Layout Constants
 	//=========================================================================
 
-	/** Header size: 4 uint32 counters (BoneCount, SMCount, FISMCount, Reserved) */
 	static constexpr int32 UNIFIED_HEADER_SIZE = 16;
-
-	/** Offset to bone feedback section (after header) */
 	static constexpr int32 BONE_FEEDBACK_OFFSET = UNIFIED_HEADER_SIZE;
-
-	/** Offset to StaticMesh feedback section */
-	static constexpr int32 SM_FEEDBACK_OFFSET = BONE_FEEDBACK_OFFSET + MAX_COLLISION_FEEDBACK * 96;  // 96 = sizeof(FGPUCollisionFeedback)
-
-	/** Offset to FluidInteraction feedback section */
+	static constexpr int32 SM_FEEDBACK_OFFSET = BONE_FEEDBACK_OFFSET + MAX_COLLISION_FEEDBACK * 96;
 	static constexpr int32 FISM_FEEDBACK_OFFSET = SM_FEEDBACK_OFFSET + MAX_STATICMESH_COLLISION_FEEDBACK * 96;
-
-	/** Total unified buffer size in bytes */
 	static constexpr int32 UNIFIED_BUFFER_SIZE = FISM_FEEDBACK_OFFSET + MAX_FLUIDINTERACTION_SM_FEEDBACK * 96;
 
 	//=========================================================================
 	// Lifecycle
 	//=========================================================================
 
-	/** Initialize the feedback manager */
 	void Initialize();
 
-	/** Release all resources */
 	void Release();
 
-	/** Check if ready */
 	bool IsReady() const { return bIsInitialized; }
 
 	//=========================================================================
 	// Enable/Disable
 	//=========================================================================
 
-	/** Enable or disable collision feedback recording */
 	void SetEnabled(bool bEnabled) { bFeedbackEnabled = bEnabled; }
 
-	/** Check if collision feedback is enabled */
 	bool IsEnabled() const { return bFeedbackEnabled; }
 
 	//=========================================================================
 	// Buffer Management (called from render thread)
 	//=========================================================================
 
-	/** Allocate readback objects (call from render thread) */
 	void AllocateReadbackObjects(FRHICommandListImmediate& RHICmdList);
 
-	/** Release readback objects */
 	void ReleaseReadbackObjects();
 
-	/** Get or create unified feedback buffer for RDG pass (all feedback types merged) */
 	TRefCountPtr<FRDGPooledBuffer>& GetUnifiedFeedbackBuffer() { return UnifiedFeedbackBuffer; }
 
-	/** Get or create contact count buffer for RDG pass */
 	TRefCountPtr<FRDGPooledBuffer>& GetContactCountBuffer() { return ColliderContactCountBuffer; }
 
 	//=========================================================================
-	// Legacy API (deprecated, kept for compatibility - will be removed)
+	// Legacy API (deprecated)
 	//=========================================================================
 
-	/** @deprecated Use GetUnifiedFeedbackBuffer() instead */
 	TRefCountPtr<FRDGPooledBuffer>& GetFeedbackBuffer() { return UnifiedFeedbackBuffer; }
-	/** @deprecated Counters are now embedded in unified buffer */
 	TRefCountPtr<FRDGPooledBuffer>& GetCounterBuffer() { static TRefCountPtr<FRDGPooledBuffer> Dummy; return Dummy; }
-	/** @deprecated Use GetUnifiedFeedbackBuffer() instead */
 	TRefCountPtr<FRDGPooledBuffer>& GetStaticMeshFeedbackBuffer() { return UnifiedFeedbackBuffer; }
-	/** @deprecated Counters are now embedded in unified buffer */
 	TRefCountPtr<FRDGPooledBuffer>& GetStaticMeshCounterBuffer() { static TRefCountPtr<FRDGPooledBuffer> Dummy; return Dummy; }
-	/** @deprecated Use GetUnifiedFeedbackBuffer() instead */
 	TRefCountPtr<FRDGPooledBuffer>& GetFluidInteractionSMFeedbackBuffer() { return UnifiedFeedbackBuffer; }
-	/** @deprecated Counters are now embedded in unified buffer */
 	TRefCountPtr<FRDGPooledBuffer>& GetFluidInteractionSMCounterBuffer() { static TRefCountPtr<FRDGPooledBuffer> Dummy; return Dummy; }
 
 	//=========================================================================
-	// Readback Processing (called from render thread after simulation)
+	// Readback Processing (called from render thread)
 	//=========================================================================
 
-	/** Process collision feedback readback (non-blocking) */
 	void ProcessFeedbackReadback(FRHICommandListImmediate& RHICmdList);
 
-	/** Process contact count readback (non-blocking) */
 	void ProcessContactCountReadback(FRHICommandListImmediate& RHICmdList);
 
-	/** Enqueue copy for next frame's readback */
 	void EnqueueReadbackCopy(FRHICommandListImmediate& RHICmdList);
 
-	/** Increment frame counter (call after EnqueueCopy) */
 	void IncrementFrameCounter();
 
-	/** Get current write index for triple buffering */
 	int32 GetCurrentWriteIndex() const { return CurrentWriteIndex; }
 
 	//=========================================================================
-	// Query API (thread-safe, callable from game thread)
+	// Query API (thread-safe)
 	//=========================================================================
 
-	/**
-	 * Get collision feedback for a specific collider
-	 * @param ColliderIndex - Index of the collider
-	 * @param OutFeedback - Output array of feedback entries
-	 * @param OutCount - Number of feedback entries
-	 * @return true if feedback is available
-	 */
 	bool GetFeedbackForCollider(int32 ColliderIndex, TArray<FGPUCollisionFeedback>& OutFeedback, int32& OutCount);
 
-	/**
-	 * Get all collision feedback (unfiltered, bone colliders only)
-	 * @param OutFeedback - Output array of all feedback entries
-	 * @param OutCount - Number of feedback entries
-	 * @return true if feedback is available
-	 */
 	bool GetAllFeedback(TArray<FGPUCollisionFeedback>& OutFeedback, int32& OutCount);
 
-	/** Get current feedback count (bone colliders) */
 	int32 GetFeedbackCount() const { return ReadyFeedbackCount; }
 
-	/**
-	 * Get all StaticMesh collision feedback (BoneIndex < 0, bHasFluidInteraction = 0)
-	 * WorldCollision StaticMesh without FluidInteraction component
-	 * @param OutFeedback - Output array of StaticMesh feedback entries
-	 * @param OutCount - Number of feedback entries
-	 * @return true if feedback is available
-	 */
 	bool GetAllStaticMeshFeedback(TArray<FGPUCollisionFeedback>& OutFeedback, int32& OutCount);
 
-	/** Get current StaticMesh feedback count (WorldCollision) */
 	int32 GetStaticMeshFeedbackCount() const { return ReadyStaticMeshFeedbackCount; }
 
-	/**
-	 * Get all FluidInteraction StaticMesh collision feedback (BoneIndex < 0, bHasFluidInteraction = 1)
-	 * StaticMesh with FluidInteraction component - used for buoyancy center calculation
-	 * @param OutFeedback - Output array of FluidInteraction SM feedback entries
-	 * @param OutCount - Number of feedback entries
-	 * @return true if feedback is available
-	 */
 	bool GetAllFluidInteractionSMFeedback(TArray<FGPUCollisionFeedback>& OutFeedback, int32& OutCount);
 
-	/** Get current FluidInteraction StaticMesh feedback count */
 	int32 GetFluidInteractionSMFeedbackCount() const { return ReadyFluidInteractionSMFeedbackCount; }
 
-	/**
-	 * Get contact count for a specific collider index
-	 * @param ColliderIndex - Index of the collider
-	 * @return Number of particles colliding with this collider
-	 */
 	int32 GetContactCount(int32 ColliderIndex) const;
 
-	/**
-	 * Get all collider contact counts
-	 * @param OutCounts - Output array of contact counts per collider
-	 */
 	void GetAllContactCounts(TArray<int32>& OutCounts) const;
+
 
 private:
 	//=========================================================================

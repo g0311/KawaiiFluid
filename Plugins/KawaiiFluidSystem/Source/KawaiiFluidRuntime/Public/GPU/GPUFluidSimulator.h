@@ -28,14 +28,29 @@ class FRHIGPUBufferReadback;
 class USkeletalMeshComponent;
 
 /**
- * GPU Fluid Simulator
- * Manages GPU-based SPH fluid physics simulation
- *
- * This class handles:
- * - GPU buffer management for particle data
- * - CPU ↔ GPU data transfers
- * - Orchestration of compute shader passes
- * - Integration with spatial hash system
+ * @class FGPUFluidSimulator
+ * @brief High-performance GPU-based SPH fluid simulation engine.
+ * 
+ * Manages particle life cycle (spawn/despawn), physics simulation using XPBD,
+ * spatial hashing, collision detection, and asynchronous readbacks.
+ * 
+ * @param bIsInitialized Whether the simulator is initialized and ready.
+ * @param MaxParticleCount Maximum number of particles allowed.
+ * @param CurrentParticleCount Actual number of active particles.
+ * @param PreviousParticleCount Particle count from the previous frame.
+ * @param ExternalForce Global force vector applied to all particles.
+ * @param MaxVelocity Maximum velocity clamp for stability.
+ * @param SpawnManager Manager for particle creation and deletion.
+ * @param CollisionManager Manager for interaction with scene geometry.
+ * @param ZOrderSortManager Manager for spatial data structure and sorting.
+ * @param BoundarySkinningManager Manager for animated boundary particles.
+ * @param AdhesionManager Manager for surface attachment and damping.
+ * @param StaticBoundaryManager Manager for static world boundary particles.
+ * @param ParticleBufferRHI Main particle data buffer.
+ * @param PositionBufferRHI Extracted positions for spatial hashing.
+ * @param StagingBufferRHI Buffer for async GPU->CPU transfers.
+ * @param PersistentParticleBuffer Pooled buffer for cross-frame persistence.
+ * @param ParticleCountElementIndex Index of the count in the atomic buffer.
  */
 class KAWAIIFLUIDRUNTIME_API FGPUFluidSimulator : public FRenderResource
 {
@@ -43,22 +58,14 @@ public:
 	FGPUFluidSimulator();
 	virtual ~FGPUFluidSimulator();
 
-	//=============================================================================
-	// Initialization
-	//=============================================================================
-
-	/** Initialize with maximum particle capacity */
+	/** Initialize simulation resources */
 	void Initialize(int32 InMaxParticleCount);
 
-	/** Release all GPU resources */
+	/** Release simulation resources */
 	void Release();
 
 	/** Check if simulator is initialized and ready */
 	bool IsReady() const { return bIsInitialized && MaxParticleCount > 0; }
-
-	//=============================================================================
-	// FRenderResource Interface
-	//=============================================================================
 
 	virtual void InitRHI(FRHICommandListBase& RHICmdList) override;
 	virtual void ReleaseRHI() override;
@@ -164,76 +171,31 @@ public:
 	// Simulation Execution
 	//=============================================================================
 
-	/**
-	 * Execute full GPU simulation for one substep
-	 * This runs all compute passes: Predict → Hash → Density → Pressure → Viscosity → Collision → Finalize
-	 *
-	 * @param Params - Simulation parameters for this substep
-	 */
+	/** Execute full GPU simulation for one substep */
 	void SimulateSubstep(const FGPUFluidSimulationParams& Params);
 
-	/**
-	 * Execute GPU simulation using RDG (Render Dependency Graph)
-	 * This is the preferred method when integrating with render pipeline
-	 *
-	 * @param GraphBuilder - RDG builder to add passes to
-	 * @param Params - Simulation parameters
-	 */
+	/** Execute GPU simulation using RDG */
 	void SimulateSubstep_RDG(FRDGBuilder& GraphBuilder, const FGPUFluidSimulationParams& Params);
 
-	/**
-	 * Run single initialization simulation step after uploading particles
-	 * Stabilizes particle positions without full frame lifecycle
-	 * @param Params - Simulation parameters
-	 */
+	/** Run single initialization simulation step */
 	void RunInitializationSimulation(const FGPUFluidSimulationParams& Params);
 
-	//=============================================================================
-	// Frame Lifecycle (called once per frame, used by Subsystem)
-	//=============================================================================
-
-	/**
-	 * Begin frame - Process readbacks, spawn, despawn (call once at frame start)
-	 * Must be called from render thread before any SimulateSubstep calls
-	 * @param Params - Simulation parameters
-	 */
+	/** Begin frame - Process readbacks, spawn, despawn */
 	void BeginFrame();
 
-	/**
-	 * End frame - Extract persistent buffers, enqueue readbacks (call once at frame end)
-	 * Must be called from render thread after all SimulateSubstep calls
-	 */
+	/** End frame - Extract persistent buffers, enqueue readbacks */
 	void EndFrame();
 
-	/**
-	 * Check if currently in a frame (between BeginFrame and EndFrame)
-	 */
+	/** Check if currently in a frame */
 	bool IsFrameActive() const { return bFrameActive; }
 
-	//=============================================================================
-	// Deferred Simulation Execution (for PreRenderViewFamily synchronization)
-	// This eliminates 1-frame delay by executing simulation in the same RDG
-	// as the ExtractRenderData pass, ensuring particles use current-frame data.
-	//=============================================================================
-
-	/**
-	 * Store simulation parameters for deferred execution.
-	 * Called from game thread, actual simulation runs in PreRenderViewFamily_RenderThread.
-	 * @param Params - Simulation parameters to store
-	 */
+	/** Store simulation parameters for deferred execution */
 	void EnqueueSimulation(const FGPUFluidSimulationParams& Params);
 
-	/**
-	 * Execute all pending simulations in render thread (called from ViewExtension).
-	 * This must be called BEFORE ExtractRenderDataPass to ensure same-frame data.
-	 * @param GraphBuilder - RDG builder for simulation passes
-	 */
+	/** Execute all pending simulations in render thread */
 	void ExecutePendingSimulations_RenderThread(FRDGBuilder& GraphBuilder);
 
-	/**
-	 * Check if there are pending simulations to execute.
-	 * @return true if simulations are queued
-	 */
+	/** Check if there are pending simulations to execute */
 	bool HasPendingSimulations() const;
 
 	//=============================================================================
@@ -1125,24 +1087,16 @@ private:
 	//=============================================================================
 
 private:
-	//=============================================================================
-	// GPU Buffers
-	//=============================================================================
-
-	// Main particle buffer
 	FBufferRHIRef ParticleBufferRHI;
 	FShaderResourceViewRHIRef ParticleSRV;
 	FUnorderedAccessViewRHIRef ParticleUAV;
 
-	// Position-only buffer for spatial hash
 	FBufferRHIRef PositionBufferRHI;
 	FShaderResourceViewRHIRef PositionSRV;
 	FUnorderedAccessViewRHIRef PositionUAV;
 
-	// Staging buffer for CPU readback
 	FBufferRHIRef StagingBufferRHI;
 
-	// Spatial hash buffers
 	FBufferRHIRef CellCountsBufferRHI;
 	FShaderResourceViewRHIRef CellCountsSRV;
 	FUnorderedAccessViewRHIRef CellCountsUAV;
@@ -1151,90 +1105,56 @@ private:
 	FShaderResourceViewRHIRef ParticleIndicesSRV;
 	FUnorderedAccessViewRHIRef ParticleIndicesUAV;
 
-	//=============================================================================
-	// State
-	//=============================================================================
-
 	bool bIsInitialized;
 	int32 MaxParticleCount;
 	int32 CurrentParticleCount;
 
-	// Frame lifecycle state
 	bool bFrameActive = false;
 
-	// Deferred simulation execution (for PreRenderViewFamily synchronization)
-	// Stores simulation parameters from game thread, executed in render thread
 	TArray<FGPUFluidSimulationParams> PendingSimulationParams;
 	mutable FCriticalSection PendingSimulationLock;
 
-	// Cached GPU particle data for upload/readback
-	// Cached GPU particle data for upload
 	TArray<FGPUFluidParticle> CachedGPUParticles;
 
-	// Cached SourceID → ParticleIDs mapping (built during readback processing)
-	// Fixed-size array indexed by SourceID (0~63), no hash lookup needed
 	TArray<TArray<int32>> CachedSourceIDToParticleIDs;
 
-	// Cached all particle IDs (built during readback processing)
 	TArray<int32> CachedAllParticleIDs;
 
-	// Cached particle positions (always built during readback for lightweight despawn API)
 	TArray<FVector3f> CachedParticlePositions;
 
-	// Cached particle source IDs (always built during readback for lightweight despawn API)
 	TArray<int32> CachedParticleSourceIDs;
 
-	// Cached particle velocities (always built during readback for lightweight ISM rendering)
 	TArray<FVector3f> CachedParticleVelocities;
 
-	// Cached particle flags (always built during readback for debug visualization)
 	TArray<uint32> CachedParticleFlags;
 
-	// Flag indicating valid GPU results are available for download
 	std::atomic<bool> bHasValidGPUResults{false};
 
-	// Flag to enable velocity readback (for ISM rendering)
-	// When true, CachedParticleVelocities is populated during ProcessStatsReadback
 	std::atomic<bool> bFullReadbackEnabled{false};
 
-	// Persistent GPU buffer - reused across frames (Phase 2)
-	// After simulation, this contains the results to be used next frame
 	TRefCountPtr<FRDGPooledBuffer> PersistentParticleBuffer;
 
-	// Persistent Spatial Hash buffers - reused across frames (GPU clear instead of CPU upload)
 	TRefCountPtr<FRDGPooledBuffer> PersistentCellCountsBuffer;
 	TRefCountPtr<FRDGPooledBuffer> PersistentParticleIndicesBuffer;
 
-	// Persistent Z-Order buffers
 	TRefCountPtr<FRDGPooledBuffer> PersistentCellStartBuffer;
 	TRefCountPtr<FRDGPooledBuffer> PersistentCellEndBuffer;
 
-	// Double Buffered Neighbor Cache (RAW Hazard Prevention)
-	// Buffer[0] and Buffer[1] are used alternately each frame to prevent GPU resource hazards.
-	// Problem: If we reuse the same buffer, PredictPositions (SRV read) and ConstraintSolverLoop
-	// (UAV write) access the same physical buffer, causing GPU pipeline stalls.
-	// Solution: True double buffering with physically separate buffers.
-	// CurrentNeighborBufferIndex: index used for WRITING this frame
-	// Read index = 1 - CurrentNeighborBufferIndex (previous frame's buffer for Cohesion Force)
 	TRefCountPtr<FRDGPooledBuffer> NeighborListBuffers[2];
 	TRefCountPtr<FRDGPooledBuffer> NeighborCountsBuffers[2];
-	int32 NeighborBufferAllocCapacities[2] = {0, 0};    // Allocated buffer size (for reallocation check)
-	int32 NeighborBufferParticleCapacities[2] = {0, 0}; // Actual particle count written (for PrevParticleCount)
+	int32 NeighborBufferAllocCapacities[2] = {0, 0};
+	int32 NeighborBufferParticleCapacities[2] = {0, 0};
 	int32 CurrentNeighborBufferIndex = 0;
-	bool bPrevNeighborCacheValid = false;        // False on first frame (skip Cohesion)
+	bool bPrevNeighborCacheValid = false;
 
-	// Particle Sleeping (NVIDIA Flex stabilization)
 	TRefCountPtr<FRDGPooledBuffer> SleepCountersBuffer;
 	int32 SleepCountersCapacity = 0;
 
-	// Simulation bounds (local copy for GetSimulationBounds API)
 	FVector3f SimulationBoundsMin = FVector3f(-1280.0f, -1280.0f, -1280.0f);
 	FVector3f SimulationBoundsMax = FVector3f(1280.0f, 1280.0f, 1280.0f);
 
-	// Cached CellSize from last simulation (for Ray Marching volume building)
 	float CachedCellSize = 0.0f;
 
-	// Flag: need to upload all particles from CPU (initial or after resize)
 	bool bNeedsFullUpload = true;
 
 	// Previous frame particle count (to detect new particles)
@@ -1668,63 +1588,35 @@ public:
 	bool GetZOrderArrayIndices(TArray<int32>& OutIndices) const;
 
 private:
-	/** Allocate anisotropy readback objects */
 	void AllocateAnisotropyReadbackObjects(FRHICommandListImmediate& RHICmdList);
 
-	/** Release anisotropy readback objects */
-void ReleaseAnisotropyReadbackObjects();	
+	void ReleaseAnisotropyReadbackObjects();
 
-	/** Enqueue anisotropy data copy to readback buffer */
 	void EnqueueAnisotropyReadback(FRHICommandListImmediate& RHICmdList, int32 ParticleCount);
 
-	/** Process anisotropy readback */
 	void ProcessAnisotropyReadback();
 
-	//=============================================================================
-	// Stats/Recycle Readback Internal Functions
-	//=============================================================================
-
-	/** Allocate stats readback objects */
 	void AllocateStatsReadbackObjects(FRHICommandListImmediate& RHICmdList);
 
-	/** Release stats readback objects */
 	void ReleaseStatsReadbackObjects();
 
-	/** Enqueue stats readback (full 64-byte or compact 32-byte particle data for ID-based operations) */
 	void EnqueueStatsReadback(FRHICommandListImmediate& RHICmdList, FRHIBuffer* SourceBuffer, int32 ParticleCount, bool bCompactMode = false);
 
-	/** Process stats readback (check for completion, populate cached lightweight data) */
 	void ProcessStatsReadback(FRHICommandListImmediate& RHICmdList);
 
-	//=============================================================================
-	// Debug Z-Order Index Readback Internal Functions
-	//=============================================================================
-
-	/** Allocate debug Z-Order index readback objects */
 	void AllocateDebugIndexReadbackObjects(FRHICommandListImmediate& RHICmdList);
 
-	/** Release debug Z-Order index readback objects */
 	void ReleaseDebugIndexReadbackObjects();
 
-	/** Enqueue debug Z-Order index readback (int32 array: [ParticleID] → ZOrderArrayIndex) */
 	void EnqueueDebugIndexReadback(FRHICommandListImmediate& RHICmdList, FRHIBuffer* SourceBuffer, int32 ParticleCount);
 
-	/** Process debug Z-Order index readback (check for completion, populate CachedZOrderArrayIndices) */
 	void ProcessDebugIndexReadback();
 
-	/** Add RDG pass to record Z-Order array indices (call BEFORE ParticleID re-sort) */
 	void AddRecordZOrderIndicesPass(FRDGBuilder& GraphBuilder, FRDGBufferRef ParticleBuffer, int32 ParticleCount);
 
-	//=============================================================================
-	// Particle Bounds Readback Internal Functions
-	//=============================================================================
-
-	/** Allocate particle bounds readback objects */
 	void AllocateParticleBoundsReadbackObjects(FRHICommandListImmediate& RHICmdList);
 
-	/** Release particle bounds readback objects */
 	void ReleaseParticleBoundsReadbackObjects();
 
-	/** Process particle bounds readback (check for completion, populate CachedParticleBounds) */
 	void ProcessParticleBoundsReadback();
 };

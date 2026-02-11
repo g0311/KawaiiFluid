@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -9,13 +9,30 @@
 #include "Core/KawaiiFluidRenderParticle.h"
 #include <atomic>
 
-// Forward declaration
 class FGPUFluidSimulator;
 class FRDGBuilder;
 
 /**
- * Render resource that manages fluid particle data as GPU buffers
- * Uploads CPU simulation data to GPU for use in Niagara/SSFR
+ * @class FKawaiiFluidRenderResource
+ * @brief Manages GPU buffers for fluid particle data, enabling high-performance rendering via Niagara or SSFR.
+ * 
+ * This resource handles both Legacy AoS (Array of Structures) and SoA (Structure of Arrays) formats 
+ * to optimize memory bandwidth and integrates directly with the GPU simulator.
+ * 
+ * @param ParticleBuffer Structured Buffer containing the AoS particle data.
+ * @param ParticleSRV Shader Resource View for reading AoS particles in shaders.
+ * @param ParticleUAV Unordered Access View for writing particle data (Phase 2 GPU-to-GPU copy).
+ * @param PooledParticleBuffer RDG pooled buffer for the legacy AoS path.
+ * @param PooledPositionBuffer SoA buffer containing only float3 world positions.
+ * @param PooledVelocityBuffer SoA buffer containing only float3 velocities for motion blur and flow.
+ * @param PooledBoundsBuffer Min/Max world-space bounds of the active particle set.
+ * @param PooledRenderParticleBuffer Buffer containing formatted render-ready particles.
+ * @param PooledParticleCountBuffer GPU-side atomic counter for the current particle set.
+ * @param ParticleCount Number of valid particles currently stored in the buffer.
+ * @param BufferCapacity Maximum number of particles the current GPU buffer can hold.
+ * @param bBufferReadyForRendering Atomic flag indicating if the GPU extract pass has completed.
+ * @param CachedGPUSimulator Pointer to the GPU simulator if the resource is in GPU simulation mode.
+ * @param CachedParticleRadius Base particle radius for rasterization parameters.
  */
 class KAWAIIFLUIDRUNTIME_API FKawaiiFluidRenderResource : public FRenderResource
 {
@@ -27,71 +44,53 @@ public:
 	// FRenderResource Interface
 	//========================================
 
-	/** Initialize GPU resources (render thread) */
 	virtual void InitRHI(FRHICommandListBase& RHICmdList) override;
 
-	/** Release GPU resources (render thread) */
 	virtual void ReleaseRHI() override;
 
 	//========================================
-	// GPU buffer access (render thread)
+	// GPU buffer access
 	//========================================
 
-	/** Get SRV (Shader Resource View) of Structured Buffer */
 	FRHIShaderResourceView* GetParticleSRV() const { return ParticleSRV; }
 
-	/** Get RHI buffer directly (for future integration) */
 	FRHIBuffer* GetParticleBufferRHI() const 
 	{ 
 		return ParticleBuffer.GetReference(); 
 	}
 
-	/** Current particle count */
 	int32 GetParticleCount() const { return ParticleCount; }
 
-	/** Get buffer maximum capacity */
 	int32 GetBufferCapacity() const { return BufferCapacity; }
 
-	/** Check if buffer is valid */
 	bool IsValid() const { return ParticleBuffer.IsValid() && ParticleSRV.IsValid(); }
 
-	//========================================
-	// GPU buffer access (Phase 2: GPU → GPU rendering)
-	//========================================
-
-	/** Get GPU Pooled Buffer (for RDG registration) - Legacy AoS */
 	TRefCountPtr<FRDGPooledBuffer> GetPooledParticleBuffer() const
 	{
 		return PooledParticleBuffer;
 	}
 
-	/** Check if GPU buffer is valid (for Phase 2 path) */
 	bool HasValidGPUBuffer() const
 	{
 		return PooledParticleBuffer.IsValid() && ParticleCount > 0 && bBufferReadyForRendering.load();
 	}
 
-	/** Mark buffer as ready for rendering (called after ExtractRenderDataPass completes) */
 	void SetBufferReadyForRendering(bool bReady) { bBufferReadyForRendering = bReady; }
 
 	//========================================
 	// SoA (Structure of Arrays) buffer access
-	// - Memory bandwidth optimization: 32B/particle → 12B/particle
 	//========================================
 
-	/** Position-only SoA buffer (float3 * N, 12B each) */
 	TRefCountPtr<FRDGPooledBuffer> GetPooledPositionBuffer() const
 	{
 		return PooledPositionBuffer;
 	}
 
-	/** Velocity-only SoA buffer (float3 * N, 12B each) - for motion blur */
 	TRefCountPtr<FRDGPooledBuffer> GetPooledVelocityBuffer() const
 	{
 		return PooledVelocityBuffer;
 	}
 
-	/** Check if SoA buffer is valid */
 	bool HasValidSoABuffers() const
 	{
 		return PooledPositionBuffer.IsValid() && ParticleCount > 0 && bBufferReadyForRendering.load();
@@ -101,133 +100,68 @@ public:
 	// GPU simulator interface
 	//========================================
 
-	/**
-	 * Set GPU simulator reference (called from game thread)
-	 * Allows render thread to directly access simulator buffers in GPU mode
-	 * @param InSimulator GPU simulator reference (nullptr for CPU mode)
-	 * @param InMaxParticleCount Maximum particle capacity (for buffer sizing)
-	 * @param InParticleRadius Particle radius
-	 */
 	void SetGPUSimulatorReference(FGPUFluidSimulator* InSimulator, int32 InMaxParticleCount, float InParticleRadius);
 
-	/** Clear GPU simulator reference (switch to CPU mode) */
 	void ClearGPUSimulatorReference();
 
-	/** Get current GPU simulator reference */
 	FGPUFluidSimulator* GetGPUSimulator() const { return CachedGPUSimulator; }
 
-	/** Check if in GPU simulator mode */
 	bool HasGPUSimulator() const { return CachedGPUSimulator != nullptr; }
 
-	/**
-	 * Get unified particle radius
-	 */
 	float GetUnifiedParticleRadius() const { return CachedParticleRadius; }
 
-	/**
-	 * Get Physics buffer SRV (called from render thread)
-	 * GPU mode: GPUSimulator's PersistentParticleBuffer (FGPUFluidParticle format)
-	 * CPU mode: nullptr (no Physics buffer)
-	 * @param GraphBuilder RDG builder
-	 * @return Physics buffer SRV or nullptr
-	 */
 	FRDGBufferSRVRef GetPhysicsBufferSRV(FRDGBuilder& GraphBuilder) const;
 
-	/**
-	 * Get Anisotropy Axis buffers (valid only in GPU mode)
-	 * @param GraphBuilder RDG builder
-	 * @param OutAxis1SRV Axis1 buffer SRV
-	 * @param OutAxis2SRV Axis2 buffer SRV
-	 * @param OutAxis3SRV Axis3 buffer SRV
-	 * @return true if Anisotropy buffers are valid
-	 */
 	bool GetAnisotropyBufferSRVs(
 		FRDGBuilder& GraphBuilder,
 		FRDGBufferSRVRef& OutAxis1SRV,
 		FRDGBufferSRVRef& OutAxis2SRV,
 		FRDGBufferSRVRef& OutAxis3SRV) const;
 
-	/** Check if Anisotropy is enabled */
 	bool IsAnisotropyEnabled() const;
 
-	/**
-	 * Get RenderOffset buffer SRV (valid only in GPU mode with anisotropy enabled)
-	 * Used for surface particle rendering offset
-	 * @param GraphBuilder RDG builder
-	 * @return RenderOffset buffer SRV or nullptr if not available
-	 */
 	FRDGBufferSRVRef GetRenderOffsetBufferSRV(FRDGBuilder& GraphBuilder) const;
 
 	//========================================
 	// Bounds data
 	//========================================
 
-	/**
-	 * Set GPU Bounds buffer (called from render thread)
-	 * Set after ExtractRenderDataWithBoundsPass in ViewExtension
-	 */
 	void SetBoundsBuffer(TRefCountPtr<FRDGPooledBuffer> InBoundsBuffer);
 
-	/** Get GPU Bounds buffer */
 	TRefCountPtr<FRDGPooledBuffer> GetPooledBoundsBuffer() const { return PooledBoundsBuffer; }
 
-	/** Check if Bounds buffer is valid */
 	bool HasValidBoundsBuffer() const { return PooledBoundsBuffer.IsValid(); }
 
-	/**
-	 * Set FKawaiiRenderParticle buffer (called from render thread)
-	 * Set after ExtractRenderDataPass in ViewExtension
-	 */
 	void SetRenderParticleBuffer(TRefCountPtr<FRDGPooledBuffer> InBuffer);
 
-	/** Get FKawaiiRenderParticle buffer */
 	TRefCountPtr<FRDGPooledBuffer> GetPooledRenderParticleBuffer() const { return PooledRenderParticleBuffer; }
 
-	/** Get Bounds buffer pointer (for QueueBufferExtraction) */
 	TRefCountPtr<FRDGPooledBuffer>* GetPooledBoundsBufferPtr() { return &PooledBoundsBuffer; }
 
-	/** Get RenderParticle buffer pointer (for QueueBufferExtraction) */
 	TRefCountPtr<FRDGPooledBuffer>* GetPooledRenderParticleBufferPtr() { return &PooledRenderParticleBuffer; }
 
-	/** Get Position buffer pointer (for QueueBufferExtraction) */
 	TRefCountPtr<FRDGPooledBuffer>* GetPooledPositionBufferPtr() { return &PooledPositionBuffer; }
 
-	/** Get Velocity buffer pointer (for QueueBufferExtraction) */
 	TRefCountPtr<FRDGPooledBuffer>* GetPooledVelocityBufferPtr() { return &PooledVelocityBuffer; }
 
 	//========================================
-	// GPU Particle Count Buffer (for DrawPrimitiveIndirect)
+	// GPU Particle Count Buffer
 	//========================================
 
-	/** Set persistent particle count buffer (called from ViewExtension after registering) */
 	void SetPersistentParticleCountBuffer(TRefCountPtr<FRDGPooledBuffer> InBuffer) { PooledParticleCountBuffer = InBuffer; }
 
-	/** Get persistent particle count buffer (for DrawPrimitiveIndirect in Depth/Thickness passes) */
 	TRefCountPtr<FRDGPooledBuffer> GetPooledParticleCountBuffer() const { return PooledParticleCountBuffer; }
 
-	/** Check if particle count buffer is valid */
 	bool HasValidParticleCountBuffer() const { return PooledParticleCountBuffer.IsValid(); }
 
 	//========================================
 	// Z-Order buffer access
 	//========================================
 
-	/**
-	 * Get Z-Order CellStart buffer (fetched directly from GPU simulator)
-	 * Used as cell start index in Ray Marching volume building
-	 */
 	TRefCountPtr<FRDGPooledBuffer> GetPooledCellStartBuffer() const;
 
-	/**
-	 * Get Z-Order CellEnd buffer (fetched directly from GPU simulator)
-	 * Used as cell end index in Ray Marching volume building
-	 */
 	TRefCountPtr<FRDGPooledBuffer> GetPooledCellEndBuffer() const;
 
-	/**
-	 * Check if Z-Order buffer is valid
-	 * Returns true if GPU simulator exists and Z-Order buffer is valid
-	 */
 	bool HasValidZOrderBuffers() const;
 
 private:
@@ -235,63 +169,47 @@ private:
 	// GPU resources
 	//========================================
 
-	/** Structured Buffer (GPU memory) */
 	FBufferRHIRef ParticleBuffer;
 
-	/** Shader Resource View (for shader read) */
 	FShaderResourceViewRHIRef ParticleSRV;
 
-	/** Unordered Access View (for shader write - Phase 2 GPU→GPU copy) */
 	FUnorderedAccessViewRHIRef ParticleUAV;
 
-	/** Pooled Buffer for RDG registration (Phase 2 GPU→GPU copy) - Legacy AoS */
 	TRefCountPtr<FRDGPooledBuffer> PooledParticleBuffer;
 
 	//========================================
 	// SoA (Structure of Arrays) buffers
 	//========================================
 
-	/** Position-only buffer (float3 * N, 12B each) */
 	TRefCountPtr<FRDGPooledBuffer> PooledPositionBuffer;
 
-	/** Velocity-only buffer (float3 * N, 12B each) - for motion blur */
 	TRefCountPtr<FRDGPooledBuffer> PooledVelocityBuffer;
 
-	/** Bounds buffer (float3 * 2: Min, Max) */
 	TRefCountPtr<FRDGPooledBuffer> PooledBoundsBuffer;
 
-	/** FKawaiiRenderParticle buffer */
 	TRefCountPtr<FRDGPooledBuffer> PooledRenderParticleBuffer;
 
-	/** GPU particle count buffer (for DrawPrimitiveIndirect in rendering) */
 	TRefCountPtr<FRDGPooledBuffer> PooledParticleCountBuffer;
 
-	/** Current particle count stored in buffer */
 	int32 ParticleCount;
 
-	/** Buffer maximum capacity (minimize reallocation) */
 	int32 BufferCapacity;
 
-	/** Buffer is ready for rendering (ExtractRenderDataPass has completed) */
 	std::atomic<bool> bBufferReadyForRendering{false};
 
 	//========================================
 	// GPU simulator reference
 	//========================================
 
-	/** GPU simulator reference (for direct buffer access from render thread) */
 	std::atomic<FGPUFluidSimulator*> CachedGPUSimulator{nullptr};
 
-	/** Cached particle radius */
 	std::atomic<float> CachedParticleRadius{10.0f};
 
 	//========================================
 	// Internal helpers
 	//========================================
 
-	/** Check if buffer resize is needed */
 	bool NeedsResize(int32 NewCount) const;
 
-	/** Recreate buffer (when size changes) */
 	void ResizeBuffer(FRHICommandListBase& RHICmdList, int32 NewCapacity);
 };

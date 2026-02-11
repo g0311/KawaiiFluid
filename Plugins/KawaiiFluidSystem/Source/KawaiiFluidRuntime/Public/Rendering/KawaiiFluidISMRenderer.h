@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -10,19 +10,24 @@
 class IKawaiiFluidDataProvider;
 
 /**
- * Instanced Static Mesh fluid renderer (UObject-based)
- *
- * Renders fluid particles as instanced static meshes for high performance.
- * Each particle becomes one mesh instance rendered via GPU instancing.
- *
- * Features:
- * - High performance (GPU instancing)
- * - Custom mesh/material support
- * - Velocity-based color and rotation
- * - Absolute world coordinates
- *
- * Note: This is NOT an ActorComponent - it's owned internally by RenderingModule.
- * The ISMComponent inside IS a component, created and attached to the owner actor.
+ * @class UKawaiiFluidISMRenderer
+ * @brief Renderer that represents fluid particles as instances of a static mesh for high performance.
+ * 
+ * Each particle is rendered as a mesh instance using GPU instancing, supporting velocity-based 
+ * colors and rotations.
+ * 
+ * @param bEnabled Toggle for the ISM debug renderer.
+ * @param CullDistance Distance at which instances are no longer rendered (cm).
+ * @param bCastShadow Whether the particle instances should cast shadows.
+ * @param bRotateByVelocity Orient instances toward their velocity vector.
+ * @param bColorByVelocity Apply a color gradient based on particle speed.
+ * @param MinVelocityColor Color used for stationary or slow particles.
+ * @param MaxVelocityColor Color used for particles at maximum speed.
+ * @param MaxVelocityForColor Normalization value for the velocity-to-color mapping.
+ * @param ISMComponent The internal component managing the static mesh instances.
+ * @param CachedWorld Cached pointer to the world context.
+ * @param CachedOwnerComponent Component to which the ISM is attached.
+ * @param CachedPreset The data asset containing fluid physical properties.
  */
 UCLASS()
 class KAWAIIFLUIDRUNTIME_API UKawaiiFluidISMRenderer : public UObject
@@ -32,93 +37,64 @@ class KAWAIIFLUIDRUNTIME_API UKawaiiFluidISMRenderer : public UObject
 public:
 	UKawaiiFluidISMRenderer();
 
-	/**
-	 * Initialize renderer with world, owner and preset
-	 * @param InWorld World context for subsystem access
-	 * @param InOwnerComponent Parent scene component for ISM attachment
-	 * @param InPreset Preset data asset for rendering parameters
-	 */
 	void Initialize(UWorld* InWorld, USceneComponent* InOwnerComponent, class UKawaiiFluidPresetDataAsset* InPreset);
 
-	/**
-	 * Cleanup renderer resources
-	 */
 	void Cleanup();
 
-	/**
-	 * Update rendering
-	 * @param DataProvider Particle data provider
-	 * @param DeltaTime Frame delta time
-	 */
 	void UpdateRendering(const IKawaiiFluidDataProvider* DataProvider, float DeltaTime);
 
-	/** Check if rendering is enabled */
 	bool IsEnabled() const { return bEnabled; }
 
-	/** Enable or disable rendering */
 	void SetEnabled(bool bInEnabled);
 
-	/** Set fluid color (creates dynamic material instance if needed) */
 	void SetFluidColor(FLinearColor Color);
 
 	//========================================
 	// Debug Visualization Settings
 	//========================================
 
-	/** Enable/disable ISM debug renderer (set from Component) */
 	bool bEnabled = false;
 
 	//========================================
 	// Performance Options
 	//========================================
 
-	/** Cull distance (cm) */
 	float CullDistance = 10000.0f;
 
-	/** Cast shadows */
 	bool bCastShadow = false;
 
 	//========================================
 	// Visual Effects
 	//========================================
 
-	/** Enable velocity-based rotation */
 	bool bRotateByVelocity = false;
 
-	/** Enable velocity-based color */
 	bool bColorByVelocity = false;
 
-	/** Minimum velocity color */
 	FLinearColor MinVelocityColor = FLinearColor::Blue;
 
-	/** Maximum velocity color */
 	FLinearColor MaxVelocityColor = FLinearColor::Red;
 
-	/** Velocity normalization value (treat this as max velocity) */
 	float MaxVelocityForColor = 1000.0f;
 
 	//========================================
 	// Component Access
 	//========================================
 
-	/** ISM component instance */
 	UPROPERTY()
 	TObjectPtr<UInstancedStaticMeshComponent> ISMComponent;
 
 protected:
 	//========================================
-	// Common State (from removed base class)
+	// Common State
 	//========================================
 
-	/** Cached world reference (replaces GetWorld()) */
 	UPROPERTY()
 	TObjectPtr<UWorld> CachedWorld;
 
-	/** Cached owner component reference (for ISM attachment) */
 	UPROPERTY()
 	TObjectPtr<USceneComponent> CachedOwnerComponent;
 
-	/** Cached preset reference (for rendering parameters) */
 	UPROPERTY()
 	TObjectPtr<class UKawaiiFluidPresetDataAsset> CachedPreset;
 
@@ -126,12 +102,9 @@ protected:
 	// ISM-specific Internals
 	//========================================
 
-	/** Initialize ISM component */
 	void InitializeISM();
 
-	/** Load default particle mesh */
 	UStaticMesh* GetDefaultParticleMesh();
 
-	/** Load default material */
 	UMaterialInterface* GetDefaultParticleMaterial();
 };

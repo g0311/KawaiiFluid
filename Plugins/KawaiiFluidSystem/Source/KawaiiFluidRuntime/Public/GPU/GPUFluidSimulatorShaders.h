@@ -81,6 +81,28 @@ namespace GridResolutionPermutation
 // Pass 1: Apply forces and predict positions
 //=============================================================================
 
+/**
+ * @class FPredictPositionsCS
+ * @brief Pass 1: Apply forces and predict positions.
+ * 
+ * @param Particles Read-write access to particle buffer.
+ * @param ParticleCount Number of particles to process.
+ * @param DeltaTime Simulation substep delta time.
+ * @param Gravity World gravity vector.
+ * @param ExternalForce Global external force.
+ * @param CohesionStrength Akinci 2013 cohesion force strength.
+ * @param SmoothingRadius SPH smoothing radius.
+ * @param RestDensity Target rest density.
+ * @param MaxCohesionForce Stability clamp for cohesion.
+ * @param ViscosityCoefficient XSPH viscosity coefficient.
+ * @param Poly6Coeff Precomputed Poly6 kernel coefficient.
+ * @param ViscLaplacianCoeff Precomputed Laplacian viscosity coefficient.
+ * @param PrevNeighborList Neighbor list from previous frame.
+ * @param PrevNeighborCounts Neighbor counts from previous frame.
+ * @param bUsePrevNeighborCache Whether to use previous frame cache for forces.
+ * @param PrevParticleCount Particle count in previous frame cache.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
+ */
 class FPredictPositionsCS : public FGlobalShader
 {
 public:
@@ -93,58 +115,45 @@ public:
 		SHADER_PARAMETER(float, DeltaTime)
 		SHADER_PARAMETER(FVector3f, Gravity)
 		SHADER_PARAMETER(FVector3f, ExternalForce)
-		
-		// Cohesion Force parameters (Akinci 2013)
-		// Uses C(r) spline kernel with K_ij particle deficiency correction
-		// Applied when CohesionStrength > 0
 		SHADER_PARAMETER(float, CohesionStrength)
 		SHADER_PARAMETER(float, SmoothingRadius)
 		SHADER_PARAMETER(float, RestDensity)
 		SHADER_PARAMETER(float, MaxCohesionForce)
-		
-		// Viscosity parameters (moved from PostSimulation Phase 5 for optimization)
-		// Now calculated together with Cohesion in single neighbor loop using PrevNeighborCache
-		// This reduces memory bandwidth by ~50% (1 loop instead of 2)
 		SHADER_PARAMETER(float, ViscosityCoefficient)
 		SHADER_PARAMETER(float, Poly6Coeff)
-		SHADER_PARAMETER(float, ViscLaplacianCoeff)  // 45 / (PI * h^6)
-		
-		// Previous frame neighbor cache (for Cohesion + Viscosity Force calculation)
-		// Double buffering: PredictPositions uses previous frame's neighbor list
-		// This is standard practice - 1 frame delay is acceptable and avoids dependency issues
+		SHADER_PARAMETER(float, ViscLaplacianCoeff)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, PrevNeighborList)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, PrevNeighborCounts)
-		SHADER_PARAMETER(int32, bUsePrevNeighborCache)   // 0 = skip forces (first frame)
-		SHADER_PARAMETER(int32, PrevParticleCount)       // Safety: bounds check
+		SHADER_PARAMETER(int32, bUsePrevNeighborCache)
+		SHADER_PARAMETER(int32, PrevParticleCount)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleCountBuffer)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-		OutEnvironment.SetDefine(TEXT("MAX_NEIGHBORS_PER_PARTICLE"), GPU_MAX_NEIGHBORS_PER_PARTICLE);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
-//=============================================================================
-// [DEPRECATED] Compute Density Compute Shader
-// Pass 3: Calculate density and lambda using spatial hash
-//
-// NOTE: This shader is deprecated and will be removed in a future version.
-// Use FSolveDensityPressureCS instead, which combines density and pressure
-// calculation into a single neighbor traversal for better performance.
-//=============================================================================
-
+/**
+ * @class FComputeDensityCS
+ * @brief [DEPRECATED] Pass 3: Calculate density and lambda using spatial hash.
+ * 
+ * @param Particles Read-write access to particle buffer.
+ * @param CellCounts Legacy hash table cell counts.
+ * @param ParticleIndices Legacy hash table particle indices.
+ * @param ParticleCount Number of particles to process.
+ * @param SmoothingRadius SPH smoothing radius.
+ * @param RestDensity Target rest density.
+ * @param Poly6Coeff Precomputed Poly6 kernel coefficient.
+ * @param SpikyCoeff Precomputed Spiky kernel coefficient.
+ * @param CellSize Spatial hash cell size.
+ * @param Compliance XPBD compliance.
+ * @param DeltaTimeSq Precomputed DeltaTime squared.
+ */
 class FComputeDensityCS : public FGlobalShader
 {
 public:
@@ -152,14 +161,9 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FComputeDensityCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		// Particle buffer (read-write)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, Particles)
-
-		// Spatial hash buffers (read-only)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellCounts)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleIndices)
-
-		// Simulation parameters
 		SHADER_PARAMETER(int32, ParticleCount)
 		SHADER_PARAMETER(float, SmoothingRadius)
 		SHADER_PARAMETER(float, RestDensity)
@@ -172,31 +176,31 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-		OutEnvironment.SetDefine(TEXT("SPATIAL_HASH_SIZE"), GPU_SPATIAL_HASH_SIZE);
-		OutEnvironment.SetDefine(TEXT("MAX_PARTICLES_PER_CELL"), GPU_MAX_PARTICLES_PER_CELL);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
-//=============================================================================
-// [DEPRECATED] Solve Pressure Compute Shader
-// Pass 4: Apply position corrections based on density constraints
-//
-// NOTE: This shader is deprecated and will be removed in a future version.
-// Use FSolveDensityPressureCS instead, which combines density and pressure
-// calculation into a single neighbor traversal for better performance.
-//=============================================================================
-
+/**
+ * @class FSolvePressureCS
+ * @brief [DEPRECATED] Pass 4: Apply position corrections based on density constraints.
+ * 
+ * @param Particles Read-write access to particle buffer.
+ * @param CellCounts Legacy hash table cell counts.
+ * @param ParticleIndices Legacy hash table particle indices.
+ * @param ParticleCount Number of particles to process.
+ * @param SmoothingRadius SPH smoothing radius.
+ * @param RestDensity Target rest density.
+ * @param SpikyCoeff Precomputed Spiky kernel coefficient.
+ * @param Poly6Coeff Precomputed Poly6 kernel coefficient.
+ * @param CellSize Spatial hash cell size.
+ * @param bEnableTensileInstability Enable tensile instability correction.
+ * @param TensileK Scaled strength k for tensile stability.
+ * @param TensileN Exponent n for tensile stability.
+ * @param InvW_DeltaQ Precomputed 1/W(Δq, h).
+ */
 class FSolvePressureCS : public FGlobalShader
 {
 public:
@@ -213,7 +217,6 @@ public:
 		SHADER_PARAMETER(float, SpikyCoeff)
 		SHADER_PARAMETER(float, Poly6Coeff)
 		SHADER_PARAMETER(float, CellSize)
-		// Tensile Instability (PBF Eq.13-14: s_corr = -k * (W(r)/W(Δq))^n)
 		SHADER_PARAMETER(int32, bEnableTensileInstability)
 		SHADER_PARAMETER(float, TensileK)
 		SHADER_PARAMETER(int32, TensileN)
@@ -222,20 +225,11 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-		OutEnvironment.SetDefine(TEXT("SPATIAL_HASH_SIZE"), GPU_SPATIAL_HASH_SIZE);
-		OutEnvironment.SetDefine(TEXT("MAX_PARTICLES_PER_CELL"), GPU_MAX_PARTICLES_PER_CELL);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 //=============================================================================
@@ -249,6 +243,65 @@ public:
 // 4. Neighbor Caching: First iteration builds neighbor list, subsequent iterations reuse
 //=============================================================================
 
+/**
+ * @class FSolveDensityPressureCS
+ * @brief Pass 3+4 Combined: Single neighbor traversal for both density and pressure (OPTIMIZED).
+ * 
+ * @param Positions SoA positions buffer.
+ * @param PredictedPositions SoA predicted positions buffer.
+ * @param PackedVelocities Half-precision packed SoA velocities.
+ * @param PackedDensityLambda Half-precision packed SoA density and lambda.
+ * @param UniformParticleMass Global uniform particle mass.
+ * @param Flags Particle state flags buffer.
+ * @param NeighborCountsBuffer Neighbor counts buffer for stats.
+ * @param CellCounts Legacy hash table cell counts.
+ * @param ParticleIndices Legacy hash table particle indices.
+ * @param CellStart Z-Order sorted cell start indices.
+ * @param CellEnd Z-Order sorted cell end indices.
+ * @param bUseZOrderSorting Whether to use Z-Order neighbor search.
+ * @param MortonBoundsMin Minimum bounds for Morton code calculation.
+ * @param MortonBoundsExtent Bounds extent for Morton code calculation.
+ * @param bUseHybridTiledZOrder Whether to use Hybrid Tiled Z-Order mode.
+ * @param NeighborList Neighbor list cache buffer.
+ * @param NeighborCounts Neighbor count cache buffer.
+ * @param ParticleCount Number of particles to process.
+ * @param SmoothingRadius SPH smoothing radius.
+ * @param RestDensity Target rest density.
+ * @param Poly6Coeff Precomputed Poly6 kernel coefficient.
+ * @param SpikyCoeff Precomputed Spiky kernel coefficient.
+ * @param CellSize Spatial hash cell size.
+ * @param Compliance XPBD compliance.
+ * @param DeltaTimeSq Precomputed DeltaTime squared.
+ * @param bEnableTensileInstability Enable tensile instability correction.
+ * @param TensileK Scaled strength k for tensile stability.
+ * @param TensileN Exponent n for tensile stability.
+ * @param InvW_DeltaQ Precomputed 1/W(Δq, h).
+ * @param IterationIndex Current solver iteration.
+ * @param BoundaryParticles World-space boundary particles buffer.
+ * @param BoundaryParticleCount Number of boundary particles.
+ * @param bUseBoundaryDensity Whether to include boundary density.
+ * @param SortedBoundaryParticles Sorted world-space boundary particles.
+ * @param BoundaryCellStart Sorted boundary cell start indices.
+ * @param BoundaryCellEnd Sorted boundary cell end indices.
+ * @param bUseBoundaryZOrder Whether to use sorted boundary search.
+ * @param bEnableRelativeVelocityDamping Enable relative velocity pressure damping.
+ * @param RelativeVelocityDampingStrength Factor for pressure reduction.
+ * @param bEnableBoundaryVelocityTransfer Enable boundary velocity transfer.
+ * @param BoundaryVelocityTransferStrength Factor for boundary following.
+ * @param BoundaryDetachSpeedThreshold Speed where detachment begins.
+ * @param BoundaryMaxDetachSpeed Speed for full detachment.
+ * @param BoundaryAdhesionStrength Adhesion strength for velocity transfer.
+ * @param SolverIterationCount Total number of iterations.
+ * @param bEnablePositionBasedSurfaceTension Enable surface tension.
+ * @param SurfaceTensionStrength Intensity of surface tension effect.
+ * @param SurfaceTensionActivationDistance Activation distance in cm.
+ * @param SurfaceTensionFalloffDistance Falloff distance in cm.
+ * @param SurfaceTensionSurfaceThreshold Surface detection threshold.
+ * @param SurfaceTensionVelocityDamping Velocity damping factor for ST.
+ * @param SurfaceTensionTolerance Activation tolerance dead zone.
+ * @param MaxSurfaceTensionCorrection Position correction limit per iteration.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
+ */
 class FSolveDensityPressureCS : public FGlobalShader
 {
 public:
@@ -259,34 +312,21 @@ public:
 	using FPermutationDomain = TShaderPermutationDomain<FGridResolutionDim>;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		// SoA (Structure of Arrays) Particle Buffers
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Positions)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, PredictedPositions)
-
-		// Half-precision packed buffers (bandwidth optimization)
-		// PackedVelocities: uint2 = half4 (vel.xy in .x, vel.z+padding in .y)
-		// PackedDensityLambda: uint = half2 (density, lambda)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint2>, PackedVelocities)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, PackedDensityLambda)
-
-		// Uniform particle mass (all particles same mass)
 		SHADER_PARAMETER(float, UniformParticleMass)
-
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, Flags)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, NeighborCountsBuffer)
-		// Hash table mode (legacy)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellCounts)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleIndices)
-		// Z-Order sorted mode (new)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellStart)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellEnd)
 		SHADER_PARAMETER(int32, bUseZOrderSorting)
-		// Morton bounds for Z-Order cell ID calculation
 		SHADER_PARAMETER(FVector3f, MortonBoundsMin)
 		SHADER_PARAMETER(FVector3f, MortonBoundsExtent)
-		// Hybrid Tiled Z-Order mode: 1 = enabled (32-bit keys, unlimited range), 0 = disabled (classic Morton)
 		SHADER_PARAMETER(int32, bUseHybridTiledZOrder)
-		// Neighbor caching buffers
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, NeighborList)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, NeighborCounts)
 		SHADER_PARAMETER(int32, ParticleCount)
@@ -297,88 +337,79 @@ public:
 		SHADER_PARAMETER(float, CellSize)
 		SHADER_PARAMETER(float, Compliance)
 		SHADER_PARAMETER(float, DeltaTimeSq)
-		// Tensile Instability (PBF Eq.13-14)
 		SHADER_PARAMETER(int32, bEnableTensileInstability)
 		SHADER_PARAMETER(float, TensileK)
 		SHADER_PARAMETER(int32, TensileN)
 		SHADER_PARAMETER(float, InvW_DeltaQ)
-		// Iteration control for neighbor caching
 		SHADER_PARAMETER(int32, IterationIndex)
-		// Boundary Particles for density contribution (Akinci 2012)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoundaryParticle>, BoundaryParticles)
 		SHADER_PARAMETER(int32, BoundaryParticleCount)
 		SHADER_PARAMETER(int32, bUseBoundaryDensity)
-		// Z-Order sorted boundary particles (Akinci 2012 + Z-Order optimization)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoundaryParticle>, SortedBoundaryParticles)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, BoundaryCellStart)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, BoundaryCellEnd)
 		SHADER_PARAMETER(int32, bUseBoundaryZOrder)
-		// Relative Velocity Pressure Damping (prevents fluid flying away from fast boundaries)
 		SHADER_PARAMETER(int32, bEnableRelativeVelocityDamping)
 		SHADER_PARAMETER(float, RelativeVelocityDampingStrength)
-		// Boundary Velocity Transfer (moved from FluidApplyViscosity for optimization)
-		// Fluid following moving boundaries - applied during boundary density loop
 		SHADER_PARAMETER(int32, bEnableBoundaryVelocityTransfer)
 		SHADER_PARAMETER(float, BoundaryVelocityTransferStrength)
 		SHADER_PARAMETER(float, BoundaryDetachSpeedThreshold)
 		SHADER_PARAMETER(float, BoundaryMaxDetachSpeed)
 		SHADER_PARAMETER(float, BoundaryAdhesionStrength)
 		SHADER_PARAMETER(int32, SolverIterationCount)
-		// Surface Tension (Position-Based, always enabled)
-		// Creates rounded droplets by minimizing surface area
-		SHADER_PARAMETER(int32, bEnablePositionBasedSurfaceTension)  // Always 1 (position-based)
+		SHADER_PARAMETER(int32, bEnablePositionBasedSurfaceTension)
 		SHADER_PARAMETER(float, SurfaceTensionStrength)
-		SHADER_PARAMETER(float, SurfaceTensionActivationDistance)   // cm (h * ratio)
-		SHADER_PARAMETER(float, SurfaceTensionFalloffDistance)      // cm (h * ratio)
+		SHADER_PARAMETER(float, SurfaceTensionActivationDistance)
+		SHADER_PARAMETER(float, SurfaceTensionFalloffDistance)
 		SHADER_PARAMETER(int32, SurfaceTensionSurfaceThreshold)
-		SHADER_PARAMETER(float, SurfaceTensionVelocityDamping)   // 0~1, under-relaxation for stability
-		SHADER_PARAMETER(float, SurfaceTensionTolerance)         // cm, dead zone around activation (prevents oscillation)
-		// Surface Tension max correction
-		SHADER_PARAMETER(float, MaxSurfaceTensionCorrection)        // cm per iteration
+		SHADER_PARAMETER(float, SurfaceTensionVelocityDamping)
+		SHADER_PARAMETER(float, SurfaceTensionTolerance)
+		SHADER_PARAMETER(float, MaxSurfaceTensionCorrection)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleCountBuffer)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-		OutEnvironment.SetDefine(TEXT("SPATIAL_HASH_SIZE"), GPU_SPATIAL_HASH_SIZE);
-		OutEnvironment.SetDefine(TEXT("MAX_PARTICLES_PER_CELL"), GPU_MAX_PARTICLES_PER_CELL);
-		OutEnvironment.SetDefine(TEXT("MAX_NEIGHBORS_PER_PARTICLE"), GPU_MAX_NEIGHBORS_PER_PARTICLE);
-
-		// Get grid resolution from permutation for Z-Order neighbor search
-		const FPermutationDomain PermutationVector(Parameters.PermutationId);
-		const int32 GridPreset = PermutationVector.Get<FGridResolutionDim>();
-		const int32 AxisBits = GridResolutionPermutation::GetAxisBits(GridPreset);
-		const int32 GridSize = GridResolutionPermutation::GetGridResolution(GridPreset);
-		const int32 MaxCells = GridResolutionPermutation::GetMaxCells(GridPreset);
-
-		OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), AxisBits);
-		OutEnvironment.SetDefine(TEXT("MORTON_GRID_SIZE"), GridSize);
-		OutEnvironment.SetDefine(TEXT("MAX_CELLS"), MaxCells);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
-//=============================================================================
-// [DEPRECATED] Apply Viscosity Compute Shader
-// Pass 5: Apply XSPH viscosity
-//
-// NOTE: This shader is deprecated as of the Cohesion+Viscosity optimization.
-// - Fluid Viscosity is now calculated in PredictPositions (Phase 2)
-// - Boundary Viscosity is now calculated in SolveDensityPressure (Phase 3)
-// This reduces neighbor traversal from 2x to 1x, saving ~400us at 76k particles.
-// Kept for backward compatibility but should not be used in new code.
-//=============================================================================
-
+/**
+ * @class FApplyViscosityCS
+ * @brief [DEPRECATED] Pass 5: Apply XSPH viscosity.
+ * 
+ * @param Particles Read-write access to particle buffer.
+ * @param CellCounts Legacy hash table cell counts.
+ * @param ParticleIndices Legacy hash table particle indices.
+ * @param NeighborList Neighbor list cache buffer.
+ * @param NeighborCounts Neighbor count cache buffer.
+ * @param ParticleCount Number of particles to process.
+ * @param SmoothingRadius SPH smoothing radius.
+ * @param ViscosityCoefficient XSPH viscosity coefficient.
+ * @param Poly6Coeff Precomputed Poly6 kernel coefficient.
+ * @param ViscLaplacianCoeff Precomputed Laplacian viscosity coefficient.
+ * @param DeltaTime Substep delta time.
+ * @param CellSize Spatial hash cell size.
+ * @param bUseNeighborCache Whether to use cached neighbor list.
+ * @param BoundaryParticles World-space boundary particles buffer.
+ * @param BoundaryParticleCount Number of boundary particles.
+ * @param bUseBoundaryViscosity Whether to include boundary viscosity.
+ * @param AdhesionForceStrength Akinci 2013 adhesion force strength.
+ * @param AdhesionVelocityStrength Velocity transfer strength.
+ * @param AdhesionRadius Boundary adhesion influence radius.
+ * @param SortedBoundaryParticles Sorted world-space boundary particles.
+ * @param BoundaryCellStart Sorted boundary cell start indices.
+ * @param BoundaryCellEnd Sorted boundary cell end indices.
+ * @param bUseBoundaryZOrder Whether to use sorted boundary search.
+ * @param MortonBoundsMin Minimum bounds for Morton code calculation.
+ * @param BoundaryVelocityTransferStrength Factor for boundary following.
+ * @param BoundaryDetachSpeedThreshold Speed where detachment begins.
+ * @param BoundaryMaxDetachSpeed Speed for full detachment.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
+ */
 class FApplyViscosityCS : public FGlobalShader
 {
 public:
@@ -389,32 +420,27 @@ public:
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, Particles)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellCounts)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleIndices)
-		// Neighbor caching buffers (reuse from DensityPressure pass)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, NeighborList)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, NeighborCounts)
 		SHADER_PARAMETER(int32, ParticleCount)
 		SHADER_PARAMETER(float, SmoothingRadius)
 		SHADER_PARAMETER(float, ViscosityCoefficient)
 		SHADER_PARAMETER(float, Poly6Coeff)
-		SHADER_PARAMETER(float, ViscLaplacianCoeff)  // 45 / (PI * h^6) for Laplacian viscosity
-		SHADER_PARAMETER(float, DeltaTime)           // Substep delta time for Laplacian viscosity
+		SHADER_PARAMETER(float, ViscLaplacianCoeff)
+		SHADER_PARAMETER(float, DeltaTime)
 		SHADER_PARAMETER(float, CellSize)
-		// Flag to use cached neighbors (1 = use cache, 0 = use hash)
 		SHADER_PARAMETER(int32, bUseNeighborCache)
-		// Boundary Particles for viscosity contribution
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoundaryParticle>, BoundaryParticles)
 		SHADER_PARAMETER(int32, BoundaryParticleCount)
 		SHADER_PARAMETER(int32, bUseBoundaryViscosity)
-		SHADER_PARAMETER(float, AdhesionForceStrength)     // Akinci 2013 adhesion force (0~50)
-		SHADER_PARAMETER(float, AdhesionVelocityStrength)  // Velocity transfer strength (0~5)
-		SHADER_PARAMETER(float, AdhesionRadius)            // Boundary adhesion influence radius (cm)
-		// Z-Order sorted boundary particles (same pattern as FSolveDensityPressureCS)
+		SHADER_PARAMETER(float, AdhesionForceStrength)
+		SHADER_PARAMETER(float, AdhesionVelocityStrength)
+		SHADER_PARAMETER(float, AdhesionRadius)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoundaryParticle>, SortedBoundaryParticles)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, BoundaryCellStart)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, BoundaryCellEnd)
 		SHADER_PARAMETER(int32, bUseBoundaryZOrder)
-		SHADER_PARAMETER(FVector3f, MortonBoundsMin)  // Required for GetMortonCellIDFromCellCoord
-		// Improved Boundary Velocity Transfer
+		SHADER_PARAMETER(FVector3f, MortonBoundsMin)
 		SHADER_PARAMETER(float, BoundaryVelocityTransferStrength)
 		SHADER_PARAMETER(float, BoundaryDetachSpeedThreshold)
 		SHADER_PARAMETER(float, BoundaryMaxDetachSpeed)
@@ -423,29 +449,27 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-		OutEnvironment.SetDefine(TEXT("SPATIAL_HASH_SIZE"), GPU_SPATIAL_HASH_SIZE);
-		OutEnvironment.SetDefine(TEXT("MAX_PARTICLES_PER_CELL"), GPU_MAX_PARTICLES_PER_CELL);
-		OutEnvironment.SetDefine(TEXT("MAX_NEIGHBORS_PER_PARTICLE"), GPU_MAX_NEIGHBORS_PER_PARTICLE);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
-//=============================================================================
-// Particle Sleeping Compute Shader
-// NVIDIA Flex stabilization technique: sleep low-velocity particles
-// Reduces micro-jitter and improves performance
-//=============================================================================
-
+/**
+ * @class FParticleSleepingCS
+ * @brief NVIDIA Flex stabilization technique: sleep low-velocity particles.
+ * 
+ * @param Particles Read-write access to particle buffer.
+ * @param SleepCounters Buffer for sleep persistence tracking.
+ * @param NeighborList Neighbor list cache buffer.
+ * @param NeighborCounts Neighbor count cache buffer.
+ * @param ParticleCount Number of particles to process.
+ * @param SleepVelocityThreshold Speed below which sleep timer increments.
+ * @param SleepFrameThreshold Frames required to enter sleep state.
+ * @param WakeVelocityThreshold Speed required to wake up from sleep.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
+ */
 class FParticleSleepingCS : public FGlobalShader
 {
 public:
@@ -466,26 +490,33 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-		OutEnvironment.SetDefine(TEXT("MAX_NEIGHBORS_PER_PARTICLE"), GPU_MAX_NEIGHBORS_PER_PARTICLE);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
-//=============================================================================
-// Bounds Collision Compute Shader
-// Pass 6: Apply AABB/OBB bounds collision
-//=============================================================================
-
+/**
+ * @class FBoundsCollisionCS
+ * @brief Pass 6: Apply AABB/OBB bounds collision.
+ * 
+ * @param Positions SoA positions buffer.
+ * @param PredictedPositions SoA predicted positions buffer.
+ * @param PackedVelocities Half-precision packed SoA velocities.
+ * @param Flags Particle state flags buffer.
+ * @param ParticleCount Number of particles to process.
+ * @param ParticleRadius Particle collision radius.
+ * @param BoundsCenter OBB center world position.
+ * @param BoundsExtent OBB local half extents.
+ * @param BoundsRotation OBB rotation quaternion.
+ * @param bUseOBB Whether to use OBB mode (1) or AABB mode (0).
+ * @param BoundsMin World bounds minimum (AABB mode).
+ * @param BoundsMax World bounds maximum (AABB mode).
+ * @param Restitution Collision bounciness factor.
+ * @param Friction Collision friction factor.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
+ */
 class FBoundsCollisionCS : public FGlobalShader
 {
 public:
@@ -493,22 +524,18 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FBoundsCollisionCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		// Particle SOA buffers
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Positions)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, PredictedPositions)
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint2>, PackedVelocities)  // B plan: half3 packed
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint2>, PackedVelocities)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, Flags)
 		SHADER_PARAMETER(int32, ParticleCount)
 		SHADER_PARAMETER(float, ParticleRadius)
-		// OBB parameters
 		SHADER_PARAMETER(FVector3f, BoundsCenter)
 		SHADER_PARAMETER(FVector3f, BoundsExtent)
-		SHADER_PARAMETER(FVector4f, BoundsRotation)  // Quaternion (x, y, z, w)
+		SHADER_PARAMETER(FVector4f, BoundsRotation)
 		SHADER_PARAMETER(int32, bUseOBB)
-		// Legacy AABB parameters
 		SHADER_PARAMETER(FVector3f, BoundsMin)
 		SHADER_PARAMETER(FVector3f, BoundsMax)
-		// Collision response
 		SHADER_PARAMETER(float, Restitution)
 		SHADER_PARAMETER(float, Friction)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleCountBuffer)
@@ -516,18 +543,11 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 //=============================================================================
@@ -536,6 +556,33 @@ public:
 // Uses Sobel gradient for terrain normal calculation
 //=============================================================================
 
+/**
+ * @class FHeightmapCollisionCS
+ * @brief Apply collision with Landscape terrain via heightmap texture sampling.
+ * 
+ * Uses Sobel gradient for terrain normal calculation.
+ * 
+ * @param Positions SoA positions buffer.
+ * @param PredictedPositions SoA predicted positions buffer.
+ * @param PackedVelocities Half-precision packed SoA velocities.
+ * @param Flags Particle state flags buffer.
+ * @param ParticleCount Number of particles to process.
+ * @param ParticleRadius Particle collision radius.
+ * @param HeightmapTexture Input heightmap texture.
+ * @param HeightmapSampler Sampler state for heightmap.
+ * @param WorldMin Minimum world position covered by heightmap.
+ * @param WorldMax Maximum world position covered by heightmap.
+ * @param InvWorldExtent 1/(Max - Min) for UV transform.
+ * @param TextureWidth Heightmap texture width.
+ * @param TextureHeight Heightmap texture height.
+ * @param InvTextureWidth Inverse texture width.
+ * @param InvTextureHeight Inverse texture height.
+ * @param Friction Terrain friction coefficient.
+ * @param Restitution Terrain restitution coefficient.
+ * @param NormalStrength Normal calculation gradient scale.
+ * @param CollisionOffset Extra offset for detection.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
+ */
 class FHeightmapCollisionCS : public FGlobalShader
 {
 public:
@@ -543,19 +590,14 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FHeightmapCollisionCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		// Particle SOA buffers
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Positions)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, PredictedPositions)
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint2>, PackedVelocities)  // B plan: half3 packed
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint2>, PackedVelocities)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, Flags)
 		SHADER_PARAMETER(int32, ParticleCount)
 		SHADER_PARAMETER(float, ParticleRadius)
-
-		// Heightmap texture
 		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D<float>, HeightmapTexture)
 		SHADER_PARAMETER_SAMPLER(SamplerState, HeightmapSampler)
-
-		// World space transform parameters
 		SHADER_PARAMETER(FVector3f, WorldMin)
 		SHADER_PARAMETER(FVector3f, WorldMax)
 		SHADER_PARAMETER(FVector2f, InvWorldExtent)
@@ -563,8 +605,6 @@ public:
 		SHADER_PARAMETER(int32, TextureHeight)
 		SHADER_PARAMETER(float, InvTextureWidth)
 		SHADER_PARAMETER(float, InvTextureHeight)
-
-		// Collision response parameters
 		SHADER_PARAMETER(float, Friction)
 		SHADER_PARAMETER(float, Restitution)
 		SHADER_PARAMETER(float, NormalStrength)
@@ -574,26 +614,45 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
-//=============================================================================
-// Primitive Collision Compute Shader
-// Pass 6.5: Apply collision with explicit primitives (spheres, capsules, boxes, convexes)
-// Also records collision feedback for particle -> player interaction (when enabled)
-//=============================================================================
-
+/**
+ * @class FPrimitiveCollisionCS
+ * @brief Pass 6.5: Apply collision with explicit primitives (spheres, capsules, boxes, convexes).
+ * 
+ * Also records collision feedback for particle -> player interaction (when enabled).
+ * 
+ * @param Positions SoA positions buffer.
+ * @param PredictedPositions SoA predicted positions buffer.
+ * @param PackedVelocities Half-precision packed SoA velocities.
+ * @param PackedDensityLambda Half-precision packed SoA density and lambda.
+ * @param SourceIDs Particle source component IDs buffer.
+ * @param Flags Particle state flags buffer.
+ * @param ParticleCount Number of particles to process.
+ * @param ParticleRadius Particle collision radius.
+ * @param CollisionThreshold Extra threshold for contact.
+ * @param CollisionSpheres Buffer of sphere primitives.
+ * @param SphereCount Number of sphere primitives.
+ * @param CollisionCapsules Buffer of capsule primitives.
+ * @param CapsuleCount Number of capsule primitives.
+ * @param CollisionBoxes Buffer of box primitives.
+ * @param BoxCount Number of box primitives.
+ * @param CollisionConvexes Buffer of convex primitive headers.
+ * @param ConvexCount Number of convex primitives.
+ * @param ConvexPlanes Buffer of planes for convex hulls.
+ * @param BoneTransforms Buffer of bone world transforms.
+ * @param BoneCount Number of bones.
+ * @param UnifiedFeedbackBuffer Atomic output buffer for collision data.
+ * @param bEnableCollisionFeedback Whether to record collision events.
+ * @param ColliderContactCounts Simple counters per collider.
+ * @param MaxColliderCount Maximum supported colliders for counting.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
+ */
 class FPrimitiveCollisionCS : public FGlobalShader
 {
 public:
@@ -601,42 +660,28 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FPrimitiveCollisionCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		// Particle SOA buffers
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Positions)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, PredictedPositions)
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint2>, PackedVelocities)  // B plan: half3 packed
-		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, PackedDensityLambda)  // B plan: half2 packed
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint2>, PackedVelocities)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, PackedDensityLambda)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<int>, SourceIDs)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, Flags)
 		SHADER_PARAMETER(int32, ParticleCount)
 		SHADER_PARAMETER(float, ParticleRadius)
 		SHADER_PARAMETER(float, CollisionThreshold)
-
-		// Collision primitives
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUCollisionSphere>, CollisionSpheres)
 		SHADER_PARAMETER(int32, SphereCount)
-
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUCollisionCapsule>, CollisionCapsules)
 		SHADER_PARAMETER(int32, CapsuleCount)
-
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUCollisionBox>, CollisionBoxes)
 		SHADER_PARAMETER(int32, BoxCount)
-
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUCollisionConvex>, CollisionConvexes)
 		SHADER_PARAMETER(int32, ConvexCount)
-
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUConvexPlane>, ConvexPlanes)
-
-		// Bone transforms (for impact offset computation)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoneTransform>, BoneTransforms)
 		SHADER_PARAMETER(int32, BoneCount)
-
-		// Unified Collision Feedback Buffer (ByteAddressBuffer with embedded counters)
-		// Layout: [Header:16B][BoneFeedback][SMFeedback][FISMFeedback]
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWByteAddressBuffer, UnifiedFeedbackBuffer)
 		SHADER_PARAMETER(int32, bEnableCollisionFeedback)
-
-		// Collider Contact Counts (for simple collision counting, unchanged)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, ColliderContactCounts)
 		SHADER_PARAMETER(int32, MaxColliderCount)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleCountBuffer)
@@ -644,25 +689,27 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
-//=============================================================================
-// Finalize Positions Compute Shader
-// Pass 7: Finalize positions and update velocities
-//=============================================================================
-
+/**
+ * @class FFinalizePositionsCS
+ * @brief Pass 7: Finalize positions and update velocities.
+ * 
+ * @param Positions SoA positions buffer.
+ * @param PredictedPositions SoA predicted positions buffer.
+ * @param PackedVelocities Half-precision packed SoA velocities.
+ * @param Flags Particle state flags buffer.
+ * @param ParticleCount Number of particles to process.
+ * @param DeltaTime Simulation substep delta time.
+ * @param MaxVelocity Safety velocity clamp.
+ * @param GlobalDamping Velocity damping factor.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
+ */
 class FFinalizePositionsCS : public FGlobalShader
 {
 public:
@@ -672,29 +719,22 @@ public:
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Positions)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, PredictedPositions)
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint2>, PackedVelocities)  // B plan: half3 packed
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint2>, PackedVelocities)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, Flags)
 		SHADER_PARAMETER(int32, ParticleCount)
 		SHADER_PARAMETER(float, DeltaTime)
-		SHADER_PARAMETER(float, MaxVelocity)      // Safety clamp (high value, e.g., 50000 cm/s)
-		SHADER_PARAMETER(float, GlobalDamping)    // Velocity damping per substep (1.0 = no damping)
+		SHADER_PARAMETER(float, MaxVelocity)
+		SHADER_PARAMETER(float, GlobalDamping)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleCountBuffer)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 //=============================================================================
@@ -702,6 +742,15 @@ public:
 // Phase 2: Extract render data from physics buffer to render buffer (GPU → GPU)
 //=============================================================================
 
+/**
+ * @class FExtractRenderDataCS
+ * @brief Phase 2: Extract render data from physics buffer to render buffer (GPU -> GPU).
+ * 
+ * @param PhysicsParticles Physics particle buffer (input).
+ * @param RenderParticles Output render particle buffer (AoS).
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
+ * @param ParticleRadius Radius for rendering.
+ */
 class FExtractRenderDataCS : public FGlobalShader
 {
 public:
@@ -726,28 +775,23 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
-//=============================================================================
-// Extract Render Data SoA Compute Shader
-// Phase 2: Extract to SoA buffers for memory bandwidth optimization
-// - Position buffer: 12B per particle
-// - Velocity buffer: 12B per particle (motion blur)
-// Total: 24B vs 32B (AoS) = 25% reduction
-//=============================================================================
-
+/**
+ * @class FExtractRenderDataSoACS
+ * @brief Phase 2: Extract to SoA buffers for memory bandwidth optimization.
+ * 
+ * @param PhysicsParticles Physics particle buffer (input).
+ * @param RenderPositions Output render positions buffer.
+ * @param RenderVelocities Output render velocities buffer.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
+ * @param ParticleRadius Radius for rendering.
+ */
 class FExtractRenderDataSoACS : public FGlobalShader
 {
 public:
@@ -764,26 +808,24 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
-//=============================================================================
-// Extract Render Data With Bounds Compute Shader (Optimized - Merged Pass)
-// Combines ExtractRenderData + CalculateBounds into single pass
-// Eliminates separate bounds calculation and reduces GPU dispatch overhead
-//=============================================================================
-
+/**
+ * @class FExtractRenderDataWithBoundsCS
+ * @brief Merged pass: ExtractRenderData + CalculateBounds (OPTIMIZED).
+ * 
+ * @param PhysicsParticles Physics particle buffer (input).
+ * @param RenderParticles Output render particle buffer.
+ * @param OutputBounds Output buffer for computed AABB.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
+ * @param ParticleRadius Radius for rendering.
+ * @param BoundsMargin Extra margin to expand computed bounds.
+ */
 class FExtractRenderDataWithBoundsCS : public FGlobalShader
 {
 public:
@@ -810,26 +852,25 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
-//=============================================================================
-// Copy Particles Compute Shader
-// Utility: Copy particles from source buffer to destination buffer
-// Used for preserving existing GPU simulation results when appending new particles
-//=============================================================================
-
+/**
+ * @class FCopyParticlesCS
+ * @brief Utility: Copy particles from source buffer to destination buffer.
+ * 
+ * @param SourceParticles Source particle buffer.
+ * @param DestParticles Destination particle buffer.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
+ * @param SourceOffset Element offset in source.
+ * @param DestOffset Element offset in destination.
+ * @param CopyCount Number of elements to copy.
+ * @param bReadCountFromGPU Whether to read count from ParticleCountBuffer.
+ */
 class FCopyParticlesCS : public FGlobalShader
 {
 public:
@@ -848,25 +889,28 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
-//=============================================================================
-// Spawn Particles Compute Shader
-// GPU-based particle creation from spawn requests (eliminates CPU→GPU race condition)
-//=============================================================================
-
+/**
+ * @class FSpawnParticlesCS
+ * @brief GPU-based particle creation from spawn requests.
+ * 
+ * @param SpawnRequests Buffer of spawn requests from CPU.
+ * @param Particles Main particle buffer to write into.
+ * @param ParticleCounter Global atomic counter for total particles.
+ * @param SourceCounters Per-source atomic counters.
+ * @param SpawnRequestCount Number of requests to process.
+ * @param MaxParticleCount Maximum capacity.
+ * @param NextParticleID Base ID for new particles.
+ * @param MaxSourceCount Maximum number of components.
+ * @param DefaultRadius Default radius if unspecified.
+ * @param DefaultMass Default mass if unspecified.
+ */
 class FSpawnParticlesCS : public FGlobalShader
 {
 public:
@@ -874,19 +918,10 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FSpawnParticlesCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		// Input: Spawn requests from CPU
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUSpawnRequest>, SpawnRequests)
-
-		// Output: Particle buffer to write new particles into
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, Particles)
-
-		// Atomic counter for particle count (RWStructuredBuffer<uint>)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, ParticleCounter)
-
-		// Per-source particle count (atomic counters indexed by SourceID)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, SourceCounters)
-
-		// Spawn parameters
 		SHADER_PARAMETER(int32, SpawnRequestCount)
 		SHADER_PARAMETER(int32, MaxParticleCount)
 		SHADER_PARAMETER(int32, NextParticleID)
@@ -897,18 +932,11 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 64;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 
@@ -931,16 +959,9 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
-	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment);
 };
 
 // Brush-based despawn: marks particles within spherical brush radius
@@ -960,16 +981,9 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
-	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment);
 };
 
 // Source-based despawn: marks particles matching specific SourceIDs
@@ -989,16 +1003,9 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
-	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment);
 };
 
 // Oldest despawn Pass 1: Build 256-bucket histogram of ParticleID upper bits
@@ -1019,16 +1026,9 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
-	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment);
 };
 
 // Oldest despawn Pass 2: Find threshold bucket via prefix sum (single thread)
@@ -1047,10 +1047,7 @@ public:
 		SHADER_PARAMETER(int32, FilterSourceID)
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 };
 
 // Per-source oldest despawn Pass 3: Mark particles below threshold + atomic boundary
@@ -1074,16 +1071,9 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
-	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment);
 };
 
 // Per-source recycle: computes per-source excess for sources with emitter max limits
@@ -1101,10 +1091,7 @@ public:
 		SHADER_PARAMETER(int32, ActiveSourceCount)
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 };
 
 // Source counter update: decrements counters for particles marked dead
@@ -1124,16 +1111,9 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
-	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment);
 };
 
 class FPrefixSumBlockCS_RDG : public FGlobalShader
@@ -1151,18 +1131,11 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 /**
@@ -1182,18 +1155,11 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 /**
@@ -1214,18 +1180,11 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 /**
@@ -1248,18 +1207,11 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 /**
@@ -1279,10 +1231,7 @@ public:
 		SHADER_PARAMETER(int32, ParticleCount)
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 };
 //=============================================================================
 // Extract Positions Compute Shader
@@ -1305,18 +1254,11 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 //=============================================================================
@@ -1910,11 +1852,21 @@ public:
 #define GPU_MAX_CELLS (GPU_MORTON_GRID_SIZE * GPU_MORTON_GRID_SIZE * GPU_MORTON_GRID_SIZE)  // 2,097,152
 
 /**
- * Compute Morton Codes Compute Shader
- * Converts 3D particle positions to 1D Morton codes for spatial sorting
- * IMPORTANT: Uses PredictedPosition to match Solver's neighbor search
- *
- * Supports GridResolutionPreset permutation (Small/Medium/Large)
+ * @class FComputeMortonCodesCS
+ * @brief Converts 3D particle positions to 1D Morton codes for spatial sorting.
+ * 
+ * IMPORTANT: Uses PredictedPosition to match Solver's neighbor search.
+ * Supports GridResolutionPreset permutation (Small/Medium/Large).
+ * 
+ * @param Particles Full particle structure (input).
+ * @param MortonCodes Output Morton codes buffer.
+ * @param ParticleIndices Output particle original indices.
+ * @param ParticleCount Number of particles to process.
+ * @param BoundsMin Minimum simulation bounds for normalization.
+ * @param BoundsExtent Bounds size for normalization.
+ * @param CellSize Spatial hash cell size.
+ * @param bUseHybridTiledZOrder Whether to use unlimited range tiling.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
  */
 class FComputeMortonCodesCS : public FGlobalShader
 {
@@ -1926,7 +1878,6 @@ public:
 	using FPermutationDomain = TShaderPermutationDomain<FGridResolutionDim>;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		// Full particle structure to access PredictedPosition (must match Solver)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUFluidParticle>, Particles)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, MortonCodes)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, ParticleIndices)
@@ -1934,36 +1885,17 @@ public:
 		SHADER_PARAMETER(FVector3f, BoundsMin)
 		SHADER_PARAMETER(FVector3f, BoundsExtent)
 		SHADER_PARAMETER(float, CellSize)
-		// Hybrid Tiled Z-Order mode: 1 = enabled (32-bit keys, unlimited range), 0 = disabled (classic Morton)
 		SHADER_PARAMETER(int32, bUseHybridTiledZOrder)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleCountBuffer)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-
-		// Get grid resolution from permutation
-		const FPermutationDomain PermutationVector(Parameters.PermutationId);
-		const int32 GridPreset = PermutationVector.Get<FGridResolutionDim>();
-		const int32 AxisBits = GridResolutionPermutation::GetAxisBits(GridPreset);
-		const int32 GridSize = GridResolutionPermutation::GetGridResolution(GridPreset);
-		const int32 MaxCells = GridResolutionPermutation::GetMaxCells(GridPreset);
-
-		OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), AxisBits);
-		OutEnvironment.SetDefine(TEXT("MORTON_GRID_SIZE"), GridSize);
-		OutEnvironment.SetDefine(TEXT("MAX_CELLS"), MaxCells);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 //=============================================================================
@@ -1986,8 +1918,15 @@ public:
 #define GPU_RADIX_SORT_PASSES ((GPU_MORTON_CODE_BITS + GPU_RADIX_BITS - 1) / GPU_RADIX_BITS)  // ceil(21/8) = 3 passes
 
 /**
- * Radix Sort Histogram Compute Shader
- * Pass 1: Count occurrences of each digit value per block
+ * @class FRadixSortHistogramCS
+ * @brief Radix Sort Histogram: Pass 1: Count digit occurrences per block.
+ * 
+ * @param KeysIn Input Morton codes.
+ * @param ValuesIn Input particle indices.
+ * @param Histogram Output block-level histograms.
+ * @param ElementCount Number of elements to sort.
+ * @param BitOffset Current bit offset for radix digit.
+ * @param NumGroups Total number of thread groups dispatched.
  */
 class FRadixSortHistogramCS : public FGlobalShader
 {
@@ -2006,25 +1945,20 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-		OutEnvironment.SetDefine(TEXT("RADIX_BITS"), GPU_RADIX_BITS);
-		OutEnvironment.SetDefine(TEXT("RADIX_SIZE"), GPU_RADIX_SIZE);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 /**
- * Radix Sort Global Prefix Sum Compute Shader
- * Pass 2a: Compute prefix sums across all blocks for each bucket
+ * @class FRadixSortGlobalPrefixSumCS
+ * @brief Radix Sort Global Prefix Sum: Pass 2a: Compute sums across blocks for each bucket.
+ * 
+ * @param Histogram Input/Output histograms (modified in place).
+ * @param GlobalOffsets Output global bucket offsets.
+ * @param NumGroups Total number of thread groups.
  */
 class FRadixSortGlobalPrefixSumCS : public FGlobalShader
 {
@@ -2040,25 +1974,18 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;  // One thread per bucket (256 buckets for 8-bit radix)
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-		OutEnvironment.SetDefine(TEXT("RADIX_BITS"), GPU_RADIX_BITS);
-		OutEnvironment.SetDefine(TEXT("RADIX_SIZE"), GPU_RADIX_SIZE);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 /**
- * Radix Sort Bucket Prefix Sum Compute Shader
- * Pass 2b: Compute prefix sum across buckets (for global offsets)
+ * @class FRadixSortBucketPrefixSumCS
+ * @brief Radix Sort Bucket Prefix Sum: Pass 2b: Compute prefix sum across buckets.
+ * 
+ * @param GlobalOffsets Global offsets buffer (modified in place).
  */
 class FRadixSortBucketPrefixSumCS : public FGlobalShader
 {
@@ -2070,24 +1997,25 @@ public:
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, GlobalOffsets)
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("RADIX_BITS"), GPU_RADIX_BITS);
-		OutEnvironment.SetDefine(TEXT("RADIX_SIZE"), GPU_RADIX_SIZE);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 /**
- * Radix Sort Scatter Compute Shader
- * Pass 3: Scatter elements to their sorted positions
+ * @class FRadixSortScatterCS
+ * @brief Radix Sort Scatter: Pass 3: Scatter elements to their sorted positions.
+ * 
+ * @param KeysIn Input Morton codes.
+ * @param ValuesIn Input particle indices.
+ * @param KeysOut Output sorted Morton codes.
+ * @param ValuesOut Output sorted particle indices.
+ * @param HistogramSRV Prefix-summed block histograms.
+ * @param GlobalOffsetsSRV Global bucket offsets.
+ * @param ElementCount Number of elements to scatter.
+ * @param BitOffset Current bit offset for radix digit.
  */
 class FRadixSortScatterCS : public FGlobalShader
 {
@@ -2108,25 +2036,22 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-		OutEnvironment.SetDefine(TEXT("RADIX_BITS"), GPU_RADIX_BITS);
-		OutEnvironment.SetDefine(TEXT("RADIX_SIZE"), GPU_RADIX_SIZE);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 /**
- * Radix Sort Small Array Compute Shader
- * Optimized single-pass sort for small arrays (<1024 elements)
+ * @class FRadixSortSmallCS
+ * @brief Optimized single-pass sort for small arrays (<1024 elements).
+ * 
+ * @param KeysIn Input keys.
+ * @param KeysOut Output sorted keys.
+ * @param ValuesIn Input values.
+ * @param ValuesOut Output sorted values.
+ * @param ElementCount Number of elements to sort.
  */
 class FRadixSortSmallCS : public FGlobalShader
 {
@@ -2144,25 +2069,12 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
-
-//=============================================================================
-// ParticleID Radix Sort Shaders
-// Sort particles by ParticleID for CPU readback optimization.
-// Reads ParticleID directly from Particles buffer (first pass only).
-//=============================================================================
 
 //=============================================================================
 // Particle Reordering Shaders
@@ -2170,8 +2082,17 @@ public:
 //=============================================================================
 
 /**
- * Reorder Particles Compute Shader
- * Physically reorders particle data for cache-coherent access
+ * @class FReorderParticlesCS
+ * @brief Physically reorders particle data for cache-coherent access.
+ * 
+ * @param OldParticles Original particle buffer.
+ * @param SortedIndices Map of [NewIndex] -> OldIndex.
+ * @param SortedParticles Output sorted particle buffer.
+ * @param OldBoneDeltaAttachments Original attachment buffer.
+ * @param SortedBoneDeltaAttachments Output sorted attachment buffer.
+ * @param bReorderAttachments Whether to reorder attachment buffer.
+ * @param ParticleCount Number of particles to process.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
  */
 class FReorderParticlesCS : public FGlobalShader
 {
@@ -2183,7 +2104,6 @@ public:
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUFluidParticle>, OldParticles)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, SortedIndices)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, SortedParticles)
-		// Optional: BoneDeltaAttachment reordering
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoneDeltaAttachment>, OldBoneDeltaAttachments)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUBoneDeltaAttachment>, SortedBoneDeltaAttachments)
 		SHADER_PARAMETER(int32, bReorderAttachments)
@@ -2193,23 +2113,21 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 /**
- * Build Reverse Mapping Compute Shader
- * Builds mapping from old indices to new sorted positions
+ * @class FBuildReverseMappingCS
+ * @brief Builds mapping from old indices to new sorted positions.
+ * 
+ * @param SortedIndices Map of [NewIndex] -> OldIndex.
+ * @param OldToNewMapping Output map of [OldIndex] -> NewIndex.
+ * @param ParticleCount Number of particles to process.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
  */
 class FBuildReverseMappingCS : public FGlobalShader
 {
@@ -2226,23 +2144,19 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 /**
- * Clear Cell Indices Compute Shader
- * Initializes CellStart/End arrays to invalid values
+ * @class FClearCellIndicesCS
+ * @brief Initializes CellStart/End arrays to invalid values.
+ * 
+ * @param CellStart Read-write cell start indices.
+ * @param CellEnd Read-write cell end indices.
  */
 class FClearCellIndicesCS : public FGlobalShader
 {
@@ -2262,32 +2176,22 @@ public:
 	// Large preset: 256³ = 16,777,216 cells / 512 = 32,768 groups (under limit)
 	static constexpr int32 ThreadGroupSize = 512;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-
-		// Get grid resolution from permutation
-		const FPermutationDomain PermutationVector(Parameters.PermutationId);
-		const int32 GridPreset = PermutationVector.Get<FGridResolutionDim>();
-		const int32 AxisBits = GridResolutionPermutation::GetAxisBits(GridPreset);
-		const int32 MaxCells = GridResolutionPermutation::GetMaxCells(GridPreset);
-
-		OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), AxisBits);
-		OutEnvironment.SetDefine(TEXT("MAX_CELLS"), MaxCells);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 /**
- * Compute Cell Start/End Compute Shader
- * Finds where each cell's particles begin and end in sorted array
+ * @class FComputeCellStartEndCS
+ * @brief Finds where each cell's particles begin and end in sorted array.
+ * 
+ * @param SortedMortonCodes Input sorted Morton codes.
+ * @param CellStart Output cell start indices.
+ * @param CellEnd Output cell end indices.
+ * @param ParticleCount Number of particles to process.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
  */
 class FComputeCellStartEndCS : public FGlobalShader
 {
@@ -2309,27 +2213,11 @@ public:
 	// Increased to 512 to match FluidCellStartEnd.usf
 	static constexpr int32 ThreadGroupSize = 512;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-
-		// Get grid resolution from permutation
-		const FPermutationDomain PermutationVector(Parameters.PermutationId);
-		const int32 GridPreset = PermutationVector.Get<FGridResolutionDim>();
-		const int32 AxisBits = GridResolutionPermutation::GetAxisBits(GridPreset);
-		const int32 MaxCells = GridResolutionPermutation::GetMaxCells(GridPreset);
-
-		OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), AxisBits);
-		OutEnvironment.SetDefine(TEXT("MAX_CELLS"), MaxCells);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 //=============================================================================
@@ -2339,8 +2227,16 @@ public:
 //=============================================================================
 
 /**
- * Compute Boundary Morton Codes Compute Shader
- * Converts boundary particle positions to Morton codes for Z-Order sorting
+ * @class FComputeBoundaryMortonCodesCS
+ * @brief Converts boundary particle positions to Morton codes for Z-Order sorting.
+ * 
+ * @param BoundaryParticlesIn Input boundary particles buffer.
+ * @param BoundaryMortonCodes Output Morton codes buffer.
+ * @param BoundaryParticleIndices Output original indices mapping.
+ * @param BoundaryParticleCount Number of boundary particles to process.
+ * @param BoundsMin Minimum bounds for Morton normalization.
+ * @param CellSize Cell size for Morton normalization.
+ * @param bUseHybridTiledZOrder Whether to use unlimited range tiling.
  */
 class FComputeBoundaryMortonCodesCS : public FGlobalShader
 {
@@ -2358,40 +2254,24 @@ public:
 		SHADER_PARAMETER(int32, BoundaryParticleCount)
 		SHADER_PARAMETER(FVector3f, BoundsMin)
 		SHADER_PARAMETER(float, CellSize)
-		// Hybrid Tiled Z-Order mode: 1 = enabled (32-bit keys, unlimited range), 0 = disabled (classic Morton)
 		SHADER_PARAMETER(int32, bUseHybridTiledZOrder)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-
-		// Get grid resolution from permutation
-		const FPermutationDomain PermutationVector(Parameters.PermutationId);
-		const int32 GridPreset = PermutationVector.Get<FGridResolutionDim>();
-		const int32 AxisBits = GridResolutionPermutation::GetAxisBits(GridPreset);
-		const int32 GridSize = GridResolutionPermutation::GetGridResolution(GridPreset);
-		const int32 MaxCells = GridResolutionPermutation::GetMaxCells(GridPreset);
-
-		OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), AxisBits);
-		OutEnvironment.SetDefine(TEXT("MORTON_GRID_SIZE"), GridSize);
-		OutEnvironment.SetDefine(TEXT("MAX_CELLS"), MaxCells);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 /**
- * Clear Boundary Cell Indices Compute Shader
- * Initializes BoundaryCellStart/End arrays to INVALID_INDEX
+ * @class FClearBoundaryCellIndicesCS
+ * @brief Initializes BoundaryCellStart/End arrays to INVALID_INDEX.
+ * 
+ * @param BoundaryCellStart Read-write boundary cell start indices.
+ * @param BoundaryCellEnd Read-write boundary cell end indices.
  */
 class FClearBoundaryCellIndicesCS : public FGlobalShader
 {
@@ -2409,32 +2289,21 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 512;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-
-		// Get grid resolution from permutation
-		const FPermutationDomain PermutationVector(Parameters.PermutationId);
-		const int32 GridPreset = PermutationVector.Get<FGridResolutionDim>();
-		const int32 AxisBits = GridResolutionPermutation::GetAxisBits(GridPreset);
-		const int32 MaxCells = GridResolutionPermutation::GetMaxCells(GridPreset);
-
-		OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), AxisBits);
-		OutEnvironment.SetDefine(TEXT("MAX_CELLS"), MaxCells);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 /**
- * Reorder Boundary Particles Compute Shader
- * Physically reorders boundary particles based on sorted Morton code indices
+ * @class FReorderBoundaryParticlesCS
+ * @brief Physically reorders boundary particles based on sorted Morton codes.
+ * 
+ * @param OldBoundaryParticles Original boundary particles buffer.
+ * @param SortedBoundaryIndices Map of [NewIndex] -> OldIndex.
+ * @param SortedBoundaryParticles Output sorted boundary particles.
+ * @param BoundaryParticleCount Number of boundary particles to process.
  */
 class FReorderBoundaryParticlesCS : public FGlobalShader
 {
@@ -2451,24 +2320,21 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 /**
- * Compute Boundary Cell Start/End Compute Shader
- * Determines the range [start, end] of boundary particles in each cell
- * Must be called AFTER boundary particles are sorted by Morton code
+ * @class FComputeBoundaryCellStartEndCS
+ * @brief Determines the range [start, end] of boundary particles in each cell.
+ * 
+ * @param SortedBoundaryMortonCodes Input sorted boundary Morton codes.
+ * @param BoundaryCellStart Output boundary cell start indices.
+ * @param BoundaryCellEnd Output boundary cell end indices.
+ * @param BoundaryParticleCount Number of boundary particles.
  */
 class FComputeBoundaryCellStartEndCS : public FGlobalShader
 {
@@ -2488,27 +2354,11 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 512;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-
-		// Get grid resolution from permutation
-		const FPermutationDomain PermutationVector(Parameters.PermutationId);
-		const int32 GridPreset = PermutationVector.Get<FGridResolutionDim>();
-		const int32 AxisBits = GridResolutionPermutation::GetAxisBits(GridPreset);
-		const int32 MaxCells = GridResolutionPermutation::GetMaxCells(GridPreset);
-
-		OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), AxisBits);
-		OutEnvironment.SetDefine(TEXT("MAX_CELLS"), MaxCells);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 //=============================================================================
@@ -2517,9 +2367,19 @@ public:
 //=============================================================================
 
 /**
- * Apply Bone Transform Compute Shader
- * Runs at SIMULATION START: Moves attached particles to follow WorldBoundaryParticles
- * Uses BoundaryParticleIndex (OriginalIndex from Z-Order sorting) for stable attachment
+ * @class FApplyBoneTransformCS
+ * @brief Apply Bone Transform: moves attached particles to follow boundary bones.
+ * 
+ * @param Particles Main particle buffer (read/write).
+ * @param ParticleCount Number of particles to process.
+ * @param BoneDeltaAttachments Read-only access to attachment data.
+ * @param LocalBoundaryParticles Local boundary particles for PERFECT sync.
+ * @param BoundaryParticleCount Number of boundary particles.
+ * @param BoneTransforms Current bone matrices.
+ * @param BoneCount Number of matrices in bone buffer.
+ * @param ComponentTransform Fallback component world matrix.
+ * @param DeltaTime Substep delta time.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
  */
 class FApplyBoneTransformCS : public FGlobalShader
 {
@@ -2528,49 +2388,55 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FApplyBoneTransformCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		// Particles buffer (read/write)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, Particles)
 		SHADER_PARAMETER(int32, ParticleCount)
-
-		// Bone Delta Attachment buffer (read only)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoneDeltaAttachment>, BoneDeltaAttachments)
-
-		// Local boundary particles (for direct bone transform application)
-		// Using LocalBoundaryParticles + BoneTransforms instead of WorldBoundaryParticles
-		// ensures PERFECT sync with skeletal mesh rendering - no 1-frame delay!
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoundaryParticleLocal>, LocalBoundaryParticles)
 		SHADER_PARAMETER(int32, BoundaryParticleCount)
-
-		// Bone transforms (same buffer used by BoundarySkinningCS)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FMatrix44f>, BoneTransforms)
 		SHADER_PARAMETER(int32, BoneCount)
 		SHADER_PARAMETER(FMatrix44f, ComponentTransform)
-
-		// Time parameter for velocity calculation
 		SHADER_PARAMETER(float, DeltaTime)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleCountBuffer)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 /**
- * Update Bone Delta Attachment Compute Shader
- * Runs at SIMULATION END: Updates attachment data after physics simulation
- * Finds nearest boundary particle and stores its OriginalIndex for stable attachment
+ * @class FUpdateBoneDeltaAttachmentCS
+ * @brief Update Bone Delta Attachment: finds nearest boundary after simulation.
+ * 
+ * @param Particles Main particle buffer (read/write).
+ * @param ParticleCount Number of particles to process.
+ * @param BoneDeltaAttachments Output read-write attachment states.
+ * @param SortedBoundaryParticles Sorted boundary particles for search.
+ * @param BoundaryCellStart Boundary hash cell starts.
+ * @param BoundaryCellEnd Boundary hash cell ends.
+ * @param BoundaryParticleCount Total boundary particles.
+ * @param WorldBoundaryParticles Unsorted boundary particles for local offset.
+ * @param WorldBoundaryParticleCount Total unsorted boundary particles.
+ * @param AttachRadius Bond threshold distance.
+ * @param DetachDistance Break threshold distance.
+ * @param AdhesionStrength Global adhesion factor.
+ * @param MortonBoundsMin Morton normalization origin.
+ * @param CellSize Morton normalization scale.
+ * @param bUseHybridTiledZOrder Whether to use tiling.
+ * @param CollisionSpheres Collision primitives for normals.
+ * @param CollisionCapsules Collision primitives for normals.
+ * @param CollisionBoxes Collision primitives for normals.
+ * @param BoneTransforms Current bone matrices.
+ * @param SphereCount Number of sphere primitives.
+ * @param CapsuleCount Number of capsule primitives.
+ * @param BoxCount Number of box primitives.
+ * @param BoneCount Number of bone matrices.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
  */
 class FUpdateBoneDeltaAttachmentCS : public FGlobalShader
 {
@@ -2582,36 +2448,21 @@ public:
 	using FPermutationDomain = TShaderPermutationDomain<FGridResolutionDim>;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		// Particles buffer (read/write)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, Particles)
 		SHADER_PARAMETER(int32, ParticleCount)
-
-		// Bone Delta Attachment buffer (read/write)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUBoneDeltaAttachment>, BoneDeltaAttachments)
-
-		// Z-Order sorted boundary particles
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoundaryParticle>, SortedBoundaryParticles)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, BoundaryCellStart)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, BoundaryCellEnd)
 		SHADER_PARAMETER(int32, BoundaryParticleCount)
-
-		// World boundary particles (unsorted, for LocalOffset calculation by OriginalIndex)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoundaryParticle>, WorldBoundaryParticles)
 		SHADER_PARAMETER(int32, WorldBoundaryParticleCount)
-
-		// Parameters
-		SHADER_PARAMETER(float, AttachRadius)       // Radius for attaching to boundary (cm)
-		SHADER_PARAMETER(float, DetachDistance)     // Distance threshold for detaching (default: 300cm)
-		SHADER_PARAMETER(float, AdhesionStrength)   // Adhesion strength - if 0, no attachment
-
-		// Z-Order bounds
+		SHADER_PARAMETER(float, AttachRadius)
+		SHADER_PARAMETER(float, DetachDistance)
+		SHADER_PARAMETER(float, AdhesionStrength)
 		SHADER_PARAMETER(FVector3f, MortonBoundsMin)
 		SHADER_PARAMETER(float, CellSize)
-
-		// Hybrid Tiled Z-Order mode (for unlimited simulation range)
 		SHADER_PARAMETER(int32, bUseHybridTiledZOrder)
-
-		// Collision primitives (for direct collider surface normal calculation)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUCollisionSphere>, CollisionSpheres)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUCollisionCapsule>, CollisionCapsules)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUCollisionBox>, CollisionBoxes)
@@ -2625,47 +2476,45 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-
-		// Get grid resolution from permutation for Morton code calculation
-		const FPermutationDomain PermutationVector(Parameters.PermutationId);
-		const int32 GridPreset = PermutationVector.Get<FGridResolutionDim>();
-		const int32 AxisBits = GridResolutionPermutation::GetAxisBits(GridPreset);
-		const int32 MaxCells = GridResolutionPermutation::GetMaxCells(GridPreset);
-
-		OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), AxisBits);
-		OutEnvironment.SetDefine(TEXT("MAX_CELLS"), MaxCells);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
 //=============================================================================
 // SoA (Structure of Arrays) Conversion Shaders
 //=============================================================================
 
+/**
+ * @class FSplitAoSToSoACS
+ * @brief Converts particle data from AoS to SoA layout.
+ * 
+ * @param SourceParticles Original AoS particle buffer.
+ * @param OutPositions Output SoA positions buffer.
+ * @param OutPredictedPositions Output SoA predicted positions buffer.
+ * @param OutPackedVelocities Output SoA packed velocities.
+ * @param OutPackedDensityLambda Output SoA packed density/lambda.
+ * @param OutFlags Output SoA flags buffer.
+ * @param OutNeighborCounts Output SoA neighbor counts buffer.
+ * @param OutParticleIDs Output SoA persistent IDs buffer.
+ * @param OutSourceIDs Output SoA source component IDs buffer.
+ * @param SplitParticleCount Number of particles to convert.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
+ */
 class FSplitAoSToSoACS : public FGlobalShader
 {
+public:
 	DECLARE_GLOBAL_SHADER(FSplitAoSToSoACS);
 	SHADER_USE_PARAMETER_STRUCT(FSplitAoSToSoACS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUFluidParticle>, SourceParticles)
-		// Full precision (Position is critical)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, OutPositions)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, OutPredictedPositions)
-		// Half precision packed (bandwidth optimization)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint2>, OutPackedVelocities)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, OutPackedDensityLambda)
-		// Other fields
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, OutFlags)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, OutNeighborCounts)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<int>, OutParticleIDs)
@@ -2676,36 +2525,43 @@ class FSplitAoSToSoACS : public FGlobalShader
 
 	static constexpr uint32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
-	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment);
 };
 
+/**
+ * @class FMergeSoAToAoSCS
+ * @brief Converts particle data from SoA back to AoS layout.
+ * 
+ * @param InPositions Input SoA positions buffer.
+ * @param InPredictedPositions Input SoA predicted positions buffer.
+ * @param InPackedVelocities Input SoA packed velocities.
+ * @param InPackedDensityLambda Input SoA packed density/lambda.
+ * @param InFlags Input SoA flags buffer.
+ * @param InNeighborCounts Input SoA neighbor counts buffer.
+ * @param InParticleIDs Input SoA persistent IDs buffer.
+ * @param InSourceIDs Input SoA source component IDs buffer.
+ * @param MergeUniformParticleMass Global mass factor.
+ * @param TargetParticles Output AoS particle buffer.
+ * @param MergeParticleCount Number of particles to merge.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
+ */
 class FMergeSoAToAoSCS : public FGlobalShader
 {
+public:
 	DECLARE_GLOBAL_SHADER(FMergeSoAToAoSCS);
 	SHADER_USE_PARAMETER_STRUCT(FMergeSoAToAoSCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		// Full precision
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float>, InPositions)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float>, InPredictedPositions)
-		// Half precision packed (bandwidth optimization)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint2>, InPackedVelocities)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, InPackedDensityLambda)
-		// Other fields
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, InFlags)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, InNeighborCounts)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<int>, InParticleIDs)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<int>, InSourceIDs)
-		// Uniform mass
 		SHADER_PARAMETER(float, MergeUniformParticleMass)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FGPUFluidParticle>, TargetParticles)
 		SHADER_PARAMETER(int32, MergeParticleCount)
@@ -2714,16 +2570,9 @@ class FMergeSoAToAoSCS : public FGlobalShader
 
 	static constexpr uint32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
-	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment);
 };
 
 //=============================================================================
@@ -2731,6 +2580,15 @@ class FMergeSoAToAoSCS : public FGlobalShader
 // GPU-driven particle count management for DispatchIndirect
 //=============================================================================
 
+/**
+ * @class FWriteAliveCountAfterCompactionCS
+ * @brief Writes the GPU-accurate particle count after stream compaction.
+ * 
+ * @param PrefixSums Prefix sums of alive flags.
+ * @param AliveMask Survival mask buffer.
+ * @param ParticleCountBuffer Output atomic count buffer.
+ * @param OldParticleCount Input pre-compaction count.
+ */
 class FWriteAliveCountAfterCompactionCS : public FGlobalShader
 {
 public:
@@ -2744,12 +2602,16 @@ public:
 		SHADER_PARAMETER(int32, OldParticleCount)
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 };
 
+/**
+ * @class FUpdateCountAfterSpawnCS
+ * @brief Updates global particle count from atomic spawn counter.
+ * 
+ * @param SpawnCounter Atomic counter from spawn pass.
+ * @param SpawnParticleCountBuffer Output global count buffer.
+ */
 class FUpdateCountAfterSpawnCS : public FGlobalShader
 {
 public:
@@ -2761,12 +2623,16 @@ public:
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, SpawnParticleCountBuffer)
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 };
 
+/**
+ * @class FCopyCountToSpawnCounterCS
+ * @brief Utility: Copies global particle count to an atomic counter for appending.
+ * 
+ * @param SourceParticleCountBuffer Global count buffer (input).
+ * @param DestSpawnCounter Atomic spawn counter (output).
+ */
 class FCopyCountToSpawnCounterCS : public FGlobalShader
 {
 public:
@@ -2778,8 +2644,5 @@ public:
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, DestSpawnCounter)
 	END_SHADER_PARAMETER_STRUCT()
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 };

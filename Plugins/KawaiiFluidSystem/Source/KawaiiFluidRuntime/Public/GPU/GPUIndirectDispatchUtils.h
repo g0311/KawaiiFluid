@@ -12,52 +12,52 @@
 #include "RHICommandList.h"
 
 /**
- * PersistentParticleCountBuffer Layout (44 bytes = 11 x uint32)
- *
- * Offset  0: uint32 GroupCountX_256  // ceil(Count / 256)
- * Offset  4: uint32 1               // GroupCountY
- * Offset  8: uint32 1               // GroupCountZ
- * Offset 12: uint32 GroupCountX_512  // ceil(Count / 512)
- * Offset 16: uint32 1
- * Offset 20: uint32 1
- * Offset 24: uint32 ParticleCount   // raw count
- * Offset 28: uint32 4               // VertexCountPerInstance (tri-strip quad)
- * Offset 32: uint32 InstanceCount   // = ParticleCount
- * Offset 36: uint32 0               // StartVertexLocation
- * Offset 40: uint32 0               // StartInstanceLocation
- *
- * TG=256 IndirectArgs at offset 0 (bytes 0-11)
- * TG=512 IndirectArgs at offset 12 (bytes 12-23)
- * Raw count at offset 24 (element index 6)
- * DrawInstancedIndirect args at offset 28 (bytes 28-43)
+ * @namespace GPUIndirectDispatch
+ * @brief Indirect Dispatch Utilities for GPU Fluid Simulation.
+ * 
+ * Provides helper functions for DispatchIndirect compute passes and manages
+ * the layout of PersistentParticleCountBuffer.
+ * 
+ * PersistentParticleCountBuffer Layout (44 bytes = 11 x uint32):
+ * - Offset  0: uint32 GroupCountX_256  // ceil(Count / 256)
+ * - Offset  4: uint32 1               // GroupCountY
+ * - Offset  8: uint32 1               // GroupCountZ
+ * - Offset 12: uint32 GroupCountX_512  // ceil(Count / 512)
+ * - Offset 16: uint32 1
+ * - Offset 20: uint32 1
+ * - Offset 24: uint32 ParticleCount   // raw count
+ * - Offset 28: uint32 4               // VertexCountPerInstance (tri-strip quad)
+ * - Offset 32: uint32 InstanceCount   // = ParticleCount
+ * - Offset 36: uint32 0               // StartVertexLocation
+ * - Offset 40: uint32 0               // StartInstanceLocation
  */
 namespace GPUIndirectDispatch
 {
-	/** Byte offset for TG=256 indirect args */
+	/** @brief Byte offset for TG=256 indirect args (GroupCountX, Y, Z). */
 	static constexpr uint32 IndirectArgsOffset_TG256 = 0;
 
-	/** Byte offset for TG=512 indirect args */
+	/** @brief Byte offset for TG=512 indirect args (GroupCountX, Y, Z). */
 	static constexpr uint32 IndirectArgsOffset_TG512 = 12;
 
-	/** Element index for raw particle count (for SRV reads) */
+	/** @brief Element index for raw particle count (for SRV reads). */
 	static constexpr uint32 ParticleCountElementIndex = 6;
 
-	/** Byte offset for raw particle count */
+	/** @brief Byte offset for raw particle count. */
 	static constexpr uint32 ParticleCountByteOffset = 24;
 
-	/** Byte offset for DrawInstancedIndirect args (4 x uint32) */
+	/** @brief Byte offset for DrawInstancedIndirect args (4 x uint32). */
 	static constexpr uint32 DrawIndirectArgsOffset = 28;
 
-	/** Total buffer size in bytes */
+	/** @brief Total buffer size in bytes. */
 	static constexpr uint32 BufferSizeBytes = 44;
 
-	/** Total buffer size in uint32 elements */
+	/** @brief Total buffer size in uint32 elements. */
 	static constexpr uint32 BufferSizeElements = 11;
 
 	/**
-	 * Create initial data for PersistentParticleCountBuffer
-	 * @param ParticleCount - Current particle count
-	 * @param OutData - Output array (must have 11 elements)
+	 * @brief Create initial data for PersistentParticleCountBuffer.
+	 * @param ParticleCount Current particle count.
+	 * @param OutData Output array (must have 11 elements).
 	 */
 	inline void BuildInitData(uint32 ParticleCount, uint32 OutData[BufferSizeElements])
 	{
@@ -75,8 +75,8 @@ namespace GPUIndirectDispatch
 	}
 
 	/**
-	 * Build zero-count initial data (for ClearCachedParticles)
-	 * GroupCountX = 0, GroupCountY/Z = 1
+	 * @brief Build zero-count initial data (for ClearCachedParticles).
+	 * @param OutData Output array (must have 11 elements).
 	 */
 	inline void BuildZeroData(uint32 OutData[BufferSizeElements])
 	{
@@ -87,17 +87,17 @@ namespace GPUIndirectDispatch
 	}
 
 	/**
-	 * Add an indirect compute pass using DispatchIndirect
-	 *
+	 * @brief Add an indirect compute pass using DispatchIndirect.
+	 * 
 	 * This is the indirect dispatch equivalent of FComputeShaderUtils::AddPass.
 	 * Instead of providing FIntVector group counts, it reads them from IndirectArgsBuffer.
 	 *
-	 * @param GraphBuilder - RDG builder
-	 * @param EventName - RDG event name
-	 * @param ComputeShader - Compute shader reference
-	 * @param Parameters - Shader parameters
-	 * @param IndirectArgsBuffer - Buffer containing dispatch args (3 x uint32)
-	 * @param IndirectArgsOffset - Byte offset into IndirectArgsBuffer
+	 * @param GraphBuilder RDG builder.
+	 * @param EventName RDG event name.
+	 * @param ComputeShader Compute shader reference.
+	 * @param Parameters Shader parameters.
+	 * @param IndirectArgsBuffer Buffer containing dispatch args (3 x uint32).
+	 * @param IndirectArgsOffset Byte offset into IndirectArgsBuffer.
 	 */
 	template<typename ShaderType>
 	void AddIndirectComputePass(
@@ -127,8 +127,13 @@ namespace GPUIndirectDispatch
 	}
 
 	/**
-	 * Overload for permutation-based shaders
-	 * Same as above but accepts TShaderMapRef directly
+	 * @brief Overload for permutation-based shaders.
+	 * @param GraphBuilder RDG builder.
+	 * @param EventName RDG event name.
+	 * @param ComputeShader Compute shader reference (TShaderMapRef).
+	 * @param Parameters Shader parameters.
+	 * @param IndirectArgsBuffer Buffer containing dispatch args.
+	 * @param IndirectArgsOffset Byte offset into IndirectArgsBuffer.
 	 */
 	template<typename ShaderType>
 	void AddIndirectComputePass(

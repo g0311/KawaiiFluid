@@ -27,6 +27,9 @@ FGPUCollisionFeedbackManager::~FGPUCollisionFeedbackManager()
 // Lifecycle
 //=============================================================================
 
+/**
+ * @brief Initialize the feedback manager.
+ */
 void FGPUCollisionFeedbackManager::Initialize()
 {
 	bIsInitialized = true;
@@ -48,6 +51,9 @@ void FGPUCollisionFeedbackManager::Initialize()
 		MAX_COLLISION_FEEDBACK, MAX_STATICMESH_COLLISION_FEEDBACK, MAX_FLUIDINTERACTION_SM_FEEDBACK);
 }
 
+/**
+ * @brief Release all resources.
+ */
 void FGPUCollisionFeedbackManager::Release()
 {
 	ReleaseReadbackObjects();
@@ -83,6 +89,10 @@ void FGPUCollisionFeedbackManager::Release()
 // Buffer Management
 //=============================================================================
 
+/**
+ * @brief Allocate readback objects (call from render thread).
+ * @param RHICmdList Command list.
+ */
 void FGPUCollisionFeedbackManager::AllocateReadbackObjects(FRHICommandListImmediate& RHICmdList)
 {
 	// Unified buffer - allocate single readback per frame instead of 7
@@ -107,6 +117,9 @@ void FGPUCollisionFeedbackManager::AllocateReadbackObjects(FRHICommandListImmedi
 		UNIFIED_BUFFER_SIZE, NUM_FEEDBACK_BUFFERS, MAX_COLLIDER_COUNT);
 }
 
+/**
+ * @brief Release readback objects.
+ */
 void FGPUCollisionFeedbackManager::ReleaseReadbackObjects()
 {
 	// Release unified readbacks (replaces 7 separate releases per buffer)
@@ -132,6 +145,10 @@ void FGPUCollisionFeedbackManager::ReleaseReadbackObjects()
 // Readback Processing
 //=============================================================================
 
+/**
+ * @brief Process collision feedback readback (non-blocking).
+ * @param RHICmdList Command list.
+ */
 void FGPUCollisionFeedbackManager::ProcessFeedbackReadback(FRHICommandListImmediate& RHICmdList)
 {
 	if (!bFeedbackEnabled)
@@ -272,6 +289,10 @@ void FGPUCollisionFeedbackManager::ProcessFeedbackReadback(FRHICommandListImmedi
 	UE_LOG(LogGPUCollisionFeedback, Verbose, TEXT("Unified readback %d: Bone=%d, SM=%d, FISM=%d"), ReadIdx, BoneCount, SMCount, FISMCount);
 }
 
+/**
+ * @brief Process contact count readback (non-blocking).
+ * @param RHICmdList Command list.
+ */
 void FGPUCollisionFeedbackManager::ProcessContactCountReadback(FRHICommandListImmediate& RHICmdList)
 {
 	// Debug logging (every 60 frames)
@@ -329,6 +350,10 @@ void FGPUCollisionFeedbackManager::ProcessContactCountReadback(FRHICommandListIm
 	}
 }
 
+/**
+ * @brief Enqueue copy for next frame's readback.
+ * @param RHICmdList Command list.
+ */
 void FGPUCollisionFeedbackManager::EnqueueReadbackCopy(FRHICommandListImmediate& RHICmdList)
 {
 	// This is called after the simulation pass to enqueue copies for next frame's readback
@@ -414,6 +439,9 @@ void FGPUCollisionFeedbackManager::EnqueueReadbackCopy(FRHICommandListImmediate&
 	IncrementFrameCounter();
 }
 
+/**
+ * @brief Increment frame counter.
+ */
 void FGPUCollisionFeedbackManager::IncrementFrameCounter()
 {
 	CurrentWriteIndex = (CurrentWriteIndex + 1) % NUM_FEEDBACK_BUFFERS;
@@ -425,6 +453,13 @@ void FGPUCollisionFeedbackManager::IncrementFrameCounter()
 // Query API
 //=============================================================================
 
+/**
+ * @brief Get collision feedback for a specific collider.
+ * @param ColliderIndex Index of the collider.
+ * @param OutFeedback Output array of feedback entries.
+ * @param OutCount Number of feedback entries.
+ * @return true if feedback is available.
+ */
 bool FGPUCollisionFeedbackManager::GetFeedbackForCollider(int32 ColliderIndex, TArray<FGPUCollisionFeedback>& OutFeedback, int32& OutCount)
 {
 	FScopeLock Lock(&FeedbackLock);
@@ -450,6 +485,12 @@ bool FGPUCollisionFeedbackManager::GetFeedbackForCollider(int32 ColliderIndex, T
 	return OutCount > 0;
 }
 
+/**
+ * @brief Get all collision feedback (unfiltered, bone colliders only).
+ * @param OutFeedback Output array of all feedback entries.
+ * @param OutCount Number of feedback entries.
+ * @return true if feedback is available.
+ */
 bool FGPUCollisionFeedbackManager::GetAllFeedback(TArray<FGPUCollisionFeedback>& OutFeedback, int32& OutCount)
 {
 	FScopeLock Lock(&FeedbackLock);
@@ -468,6 +509,11 @@ bool FGPUCollisionFeedbackManager::GetAllFeedback(TArray<FGPUCollisionFeedback>&
 	return true;
 }
 
+/**
+ * @brief Get contact count for a specific collider index.
+ * @param ColliderIndex Index of the collider.
+ * @return Number of particles colliding with this collider.
+ */
 int32 FGPUCollisionFeedbackManager::GetContactCount(int32 ColliderIndex) const
 {
 	FScopeLock Lock(&FeedbackLock);
@@ -479,12 +525,22 @@ int32 FGPUCollisionFeedbackManager::GetContactCount(int32 ColliderIndex) const
 	return ReadyContactCounts[ColliderIndex];
 }
 
+/**
+ * @brief Get all collider contact counts.
+ * @param OutCounts Output array of contact counts per collider.
+ */
 void FGPUCollisionFeedbackManager::GetAllContactCounts(TArray<int32>& OutCounts) const
 {
 	FScopeLock Lock(&FeedbackLock);
 	OutCounts = ReadyContactCounts;
 }
 
+/**
+ * @brief Get all StaticMesh collision feedback.
+ * @param OutFeedback Output array of StaticMesh feedback entries.
+ * @param OutCount Number of feedback entries.
+ * @return true if feedback is available.
+ */
 bool FGPUCollisionFeedbackManager::GetAllStaticMeshFeedback(TArray<FGPUCollisionFeedback>& OutFeedback, int32& OutCount)
 {
 	FScopeLock Lock(&FeedbackLock);
@@ -503,6 +559,12 @@ bool FGPUCollisionFeedbackManager::GetAllStaticMeshFeedback(TArray<FGPUCollision
 	return true;
 }
 
+/**
+ * @brief Get all FluidInteraction StaticMesh collision feedback.
+ * @param OutFeedback Output array of FluidInteraction SM feedback entries.
+ * @param OutCount Number of feedback entries.
+ * @return true if feedback is available.
+ */
 bool FGPUCollisionFeedbackManager::GetAllFluidInteractionSMFeedback(TArray<FGPUCollisionFeedback>& OutFeedback, int32& OutCount)
 {
 	FScopeLock Lock(&FeedbackLock);

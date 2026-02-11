@@ -16,6 +16,16 @@
 // Output: DebugZOrderIndices[ParticleID] → ZOrderArrayIndex
 //=============================================================================
 
+/**
+ * @class FRecordZOrderIndicesCS
+ * @brief Records each particle's array index after Z-Order sort.
+ * 
+ * Used for debug visualization to track particle IDs across different spatial layouts.
+ * 
+ * @param Particles Input Z-Order sorted particles.
+ * @param DebugZOrderIndices Output buffer mapping ParticleID to its array index.
+ * @param ParticleCount Number of particles to process.
+ */
 class FRecordZOrderIndicesCS : public FGlobalShader
 {
 public:
@@ -30,16 +40,9 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };

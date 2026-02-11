@@ -8,12 +8,16 @@
 #include "RenderGraphResources.h"
 #include "GPU/GPUFluidParticle.h"
 
-//=============================================================================
-// Stats Compact Compute Shader - Basic Mode (32 bytes output)
-// Extracts Position, ParticleID, SourceID, NeighborCount from full particle buffer
-// Used when ISM rendering and Shadow system are disabled
-//=============================================================================
-
+/**
+ * @class FCompactStatsCS
+ * @brief Basic mode stats compact compute shader (32 bytes output).
+ * 
+ * Extracts Position, ParticleID, SourceID, NeighborCount from full particle buffer.
+ * 
+ * @param InParticles Input particles buffer.
+ * @param OutCompactStats Output buffer for basic particle stats.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
+ */
 class FCompactStatsCS : public FGlobalShader
 {
 public:
@@ -28,26 +32,23 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
-//=============================================================================
-// Stats Compact Compute Shader - Extended Mode (48 bytes output)
-// Extracts Position, ParticleID, Velocity, SourceID, NeighborCount
-// Used when ISM rendering or Shadow system is enabled
-//=============================================================================
-
+/**
+ * @class FCompactStatsExCS
+ * @brief Extended mode stats compact compute shader (48 bytes output).
+ * 
+ * Extracts Position, ParticleID, Velocity, SourceID, NeighborCount.
+ * 
+ * @param InParticles Input particles buffer.
+ * @param OutCompactStatsEx Output buffer for extended particle stats.
+ * @param ParticleCountBuffer GPU-accurate particle count buffer.
+ */
 class FCompactStatsExCS : public FGlobalShader
 {
 public:
@@ -62,16 +63,9 @@ public:
 
 	static constexpr int32 ThreadGroupSize = 256;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREAD_GROUP_SIZE"), ThreadGroupSize);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };

@@ -31,6 +31,9 @@ FGPUAdhesionManager::~FGPUAdhesionManager()
 // Lifecycle
 //=============================================================================
 
+/**
+ * @brief Initialize the adhesion manager.
+ */
 void FGPUAdhesionManager::Initialize()
 {
 	if (bIsInitialized)
@@ -43,6 +46,9 @@ void FGPUAdhesionManager::Initialize()
 	UE_LOG(LogGPUAdhesionManager, Log, TEXT("GPU Adhesion Manager initialized"));
 }
 
+/**
+ * @brief Release all resources.
+ */
 void FGPUAdhesionManager::Release()
 {
 	if (!bIsInitialized)
@@ -64,6 +70,16 @@ void FGPUAdhesionManager::Release()
 // Adhesion Pass (Create attachments to bone colliders)
 //=============================================================================
 
+/**
+ * @brief Add adhesion pass (create attachments to bone colliders).
+ * @param GraphBuilder RDG builder.
+ * @param SpatialData Simulation spatial data.
+ * @param AttachmentUAV Attachment buffer UAV.
+ * @param CollisionManager Collision manager for bone transforms and primitives.
+ * @param CurrentParticleCount Current particle count.
+ * @param Params Simulation parameters.
+ * @param IndirectArgsBuffer Optional indirect dispatch arguments.
+ */
 void FGPUAdhesionManager::AddAdhesionPass(
 	FRDGBuilder& GraphBuilder,
 	const FSimulationSpatialData& SpatialData,
@@ -149,11 +165,26 @@ void FGPUAdhesionManager::AddAdhesionPass(
 
 	// Dummy buffers for empty arrays
 	FRDGBufferDesc DummyDesc = FRDGBufferDesc::CreateStructuredDesc(16, 1);
-	if (!SpheresBuffer) SpheresBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummySpheres"));
-	if (!CapsulesBuffer) CapsulesBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyCapsules"));
-	if (!BoxesBuffer) BoxesBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyBoxes"));
-	if (!ConvexesBuffer) ConvexesBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyConvexes"));
-	if (!ConvexPlanesBuffer) ConvexPlanesBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyPlanes"));
+	if (!SpheresBuffer)
+	{
+		SpheresBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummySpheres"));
+	}
+	if (!CapsulesBuffer)
+	{
+		CapsulesBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyCapsules"));
+	}
+	if (!BoxesBuffer)
+	{
+		BoxesBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyBoxes"));
+	}
+	if (!ConvexesBuffer)
+	{
+		ConvexesBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyConvexes"));
+	}
+	if (!ConvexPlanesBuffer)
+	{
+		ConvexPlanesBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyPlanes"));
+	}
 
 	FAdhesionCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FAdhesionCS::FParameters>();
 	// Bind SOA buffers
@@ -162,7 +193,10 @@ void FGPUAdhesionManager::AddAdhesionPass(
 	PassParameters->PackedVelocities = GraphBuilder.CreateUAV(SpatialData.SoA_PackedVelocities, PF_R32G32_UINT);  // B plan
 	PassParameters->Flags = GraphBuilder.CreateUAV(SpatialData.SoA_Flags, PF_R32_UINT);
 	PassParameters->ParticleCount = CurrentParticleCount;
-	if (IndirectArgsBuffer) PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+	if (IndirectArgsBuffer)
+	{
+		PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+	}
 	PassParameters->ParticleRadius = Params.ParticleRadius;
 	PassParameters->Attachments = AttachmentUAV;
 	PassParameters->BoneTransforms = BoneTransformsSRVLocal;
@@ -214,6 +248,16 @@ void FGPUAdhesionManager::AddAdhesionPass(
 // Update Attached Positions Pass (Move attached particles with bones)
 //=============================================================================
 
+/**
+ * @brief Add update attached positions pass (move attached particles with bones).
+ * @param GraphBuilder RDG builder.
+ * @param SpatialData Spatial hash data with SOA buffers.
+ * @param AttachmentUAV Attachment buffer UAV.
+ * @param CollisionManager Collision manager for bone transforms and primitives.
+ * @param CurrentParticleCount Current particle count.
+ * @param Params Simulation parameters.
+ * @param IndirectArgsBuffer Optional indirect dispatch arguments.
+ */
 void FGPUAdhesionManager::AddUpdateAttachedPositionsPass(
 	FRDGBuilder& GraphBuilder,
 	const FSimulationSpatialData& SpatialData,
@@ -299,11 +343,26 @@ void FGPUAdhesionManager::AddUpdateAttachedPositionsPass(
 
 	// Dummy buffers for empty arrays
 	FRDGBufferDesc DummyDesc = FRDGBufferDesc::CreateStructuredDesc(16, 1);
-	if (!SpheresBuffer) SpheresBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummySpheresUpdate"));
-	if (!CapsulesBuffer) CapsulesBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyCapsulesUpdate"));
-	if (!BoxesBuffer) BoxesBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyBoxesUpdate"));
-	if (!ConvexesBuffer) ConvexesBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyConvexesUpdate"));
-	if (!ConvexPlanesBuffer) ConvexPlanesBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyPlanesUpdate"));
+	if (!SpheresBuffer)
+	{
+		SpheresBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummySpheresUpdate"));
+	}
+	if (!CapsulesBuffer)
+	{
+		CapsulesBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyCapsulesUpdate"));
+	}
+	if (!BoxesBuffer)
+	{
+		BoxesBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyBoxesUpdate"));
+	}
+	if (!ConvexesBuffer)
+	{
+		ConvexesBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyConvexesUpdate"));
+	}
+	if (!ConvexPlanesBuffer)
+	{
+		ConvexPlanesBuffer = GraphBuilder.CreateBuffer(DummyDesc, TEXT("DummyPlanesUpdate"));
+	}
 
 	FUpdateAttachedPositionsCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FUpdateAttachedPositionsCS::FParameters>();
 	// Bind SOA buffers
@@ -312,7 +371,10 @@ void FGPUAdhesionManager::AddUpdateAttachedPositionsPass(
 	PassParameters->PackedVelocities = GraphBuilder.CreateUAV(SpatialData.SoA_PackedVelocities, PF_R32G32_UINT);
 	PassParameters->Flags = GraphBuilder.CreateUAV(SpatialData.SoA_Flags, PF_R32_UINT);
 	PassParameters->ParticleCount = CurrentParticleCount;
-	if (IndirectArgsBuffer) PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+	if (IndirectArgsBuffer)
+	{
+		PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+	}
 	PassParameters->Attachments = AttachmentUAV;
 	PassParameters->BoneTransforms = BoneTransformsSRVLocal;
 	PassParameters->BoneCount = BoneTransforms.Num();
@@ -363,6 +425,13 @@ void FGPUAdhesionManager::AddUpdateAttachedPositionsPass(
 // Clear Detached Flag Pass
 //=============================================================================
 
+/**
+ * @brief Add clear detached flag pass (clear just-detached flag at end of frame).
+ * @param GraphBuilder RDG builder.
+ * @param SpatialData Spatial hash data with SOA buffers.
+ * @param CurrentParticleCount Current particle count.
+ * @param IndirectArgsBuffer Optional indirect dispatch arguments.
+ */
 void FGPUAdhesionManager::AddClearDetachedFlagPass(
 	FRDGBuilder& GraphBuilder,
 	const FSimulationSpatialData& SpatialData,
@@ -380,7 +449,10 @@ void FGPUAdhesionManager::AddClearDetachedFlagPass(
 	FClearDetachedFlagCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FClearDetachedFlagCS::FParameters>();
 	PassParameters->Flags = GraphBuilder.CreateUAV(SpatialData.SoA_Flags, PF_R32_UINT);
 	PassParameters->ParticleCount = CurrentParticleCount;
-	if (IndirectArgsBuffer) PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+	if (IndirectArgsBuffer)
+	{
+		PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+	}
 
 	if (IndirectArgsBuffer)
 	{
@@ -409,6 +481,18 @@ void FGPUAdhesionManager::AddClearDetachedFlagPass(
 // Stack Pressure Pass (Weight transfer from stacked attached particles)
 //=============================================================================
 
+/**
+ * @brief Add stack pressure pass (weight transfer from stacked attached particles).
+ * @param GraphBuilder RDG builder.
+ * @param SpatialData Simulation spatial data.
+ * @param InAttachmentSRV Attachment buffer SRV.
+ * @param InCellCountsSRV Spatial hash cell counts SRV.
+ * @param InParticleIndicesSRV Spatial hash particle indices SRV.
+ * @param CollisionManager Collision manager for primitives.
+ * @param CurrentParticleCount Current particle count.
+ * @param Params Simulation parameters.
+ * @param IndirectArgsBuffer Optional indirect dispatch arguments.
+ */
 void FGPUAdhesionManager::AddStackPressurePass(
 	FRDGBuilder& GraphBuilder,
 	const FSimulationSpatialData& SpatialData,
@@ -490,7 +574,10 @@ void FGPUAdhesionManager::AddStackPressurePass(
 
 	// Parameters
 	PassParameters->ParticleCount = CurrentParticleCount;
-	if (IndirectArgsBuffer) PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+	if (IndirectArgsBuffer)
+	{
+		PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+	}
 	PassParameters->SmoothingRadius = Params.SmoothingRadius;
 	PassParameters->StackPressureScale = Params.StackPressureScale;
 	PassParameters->CellSize = Params.CellSize;

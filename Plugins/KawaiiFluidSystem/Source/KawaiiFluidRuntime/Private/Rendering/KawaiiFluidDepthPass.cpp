@@ -1,7 +1,7 @@
 ﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
-#include "Rendering/FluidDepthPass.h"
-#include "Rendering/FluidDepthShaders.h"
+#include "Rendering/KawaiiFluidDepthPass.h"
+#include "Rendering/KawaiiFluidDepthShaders.h"
 #include "Rendering/KawaiiFluidRenderResource.h"
 #include "Modules/KawaiiFluidRenderingModule.h"
 #include "Rendering/KawaiiFluidMetaballRenderer.h"
@@ -44,7 +44,10 @@ static FRDGBufferSRVRef GetOrCreateDummyVelocitySRV(FRDGBuilder& GraphBuilder)
 // Batched Depth Pass
 //=============================================================================
 
-void RenderFluidDepthPass(
+/**
+ * @brief Fluid Depth rendering pass (Batched path).
+ */
+void RenderKawaiiFluidDepthPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
 	const TArray<UKawaiiFluidMetaballRenderer*>& Renderers,
@@ -282,13 +285,13 @@ void RenderFluidDepthPass(
 
 		// Select shader permutation based on anisotropy
 		FGlobalShaderMap* GlobalShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
-		FFluidDepthVS::FPermutationDomain VSPermutationDomain;
-		FFluidDepthPS::FPermutationDomain PSPermutationDomain;
+		FKawaiiFluidDepthVS::FPermutationDomain VSPermutationDomain;
+		FKawaiiFluidDepthPS::FPermutationDomain PSPermutationDomain;
 		VSPermutationDomain.Set<FUseAnisotropyDim>(bUseAnisotropy);
 		PSPermutationDomain.Set<FUseAnisotropyDim>(bUseAnisotropy);
 
-		TShaderMapRef<FFluidDepthVS> VertexShader(GlobalShaderMap, VSPermutationDomain);
-		TShaderMapRef<FFluidDepthPS> PixelShader(GlobalShaderMap, PSPermutationDomain);
+		TShaderMapRef<FKawaiiFluidDepthVS> VertexShader(GlobalShaderMap, VSPermutationDomain);
+		TShaderMapRef<FKawaiiFluidDepthPS> PixelShader(GlobalShaderMap, PSPermutationDomain);
 
 		const FIntRect ViewRect = ViewInfo.ViewRect;
 

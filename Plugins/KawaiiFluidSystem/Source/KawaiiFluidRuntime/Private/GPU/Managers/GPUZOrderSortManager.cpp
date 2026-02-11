@@ -30,12 +30,18 @@ FGPUZOrderSortManager::~FGPUZOrderSortManager()
 // Lifecycle
 //=============================================================================
 
+/**
+ * @brief Initialize the manager.
+ */
 void FGPUZOrderSortManager::Initialize()
 {
 	bIsInitialized = true;
 	UE_LOG(LogGPUZOrderSort, Log, TEXT("GPUZOrderSortManager initialized"));
 }
 
+/**
+ * @brief Release all resources.
+ */
 void FGPUZOrderSortManager::Release()
 {
 	ZOrderBufferParticleCapacity = 0;
@@ -47,6 +53,24 @@ void FGPUZOrderSortManager::Release()
 // Z-Order (Morton Code) Sorting Pipeline
 //=============================================================================
 
+/**
+ * @brief Execute the complete Z-Order sorting pipeline.
+ * @param GraphBuilder RDG builder.
+ * @param InParticleBuffer Input particle buffer.
+ * @param OutCellStartUAV Output cell start indices UAV.
+ * @param OutCellStartSRV Output cell start indices SRV.
+ * @param OutCellEndUAV Output cell end indices UAV.
+ * @param OutCellEndSRV Output cell end indices SRV.
+ * @param OutCellStartBuffer Output cell start buffer ref.
+ * @param OutCellEndBuffer Output cell end buffer ref.
+ * @param CurrentParticleCount Number of particles.
+ * @param Params Simulation parameters.
+ * @param AllocParticleCount Buffer allocation size.
+ * @param InAttachmentBuffer Optional attachment buffer to reorder.
+ * @param OutSortedAttachmentBuffer Optional output for sorted attachments.
+ * @param IndirectArgsBuffer Optional indirect dispatch arguments.
+ * @return Sorted particle buffer.
+ */
 FRDGBufferRef FGPUZOrderSortManager::ExecuteZOrderSortingPipeline(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferRef InParticleBuffer,
@@ -66,7 +90,10 @@ FRDGBufferRef FGPUZOrderSortManager::ExecuteZOrderSortingPipeline(
 	RDG_EVENT_SCOPE(GraphBuilder, "GPUFluid::ZOrderSorting");
 
 	// Use AllocParticleCount for buffer sizing to avoid D3D12 pool allocation hitches
-	if (AllocParticleCount <= 0) { AllocParticleCount = CurrentParticleCount; }
+	if (AllocParticleCount <= 0)
+	{
+		AllocParticleCount = CurrentParticleCount;
+	}
 
 	if (CurrentParticleCount <= 0)
 	{
@@ -204,6 +231,16 @@ FRDGBufferRef FGPUZOrderSortManager::ExecuteZOrderSortingPipeline(
 	return SortedParticleBuffer;
 }
 
+/**
+ * @brief Step 1: Compute Morton codes from particle positions.
+ * @param GraphBuilder RDG builder.
+ * @param ParticlesSRV Input particles SRV.
+ * @param MortonCodesUAV Output Morton codes UAV.
+ * @param InParticleIndicesUAV Output particle indices UAV.
+ * @param CurrentParticleCount Number of particles.
+ * @param Params Simulation parameters.
+ * @param IndirectArgsBuffer Optional indirect dispatch arguments.
+ */
 void FGPUZOrderSortManager::AddComputeMortonCodesPass(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferSRVRef ParticlesSRV,
@@ -218,21 +255,6 @@ void FGPUZOrderSortManager::AddComputeMortonCodesPass(
 	{
 		UE_LOG(LogGPUZOrderSort, Error, TEXT("Morton code ERROR: Invalid CellSize (%.4f)!"), Params.CellSize);
 	}
-
-	// Log bounds info for debugging - disabled for performance
-	// static int32 LogFrameCounter = 0;
-	// if (++LogFrameCounter % 60 == 0)
-	// {
-	// 	FVector3f GridMin = FVector3f(
-	// 		FMath::Floor(SimulationBoundsMin.X / Params.CellSize),
-	// 		FMath::Floor(SimulationBoundsMin.Y / Params.CellSize),
-	// 		FMath::Floor(SimulationBoundsMin.Z / Params.CellSize));
-	// 	UE_LOG(LogGPUZOrderSort, Log, TEXT("[ZOrder] ComputeMortonCodes - Bounds(%.1f,%.1f,%.1f)-(%.1f,%.1f,%.1f), CellSize=%.2f, GridMin=(%.0f,%.0f,%.0f)"),
-	// 		SimulationBoundsMin.X, SimulationBoundsMin.Y, SimulationBoundsMin.Z,
-	// 		SimulationBoundsMax.X, SimulationBoundsMax.Y, SimulationBoundsMax.Z,
-	// 		Params.CellSize,
-	// 		GridMin.X, GridMin.Y, GridMin.Z);
-	// }
 
 	// Get grid parameters - use Medium preset in Hybrid mode for 21-bit keys
 	const EGridResolutionPreset EffectivePreset = bUseHybridTiledZOrder ? EGridResolutionPreset::Medium : GridResolutionPreset;
@@ -265,7 +287,10 @@ void FGPUZOrderSortManager::AddComputeMortonCodesPass(
 	PassParameters->MortonCodes = MortonCodesUAV;
 	PassParameters->ParticleIndices = InParticleIndicesUAV;
 	PassParameters->ParticleCount = CurrentParticleCount;
-	if (IndirectArgsBuffer) PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+	if (IndirectArgsBuffer)
+	{
+		PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+	}
 	PassParameters->BoundsMin = SimulationBoundsMin;
 	PassParameters->BoundsExtent = SimulationBoundsMax - SimulationBoundsMin;
 	PassParameters->CellSize = Params.CellSize;
@@ -294,6 +319,14 @@ void FGPUZOrderSortManager::AddComputeMortonCodesPass(
 	}
 }
 
+/**
+ * @brief Step 2: GPU Radix Sort (sorts Morton codes + particle indices).
+ * @param GraphBuilder RDG builder.
+ * @param InOutMortonCodes Input/Output Morton codes.
+ * @param InOutParticleIndices Input/Output particle indices.
+ * @param ParticleCount Number of particles to sort.
+ * @param AllocParticleCount Allocation size.
+ */
 void FGPUZOrderSortManager::AddRadixSortPasses(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferRef& InOutMortonCodes,
@@ -301,26 +334,20 @@ void FGPUZOrderSortManager::AddRadixSortPasses(
 	int32 ParticleCount,
 	int32 AllocParticleCount)
 {
-	if (AllocParticleCount <= 0) { AllocParticleCount = ParticleCount; }
+	if (AllocParticleCount <= 0)
+	{
+		AllocParticleCount = ParticleCount;
+	}
 	if (ParticleCount <= 0)
 	{
 		return;
 	}
 
 	// Calculate radix sort passes based on Morton code bits from preset
-	// Classic mode: Morton code bits = GridAxisBits × 3 (X, Y, Z interleaved)
-	// Hybrid mode: 21-bit keys (TileHash 3 bits + LocalMorton 18 bits)
-	// Sort passes = ceil(MortonCodeBits / RadixBits)
-	// Round up to even number for ping-pong buffer correctness
-	//
-	// NOTE: Hybrid uses 21 bits (not 32) to match MAX_CELLS, ensuring particles
-	// with same cell ID are contiguous after sorting. This prevents CellStart/CellEnd
-	// corruption that occurs when 32-bit keys are truncated to 21-bit cell IDs.
 	int32 SortKeyBits;
 	if (bUseHybridTiledZOrder)
 	{
 		// Hybrid Tiled Z-Order: 21-bit keys (3-bit TileHash + 18-bit LocalMorton)
-		// Matches MAX_CELLS = 2^21, so no truncation needed
 		SortKeyBits = 21;
 	}
 	else
@@ -340,7 +367,7 @@ void FGPUZOrderSortManager::AddRadixSortPasses(
 	const int32 NumBlocks = FMath::DivideAndRoundUp(ParticleCount, GPU_RADIX_ELEMENTS_PER_GROUP);
 	const int32 RequiredHistogramSize = GPU_RADIX_SIZE * NumBlocks;
 
-	// Create transient ping-pong buffers (pre-allocated to AllocParticleCount to avoid D3D12 pool hitches)
+	// Create transient ping-pong buffers
 	FRDGBufferDesc KeysTempDesc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), AllocParticleCount);
 	FRDGBufferRef KeysTemp = GraphBuilder.CreateBuffer(KeysTempDesc, TEXT("RadixSort.KeysTemp"));
 
@@ -423,6 +450,17 @@ void FGPUZOrderSortManager::AddRadixSortPasses(
 	InOutParticleIndices = Values[BufferIndex];
 }
 
+/**
+ * @brief Step 3: Reorder particle data based on sorted indices.
+ * @param GraphBuilder RDG builder.
+ * @param OldParticlesSRV Input particles SRV.
+ * @param SortedIndicesSRV Sorted indices SRV.
+ * @param SortedParticlesUAV Output sorted particles UAV.
+ * @param CurrentParticleCount Number of particles.
+ * @param OldAttachmentsSRV Optional input attachments.
+ * @param SortedAttachmentsUAV Optional output sorted attachments.
+ * @param IndirectArgsBuffer Optional indirect dispatch arguments.
+ */
 void FGPUZOrderSortManager::AddReorderParticlesPass(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferSRVRef OldParticlesSRV,
@@ -462,7 +500,10 @@ void FGPUZOrderSortManager::AddReorderParticlesPass(
 	PassParameters->SortedBoneDeltaAttachments = AttachmentsUAV;
 	PassParameters->bReorderAttachments = bReorderAttachments ? 1 : 0;
 	PassParameters->ParticleCount = CurrentParticleCount;
-	if (IndirectArgsBuffer) PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+	if (IndirectArgsBuffer)
+	{
+		PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+	}
 
 	if (IndirectArgsBuffer)
 	{
@@ -489,6 +530,15 @@ void FGPUZOrderSortManager::AddReorderParticlesPass(
 	}
 }
 
+/**
+ * @brief Step 4: Compute Cell Start/End indices from sorted Morton codes.
+ * @param GraphBuilder RDG builder.
+ * @param SortedMortonCodesSRV Input sorted Morton codes SRV.
+ * @param CellStartUAV Output cell start indices UAV.
+ * @param CellEndUAV Output cell end indices UAV.
+ * @param CurrentParticleCount Number of particles.
+ * @param IndirectArgsBuffer Optional indirect dispatch arguments.
+ */
 void FGPUZOrderSortManager::AddComputeCellStartEndPass(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferSRVRef SortedMortonCodesSRV,
@@ -537,7 +587,10 @@ void FGPUZOrderSortManager::AddComputeCellStartEndPass(
 		PassParameters->CellStart = CellStartUAV;
 		PassParameters->CellEnd = CellEndUAV;
 		PassParameters->ParticleCount = CurrentParticleCount;
-		if (IndirectArgsBuffer) PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+		if (IndirectArgsBuffer)
+		{
+			PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+		}
 
 		if (IndirectArgsBuffer)
 		{

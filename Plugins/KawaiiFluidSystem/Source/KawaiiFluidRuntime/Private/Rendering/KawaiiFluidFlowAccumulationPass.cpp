@@ -1,6 +1,6 @@
 ﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
-#include "Rendering/FluidFlowAccumulationPass.h"
+#include "Rendering/KawaiiFluidFlowAccumulationPass.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "SceneView.h"
@@ -61,12 +61,24 @@ IMPLEMENT_GLOBAL_SHADER(FFluidFlowAccumulationCS, "/Plugin/KawaiiFluidSystem/Pri
 //=============================================================================
 
 /**
- * @brief Renders the flow accumulation pass.
+ * @brief Accumulates screen-space velocity into UV offset for flow texture effects.
+ *
+ * This pass implements the "Accumulated Screen-Space Flow" technique where:
+ * - Still water: offset stays constant (no texture movement)
+ * - Flowing water: offset accumulates based on velocity (texture moves)
+ *
+ * @param GraphBuilder RDG builder.
+ * @param View Scene view.
+ * @param Params Flow accumulation parameters.
+ * @param VelocityTexture Current frame's screen-space velocity (from Depth pass, RG16F).
+ * @param DepthTexture Fluid depth texture (for masking non-fluid areas).
+ * @param PrevAccumulatedFlowTexture Previous frame's accumulated flow (nullptr for first frame).
+ * @param OutAccumulatedFlowTexture Output accumulated flow texture (RG16F).
  */
-void RenderFluidFlowAccumulationPass(
+void RenderKawaiiFluidFlowAccumulationPass(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
-	const FFlowAccumulationParams& Params,
+	const FKawaiiFluidAccumulationParams& Params,
 	FRDGTextureRef VelocityTexture,
 	FRDGTextureRef DepthTexture,
 	FRDGTextureRef PrevAccumulatedFlowTexture,

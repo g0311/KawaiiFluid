@@ -5,37 +5,38 @@
 #include "CoreMinimal.h"
 
 /**
- * GPU Bone Delta Attachment Structure (64 bytes)
- *
- * Per-particle attachment data for following WorldBoundaryParticles.
+ * @struct FGPUBoneDeltaAttachment
+ * @brief Per-particle attachment data for following WorldBoundaryParticles.
+ * 
  * Uses BoundaryParticleIndex (original index before Z-Order sorting) for stable attachment.
- *
- * This structure mirrors the HLSL struct in FluidBoneDeltaAttachment.ush
- *
- * Used by:
- * - FluidApplyBoneTransform.usf: Read WorldBoundaryParticles[BoundaryParticleIndex].Position + LocalOffset
- * - FluidUpdateBoneDeltaAttachment.usf: Find nearest boundary and store OriginalIndex, update LocalOffset
- * - FluidAnisotropyCompute.usf: Use LocalNormal for surface-aligned anisotropy
- *
- * Detach condition: distance from PreviousPosition > DetachDistance OR LocalOffset too large
+ * 
+ * @param BoundaryParticleIndex Index into WorldBoundaryParticles buffer (-1 = not attached).
+ * @param Padding1 Alignment padding.
+ * @param LocalNormal Surface normal in world space (for anisotropy).
+ * @param Padding2 Alignment padding.
+ * @param PreviousPosition Previous frame position (for detach check).
+ * @param Padding3 Alignment padding.
+ * @param LocalOffset Offset from boundary position (physics drift).
+ * @param Padding4 Alignment padding.
+ * @param Padding5 Alignment padding.
+ * @param Padding6 Alignment padding.
  */
 struct FGPUBoneDeltaAttachment
 {
-	int32 BoundaryParticleIndex;  // 4 bytes  - Index into WorldBoundaryParticles buffer (-1 = not attached)
-	float Padding1;               // 4 bytes  - Alignment padding (total: 8)
+	int32 BoundaryParticleIndex;
+	float Padding1;
 
-	FVector3f LocalNormal;        // 12 bytes - Surface normal in world space (for anisotropy)
-	float Padding2;               // 4 bytes  - Alignment padding (total: 24)
+	FVector3f LocalNormal;
+	float Padding2;
 
-	FVector3f PreviousPosition;   // 12 bytes - Previous frame position (for detach check)
-	float Padding3;               // 4 bytes  - Alignment padding (total: 40)
+	FVector3f PreviousPosition;
+	float Padding3;
 
-	FVector3f LocalOffset;        // 12 bytes - Offset from boundary position (physics drift)
-	float Padding4;               // 4 bytes  - Alignment padding (total: 56)
+	FVector3f LocalOffset;
+	float Padding4;
 
-	// Add 8 bytes padding to reach 64 bytes (16-byte aligned)
-	float Padding5;               // 4 bytes
-	float Padding6;               // 4 bytes  (total: 64)
+	float Padding5;
+	float Padding6;
 
 	FGPUBoneDeltaAttachment()
 		: BoundaryParticleIndex(-1)
@@ -51,14 +52,12 @@ struct FGPUBoneDeltaAttachment
 	{
 	}
 
-	/** Check if attached to a boundary particle */
-	FORCEINLINE bool IsAttached() const
+	bool IsAttached() const
 	{
 		return BoundaryParticleIndex >= 0;
 	}
 
-	/** Clear attachment */
-	FORCEINLINE void Clear()
+	void Clear()
 	{
 		BoundaryParticleIndex = -1;
 		LocalNormal = FVector3f::ZeroVector;

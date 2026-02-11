@@ -10,7 +10,7 @@
 #include "Core/KawaiiFluidSimulatorSubsystem.h"
 #include "Rendering/KawaiiFluidMetaballRenderer.h"
 #include "Rendering/KawaiiFluidISMRenderer.h"
-#include "Rendering/FluidRendererSubsystem.h"
+#include "Rendering/KawaiiFluidRendererSubsystem.h"
 #include "GPU/GPUFluidSimulator.h"
 #include "Core/KawaiiFluidSimulationStats.h"
 #include "DrawDebugHelpers.h"
@@ -289,7 +289,7 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 			// 1. ISM Shadow enabled (needs position/anisotropy data for ISM)
 			// 2. SplashVFX assigned (needs velocity/neighbor data)
 			// 3. Debug visualization enabled (needs particle flags for debug draw)
-			UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>();
+			UKawaiiFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UKawaiiFluidRendererSubsystem>();
 			bool bNeedShadow = RendererSubsystem &&
 			                   RendererSubsystem->bEnableISMShadow &&
 			                   VolumeComponent->bEnableShadow;
@@ -481,7 +481,7 @@ void AKawaiiFluidVolume::Tick(float DeltaSeconds)
 			// =====================================================
 			// Step 2: ISM Shadow Integration (conditional)
 			// =====================================================
-			if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+			if (UKawaiiFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UKawaiiFluidRendererSubsystem>())
 			{
 				if (RendererSubsystem->bEnableISMShadow && VolumeComponent->bEnableShadow)
 				{
@@ -952,7 +952,7 @@ void AKawaiiFluidVolume::InitializeRendering()
 	}
 
 	// Register RenderingModule with FluidRendererSubsystem (CRITICAL for SSFR rendering pipeline)
-	if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+	if (UKawaiiFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UKawaiiFluidRendererSubsystem>())
 	{
 		RendererSubsystem->RegisterRenderingModule(RenderingModule);
 	}
@@ -1034,7 +1034,7 @@ void AKawaiiFluidVolume::InitializeEditorRendering()
 
 	// Register RenderingModule with FluidRendererSubsystem (CRITICAL for SSFR rendering pipeline)
 	// This is what actually triggers the Metaball rendering - same as InitializeRendering() does for runtime
-	if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+	if (UKawaiiFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UKawaiiFluidRendererSubsystem>())
 	{
 		RendererSubsystem->RegisterRenderingModule(RenderingModule);
 		UE_LOG(LogTemp, Log, TEXT("AKawaiiFluidVolume [%s]: Editor RenderingModule registered with FluidRendererSubsystem"), *GetName());
@@ -1051,7 +1051,7 @@ void AKawaiiFluidVolume::CleanupRendering()
 	// Unregister from FluidRendererSubsystem first
 	if (UWorld* World = GetWorld())
 	{
-		if (UFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UFluidRendererSubsystem>())
+		if (UKawaiiFluidRendererSubsystem* RendererSubsystem = World->GetSubsystem<UKawaiiFluidRendererSubsystem>())
 		{
 			RendererSubsystem->UnregisterRenderingModule(RenderingModule);
 		}

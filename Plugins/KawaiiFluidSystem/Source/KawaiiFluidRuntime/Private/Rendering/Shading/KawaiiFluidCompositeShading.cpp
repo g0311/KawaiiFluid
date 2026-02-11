@@ -1,9 +1,9 @@
 // Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
-#include "Rendering/Shading/FluidCompositeShading.h"
-#include "Rendering/FluidRenderingParameters.h"
-#include "Rendering/MetaballRenderingData.h"
-#include "Rendering/FluidCompositeShaders.h"
+#include "Rendering/Shading/KawaiiFluidCompositeShading.h"
+#include "Rendering/KawaiiFluidRenderingParameters.h"
+#include "Rendering/KawaiiFluidMetaballRenderingData.h"
+#include "Rendering/KawaiiFluidCompositeShaders.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphEvent.h"
 #include "SceneView.h"
@@ -14,10 +14,23 @@
 #include "HAL/IConsoleManager.h"
 #include "EngineGlobals.h"
 
+/**
+ * @brief Render the fluid surface using a custom post-process shading pass.
+ * 
+ * Applies lighting, refraction, and absorption using intermediate textures.
+ * 
+ * @param GraphBuilder RDG builder.
+ * @param View Current scene view.
+ * @param RenderParams Fluid physical and rendering parameters.
+ * @param IntermediateTextures Smoothed depth, normal, and thickness textures.
+ * @param SceneDepthTexture Background depth for refraction.
+ * @param SceneColorTexture Background color for refraction.
+ * @param Output Final render target.
+ */
 void KawaiiScreenSpaceShading::RenderPostProcessShading(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
-	const FFluidRenderingParameters& RenderParams,
+	const FKawaiiFluidRenderingParameters& RenderParams,
 	const FMetaballIntermediateTextures& IntermediateTextures,
 	FRDGTextureRef SceneDepthTexture,
 	FRDGTextureRef SceneColorTexture,
@@ -32,7 +45,7 @@ void KawaiiScreenSpaceShading::RenderPostProcessShading(
 
 	RDG_EVENT_SCOPE(GraphBuilder, "MetaballShading_PostProcess_ScreenSpace");
 
-	auto* PassParameters = GraphBuilder.AllocParameters<FFluidCompositePS::FParameters>();
+	auto* PassParameters = GraphBuilder.AllocParameters<FKawaiiFluidCompositePS::FParameters>();
 
 	// Texture bindings
 	PassParameters->FluidDepthTexture = IntermediateTextures.SmoothedDepthTexture;
@@ -238,8 +251,8 @@ void KawaiiScreenSpaceShading::RenderPostProcessShading(
 
 	// Get shaders
 	FGlobalShaderMap* GlobalShaderMap = GetGlobalShaderMap(View.GetFeatureLevel());
-	TShaderMapRef<FFluidCompositeVS> VertexShader(GlobalShaderMap);
-	TShaderMapRef<FFluidCompositePS> PixelShader(GlobalShaderMap);
+	TShaderMapRef<FKawaiiFluidCompositeVS> VertexShader(GlobalShaderMap);
+	TShaderMapRef<FKawaiiFluidCompositePS> PixelShader(GlobalShaderMap);
 
 	// Use Output.ViewRect instead of View.UnscaledViewRect
 	FIntRect ViewRect = Output.ViewRect;

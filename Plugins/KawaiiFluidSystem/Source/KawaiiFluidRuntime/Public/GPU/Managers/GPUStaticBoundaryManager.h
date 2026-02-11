@@ -13,28 +13,20 @@
 #include "GPU/GPUFluidParticle.h"
 
 /**
- * FGPUStaticBoundaryManager
- *
- * Generates boundary particles on static mesh colliders (floor, walls, obstacles)
- * for proper density calculation near boundaries (Akinci 2012).
- *
- * Features:
- * - Generates boundary particles from Sphere, Capsule, Box, Convex colliders
- * - Uses SmoothingRadius/2 spacing for proper coverage
- * - Calculates surface normals for each particle
- * - Computes Psi (density contribution) based on particle spacing
- * - **Primitive ID-based caching** for performance (avoids regeneration)
- *
- * Usage:
- * 1. Call GenerateBoundaryParticles() with collision primitives
- * 2. Boundary particles are automatically added to density solver
- * 3. Enable debug visualization to verify particle placement
- *
- * Caching Strategy:
- * - Each primitive is identified by a unique key (type + OwnerID + geometry hash)
- * - First encounter: generate boundary particles and cache them
- * - Subsequent encounters: retrieve from cache (O(1) lookup)
- * - Cache invalidation: only on World change or explicit clear
+ * @class FGPUStaticBoundaryManager
+ * @brief Generates boundary particles on static mesh colliders for density contribution.
+ * 
+ * @param bIsInitialized State of the manager.
+ * @param bIsEnabled Whether static boundary generation is active.
+ * @param ParticleSpacing Desired distance between boundary particles in cm.
+ * @param BoundaryParticles List of active boundary particles for the current frame.
+ * @param PrimitiveCache Map of cached boundary particles per unique primitive key.
+ * @param ActivePrimitiveKeys Set of keys for primitives active in the current frame.
+ * @param PreviousActivePrimitiveKeys Set of keys for primitives active in the previous frame.
+ * @param CachedSmoothingRadius Smoothing radius used for the current cache.
+ * @param CachedRestDensity Rest density used for the current cache.
+ * @param CachedParticleSpacing Spacing used for the current cache.
+ * @param bCacheInvalidated Flag indicating cache must be fully regenerated.
  */
 class KAWAIIFLUIDRUNTIME_API FGPUStaticBoundaryManager
 {
@@ -47,29 +39,15 @@ public:
 	//=========================================================================
 
 	void Initialize();
+
 	void Release();
+
 	bool IsReady() const { return bIsInitialized; }
 
 	//=========================================================================
 	// Boundary Particle Generation
 	//=========================================================================
 
-	/**
-	 * Generate boundary particles from collision primitives (with caching)
-	 * 
-	 * This function uses primitive-based caching to avoid regenerating boundary
-	 * particles for primitives that haven't changed. Only new primitives will
-	 * have their boundary particles generated.
-	 * 
-	 * @param Spheres - Sphere colliders
-	 * @param Capsules - Capsule colliders
-	 * @param Boxes - Box colliders
-	 * @param Convexes - Convex hull headers
-	 * @param ConvexPlanes - Convex hull planes
-	 * @param SmoothingRadius - Fluid smoothing radius (for spacing calculation)
-	 * @param RestDensity - Fluid rest density (for Psi calculation)
-	 * @return true if boundary particles changed (requires GPU re-upload)
-	 */
 	bool GenerateBoundaryParticles(
 		const TArray<FGPUCollisionSphere>& Spheres,
 		const TArray<FGPUCollisionCapsule>& Capsules,
@@ -79,40 +57,30 @@ public:
 		float SmoothingRadius,
 		float RestDensity);
 
-	/**
-	 * Clear all generated boundary particles and cache
-	 */
 	void ClearBoundaryParticles();
 
-	/**
-	 * Invalidate cache (call when World changes)
-	 * This forces full regeneration on next GenerateBoundaryParticles call
-	 */
 	void InvalidateCache();
 
 	//=========================================================================
 	// Accessors
 	//=========================================================================
 
-	/** Get generated boundary particles */
 	const TArray<FGPUBoundaryParticle>& GetBoundaryParticles() const { return BoundaryParticles; }
 
-	/** Get boundary particle count */
 	int32 GetBoundaryParticleCount() const { return BoundaryParticles.Num(); }
 
-	/** Check if boundary particles are available */
 	bool HasBoundaryParticles() const { return BoundaryParticles.Num() > 0; }
 
 	//=========================================================================
 	// Configuration
 	//=========================================================================
 
-	/** Enable/disable static boundary generation */
 	void SetEnabled(bool bEnabled) { bIsEnabled = bEnabled; }
+
 	bool IsEnabled() const { return bIsEnabled; }
 
-	/** Set particle spacing in cm (default 5.0 cm, same as FluidInteractionComponent) */
 	void SetParticleSpacing(float Spacing) { ParticleSpacing = FMath::Max(Spacing, 1.0f); }
+
 	float GetParticleSpacing() const { return ParticleSpacing; }
 
 private:

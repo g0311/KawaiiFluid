@@ -19,113 +19,139 @@ struct FGPUCollisionSphere;
 struct FGPUCollisionCapsule;
 struct FGPUCollisionBox;
 
-//=============================================================================
-// GPU Compute Parameters for Anisotropy Shader Dispatch
-// Contains all buffer references and parameters needed for GPU anisotropy calculation.
-//=============================================================================
-
+/**
+ * @struct FAnisotropyComputeParams
+ * @brief Parameters for GPU anisotropy calculation.
+ * 
+ * @param PositionsSRV Structure of Arrays positions.
+ * @param PackedVelocitiesSRV Packed velocity data.
+ * @param FlagsSRV Particle status flags.
+ * @param AttachmentsSRV Particle attachment data for surface normals.
+ * @param CellCountsSRV Legacy hash-based spatial lookup cell counts.
+ * @param ParticleIndicesSRV Legacy hash-based spatial lookup indices.
+ * @param CellStartSRV Morton-sorted spatial lookup cell starts.
+ * @param CellEndSRV Morton-sorted spatial lookup cell ends.
+ * @param OutAxis1UAV Output axis 1 (direction + scale).
+ * @param OutAxis2UAV Output axis 2.
+ * @param OutAxis3UAV Output axis 3.
+ * @param OutRenderOffsetUAV Offset for surface smoothing.
+ * @param ParticleRadius Radius used for simulation.
+ * @param ParticleCount Number of particles to process.
+ * @param ParticleCountBufferSRV GPU-accurate particle count buffer.
+ * @param Mode Anisotropy calculation mode (Velocity, Density, Hybrid).
+ * @param VelocityStretchFactor Sensitivity to velocity for stretching.
+ * @param Strength Overall intensity of the anisotropy effect.
+ * @param MinStretch Minimum allowed axis ratio.
+ * @param MaxStretch Maximum allowed elongation ratio.
+ * @param DensityWeight Balance in Hybrid mode.
+ * @param SmoothingRadius Radius for neighborhood search.
+ * @param CellSize Size of spatial hash cell.
+ * @param bUseZOrderSorting Whether to use Morton-sorted sequential access.
+ * @param MortonBoundsMin Origin for Morton code calculation.
+ * @param GridResolutionPreset Resolution for spatial sorting.
+ * @param AttachedFlattenScale Flattening factor for attached particles.
+ * @param AttachedStretchScale Stretching factor for attached particles.
+ * @param BoundaryParticlesSRV Legacy brute-force boundary particle list.
+ * @param BoundaryParticleCount Number of boundary particles.
+ * @param bUseBoundaryAnisotropy Enable boundary contribution to covariance.
+ * @param SortedBoundaryParticlesSRV Z-Order sorted boundary list.
+ * @param BoundaryCellStartSRV Cell starts for sorted boundaries.
+ * @param BoundaryCellEndSRV Cell ends for sorted boundaries.
+ * @param bUseBoundaryZOrder Enable O(K) boundary search.
+ * @param BoundaryWeight Contribution factor for boundaries.
+ * @param bUseHybridTiledZOrder Enable hybrid tiled sorting mode.
+ * @param BoneDeltaAttachmentsSRV Attachments for NEAR_BOUNDARY particles.
+ * @param bEnableSurfaceNormalAnisotropy Use normals for NEAR_BOUNDARY particles.
+ * @param CollisionSpheresSRV World-space collision spheres.
+ * @param CollisionCapsulesSRV World-space collision capsules.
+ * @param CollisionBoxesSRV World-space collision boxes.
+ * @param SphereCount Number of spheres.
+ * @param CapsuleCount Number of capsules.
+ * @param BoxCount Number of boxes.
+ * @param ColliderSearchRadius Radius for collider normal lookup.
+ * @param PrevAxis1SRV Previous frame axis 1 for smoothing.
+ * @param PrevAxis2SRV Previous frame axis 2.
+ * @param PrevAxis3SRV Previous frame axis 3.
+ * @param bEnableTemporalSmoothing Enable orientation blending across frames.
+ * @param TemporalSmoothFactor Factor for temporal blending.
+ * @param bHasPreviousFrame Availability of temporal data.
+ * @param bPreserveVolume Maintain unit volume using log-space processing.
+ * @param NonPreservedRenderScale Ellipsoid size when volume preservation is off.
+ */
 struct KAWAIIFLUIDRUNTIME_API FAnisotropyComputeParams
 {
-	// Input buffers (SoA - Structure of Arrays)
-	FRDGBufferSRVRef PositionsSRV = nullptr;			// float3 positions as Buffer<float> [count*3]
-	FRDGBufferSRVRef PackedVelocitiesSRV = nullptr;		// B plan: half3 packed as Buffer<uint2> [count]
-	FRDGBufferSRVRef FlagsSRV = nullptr;				// uint flags as Buffer<uint> [count]
-	FRDGBufferSRVRef AttachmentsSRV = nullptr;		// FGPUParticleAttachment buffer (for surface normal)
+	FRDGBufferSRVRef PositionsSRV = nullptr;
+	FRDGBufferSRVRef PackedVelocitiesSRV = nullptr;
+	FRDGBufferSRVRef FlagsSRV = nullptr;
+	FRDGBufferSRVRef AttachmentsSRV = nullptr;
 
-	// TODO(KHJ): Remove legacy hash-based lookup - bUseZOrderSorting is always true
-	// Legacy hash-based spatial lookup (random access)
-	FRDGBufferSRVRef CellCountsSRV = nullptr;		// Spatial hash cell counts
-	FRDGBufferSRVRef ParticleIndicesSRV = nullptr;	// Spatial hash particle indices
+	FRDGBufferSRVRef CellCountsSRV = nullptr;
+	FRDGBufferSRVRef ParticleIndicesSRV = nullptr;
 
-	// Morton-sorted spatial lookup (sequential access, cache-friendly)
-	// When bUseZOrderSorting=true, PhysicsParticles buffer is already sorted by Morton code
-	FRDGBufferSRVRef CellStartSRV = nullptr;			// CellStart[cellID] = first particle index
-	FRDGBufferSRVRef CellEndSRV = nullptr;				// CellEnd[cellID] = last particle index
+	FRDGBufferSRVRef CellStartSRV = nullptr;
+	FRDGBufferSRVRef CellEndSRV = nullptr;
 
-	// Output buffers (float4: direction.xyz + scale.w)
 	FRDGBufferUAVRef OutAxis1UAV = nullptr;
 	FRDGBufferUAVRef OutAxis2UAV = nullptr;
 	FRDGBufferUAVRef OutAxis3UAV = nullptr;
 
-	// Render offset for surface particles (pull toward neighbors for rendering)
 	FRDGBufferUAVRef OutRenderOffsetUAV = nullptr;
-	float ParticleRadius = 0.0f;  // passed from simulation
+	float ParticleRadius = 0.0f;
 
-	// Parameters
 	int32 ParticleCount = 0;
-	FRDGBufferSRVRef ParticleCountBufferSRV = nullptr;  // GPU-accurate count (ParticleCountBuffer[6])
+	FRDGBufferSRVRef ParticleCountBufferSRV = nullptr;
 	EGPUAnisotropyMode Mode = EGPUAnisotropyMode::DensityBased;
 
-	// Velocity-based params
 	float VelocityStretchFactor = 0.01f;
 
-	// Common params
 	float Strength = 1.0f;
 	float MinStretch = 0.2f;
 	float MaxStretch = 2.5f;
 
-	// Density-based params
 	float DensityWeight = 0.5f;
 	float SmoothingRadius = 10.0f;
 	float CellSize = 10.0f;
 
-	// TODO(KHJ): Remove bUseZOrderSorting - always true, legacy path is dead code
-	// Morton code params
-	bool bUseZOrderSorting = false;		// true = use Morton-sorted CellStart/End, false = legacy hash
-	FVector3f MortonBoundsMin = FVector3f::ZeroVector;	// Grid origin for Morton code calculation
+	bool bUseZOrderSorting = false;
+	FVector3f MortonBoundsMin = FVector3f::ZeroVector;
 
-	// Grid resolution preset for shader permutation selection
 	EGridResolutionPreset GridResolutionPreset = EGridResolutionPreset::Medium;
 
-	// Attached particle anisotropy params
-	float AttachedFlattenScale = 0.3f;	// How much to flatten attached particles (0.3 = 30% of original height)
-	float AttachedStretchScale = 1.5f;	// How much to stretch perpendicular to normal
+	float AttachedFlattenScale = 0.3f;
+	float AttachedStretchScale = 1.5f;
 
-	// Boundary Particles for anisotropy calculation (covariance contribution)
-	FRDGBufferSRVRef BoundaryParticlesSRV = nullptr;		// Legacy brute-force (FGPUBoundaryParticle)
+	FRDGBufferSRVRef BoundaryParticlesSRV = nullptr;
 	int32 BoundaryParticleCount = 0;
 	bool bUseBoundaryAnisotropy = false;
 
-	// Boundary Z-Order sorted buffers
 	FRDGBufferSRVRef SortedBoundaryParticlesSRV = nullptr;
 	FRDGBufferSRVRef BoundaryCellStartSRV = nullptr;
 	FRDGBufferSRVRef BoundaryCellEndSRV = nullptr;
 	bool bUseBoundaryZOrder = false;
-	float BoundaryWeight = 1.0f;	// Weight for boundary contribution to covariance
+	float BoundaryWeight = 1.0f;
 
-	// Hybrid Tiled Z-Order mode (for unlimited simulation range)
-	// When true, uses 21-bit Hybrid keys instead of classic Morton codes
 	bool bUseHybridTiledZOrder = false;
 
-	// Surface Normal Anisotropy for NEAR_BOUNDARY particles
-	FRDGBufferSRVRef BoneDeltaAttachmentsSRV = nullptr;	// FGPUBoneDeltaAttachment for NEAR_BOUNDARY particles
-	bool bEnableSurfaceNormalAnisotropy = true;			// Use surface normal for NEAR_BOUNDARY particles
+	FRDGBufferSRVRef BoneDeltaAttachmentsSRV = nullptr;
+	bool bEnableSurfaceNormalAnisotropy = true;
 
-	// Collision Primitives for direct surface normal calculation
-	// These are bone colliders (Capsule/Box) already transformed to world space
 	FRDGBufferSRVRef CollisionSpheresSRV = nullptr;
 	FRDGBufferSRVRef CollisionCapsulesSRV = nullptr;
 	FRDGBufferSRVRef CollisionBoxesSRV = nullptr;
 	int32 SphereCount = 0;
 	int32 CapsuleCount = 0;
 	int32 BoxCount = 0;
-	float ColliderSearchRadius = 50.0f;  // Search radius for finding closest collider normal
+	float ColliderSearchRadius = 50.0f;
 
-	// Temporal Smoothing parameters
 	FRDGBufferSRVRef PrevAxis1SRV = nullptr;
 	FRDGBufferSRVRef PrevAxis2SRV = nullptr;
 	FRDGBufferSRVRef PrevAxis3SRV = nullptr;
 	bool bEnableTemporalSmoothing = true;
-	float TemporalSmoothFactor = 0.8f;  // 0.0 = no smoothing, 1.0 = previous frame only
+	float TemporalSmoothFactor = 0.8f;
 	bool bHasPreviousFrame = false;
 
-	// Volume Preservation (Yu & Turk vs FleX style)
-	// true = log-space volume preservation (Scale1*Scale2*Scale3 = 1.0)
-	// false = raw eigenvalues (FleX reference style, larger ellipsoids)
 	bool bPreserveVolume = true;
 
-	// Non-preserved render scale (only used when bPreserveVolume = false)
-	// Controls overall ellipsoid size when volume preservation is disabled
 	float NonPreservedRenderScale = 1.0f;
 };
 
@@ -133,93 +159,64 @@ struct KAWAIIFLUIDRUNTIME_API FAnisotropyComputeParams
 #define ANISOTROPY_SPATIAL_HASH_SIZE 65536
 #define ANISOTROPY_MAX_PARTICLES_PER_CELL 16
 
-//=============================================================================
-// Anisotropy Compute Shader
-// Calculates ellipsoid orientation and scale for each particle
-// Based on NVIDIA FleX and Yu & Turk 2013 paper
-//=============================================================================
-
+/**
+ * @class FFluidAnisotropyCS
+ * @brief Compute shader for particle anisotropy calculation.
+ * 
+ * Orientation and scale calculation based on NVIDIA FleX and Yu & Turk 2013.
+ */
 class FFluidAnisotropyCS : public FGlobalShader
 {
 public:
 	DECLARE_GLOBAL_SHADER(FFluidAnisotropyCS);
 	SHADER_USE_PARAMETER_STRUCT(FFluidAnisotropyCS, FGlobalShader);
 
-	// Permutation domain for grid resolution (must match physics solver)
 	using FPermutationDomain = TShaderPermutationDomain<FGridResolutionDim>;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		// SoA (Structure of Arrays) Particle Buffers
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float>, InPositions)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint2>, InPackedVelocities)  // B plan: half3 packed
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint2>, InPackedVelocities)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, InFlags)
-
-		// Input: Attachment buffer (FGPUParticleAttachment) - for surface normal of attached particles
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUParticleAttachment>, InAttachments)
-
-		// TODO(KHJ): Remove legacy hash-based lookup - bUseZOrderSorting is always true
-		// Legacy hash-based spatial lookup (random access)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellCounts)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleIndices)
-
-		// Morton-sorted spatial lookup (sequential access, cache-friendly)
-		// When bUseZOrderSorting=1, InPhysicsParticles is already sorted by Morton code
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellStart)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CellEnd)
-
-		// Output: Anisotropy SoA buffers (float4 = direction.xyz + scale.w)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FVector4f>, OutAnisotropyAxis1)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FVector4f>, OutAnisotropyAxis2)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FVector4f>, OutAnisotropyAxis3)
-
-		// Output: Render offset for surface particles (pull toward neighbors)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FVector3f>, OutRenderOffset)
 		SHADER_PARAMETER(float, ParticleRadius)
-
-		// Parameters (GPU-accurate count via ParticleCountBuffer[6])
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, ParticleCountBuffer)
-		SHADER_PARAMETER(uint32, AnisotropyMode)  // 0=Velocity, 1=Density, 2=Hybrid
+		SHADER_PARAMETER(uint32, AnisotropyMode)
 		SHADER_PARAMETER(float, VelocityStretchFactor)
 		SHADER_PARAMETER(float, AnisotropyScale)
 		SHADER_PARAMETER(float, AnisotropyMin)
 		SHADER_PARAMETER(float, AnisotropyMax)
-		SHADER_PARAMETER(float, DensityWeight)  // For Hybrid mode
+		SHADER_PARAMETER(float, DensityWeight)
 		SHADER_PARAMETER(float, SmoothingRadius)
 		SHADER_PARAMETER(float, CellSize)
-		// TODO(KHJ): Remove bUseZOrderSorting - always 1, legacy path is dead code
-		SHADER_PARAMETER(int32, bUseZOrderSorting)  // 1 = Morton-sorted, 0 = legacy hash
-		SHADER_PARAMETER(FVector3f, MortonBoundsMin)  // Grid origin for Morton code
-		SHADER_PARAMETER(int32, bUseHybridTiledZOrder)  // 1 = Hybrid Tiled Z-Order (unlimited range), 0 = Classic Morton
-
-		// Attached particle anisotropy params
-		SHADER_PARAMETER(float, AttachedFlattenScale)  // How flat (0.3 = 30% height)
-		SHADER_PARAMETER(float, AttachedStretchScale)  // Perpendicular stretch
-
-		// Boundary Particles for anisotropy calculation
+		SHADER_PARAMETER(int32, bUseZOrderSorting)
+		SHADER_PARAMETER(FVector3f, MortonBoundsMin)
+		SHADER_PARAMETER(int32, bUseHybridTiledZOrder)
+		SHADER_PARAMETER(float, AttachedFlattenScale)
+		SHADER_PARAMETER(float, AttachedStretchScale)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoundaryParticle>, BoundaryParticles)
 		SHADER_PARAMETER(int32, BoundaryParticleCount)
 		SHADER_PARAMETER(int32, bUseBoundaryAnisotropy)
-
-		// Boundary Z-Order sorted buffers
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoundaryParticle>, SortedBoundaryParticles)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, BoundaryCellStart)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, BoundaryCellEnd)
 		SHADER_PARAMETER(int32, bUseBoundaryZOrder)
 		SHADER_PARAMETER(float, BoundaryWeight)
-
-		// Temporal Smoothing
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FVector4f>, PrevAnisotropyAxis1)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FVector4f>, PrevAnisotropyAxis2)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FVector4f>, PrevAnisotropyAxis3)
 		SHADER_PARAMETER(int32, bEnableTemporalSmoothing)
 		SHADER_PARAMETER(float, TemporalSmoothFactor)
 		SHADER_PARAMETER(int32, bHasPreviousFrame)
-
-		// Surface Normal Anisotropy for NEAR_BOUNDARY particles
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUBoneDeltaAttachment>, InBoneDeltaAttachments)
 		SHADER_PARAMETER(int32, bEnableSurfaceNormalAnisotropy)
-
-		// Collision Primitives for direct surface normal calculation (already in world space)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUCollisionSphere>, CollisionSpheres)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUCollisionCapsule>, CollisionCapsules)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FGPUCollisionBox>, CollisionBoxes)
@@ -227,68 +224,30 @@ public:
 		SHADER_PARAMETER(int32, CapsuleCount)
 		SHADER_PARAMETER(int32, BoxCount)
 		SHADER_PARAMETER(float, ColliderSearchRadius)
-
-		// Volume Preservation mode
-		// 1 = Yu & Turk style (log-space, volume = 1.0)
-		// 0 = FleX style (raw eigenvalues, no volume constraint)
 		SHADER_PARAMETER(int32, bPreserveVolume)
-
-		// Non-preserved render scale (only used when bPreserveVolume = 0)
 		SHADER_PARAMETER(float, NonPreservedRenderScale)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 ThreadGroupSize = 64;
 
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
-	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 	static void ModifyCompilationEnvironment(
 		const FGlobalShaderPermutationParameters& Parameters,
-		FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("THREADGROUP_SIZE"), ThreadGroupSize);
-		OutEnvironment.SetDefine(TEXT("SPATIAL_HASH_SIZE"), ANISOTROPY_SPATIAL_HASH_SIZE);
-		OutEnvironment.SetDefine(TEXT("MAX_PARTICLES_PER_CELL"), ANISOTROPY_MAX_PARTICLES_PER_CELL);
-
-		// Get grid resolution from permutation for Morton code calculation
-		const FPermutationDomain PermutationVector(Parameters.PermutationId);
-		const int32 GridPreset = PermutationVector.Get<FGridResolutionDim>();
-		const int32 AxisBits = GridResolutionPermutation::GetAxisBits(GridPreset);
-		const int32 MaxCells = GridResolutionPermutation::GetMaxCells(GridPreset);
-
-		OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), AxisBits);
-		OutEnvironment.SetDefine(TEXT("MAX_CELLS"), MaxCells);
-	}
+		FShaderCompilerEnvironment& OutEnvironment);
 };
 
-//=============================================================================
-// Anisotropy Pass Builder
-// Utility class for adding anisotropy compute passes to RDG
-//=============================================================================
-
+/**
+ * @class FFluidAnisotropyPassBuilder
+ * @brief Utility for adding anisotropy compute passes to RDG.
+ */
 class KAWAIIFLUIDRUNTIME_API FFluidAnisotropyPassBuilder
 {
 public:
-	/**
-	 * @brief Add anisotropy calculation pass to RDG.
-	 * @param GraphBuilder RDG builder.
-	 * @param Params Anisotropy compute parameters (buffers and settings).
-	 */
 	static void AddAnisotropyPass(
 		FRDGBuilder& GraphBuilder,
 		const FAnisotropyComputeParams& Params);
 
-	/**
-	 * @brief Create anisotropy output buffers.
-	 * @param GraphBuilder RDG builder.
-	 * @param ParticleCount Number of particles.
-	 * @param OutAxis1 Output axis 1 buffer (direction.xyz + scale.w).
-	 * @param OutAxis2 Output axis 2 buffer.
-	 * @param OutAxis3 Output axis 3 buffer.
-	 */
 	static void CreateAnisotropyBuffers(
 		FRDGBuilder& GraphBuilder,
 		int32 ParticleCount,

@@ -11,7 +11,7 @@
 #include "GPU/GPUBoundaryAttachment.h"  // For FGPUBoneDeltaAttachment
 #include "Core/KawaiiFluidParticle.h"
 #include "Core/KawaiiFluidSimulationStats.h"
-#include "Rendering/Shaders/FluidSpatialHashShaders.h"
+#include "Rendering/Shaders/KawaiiFluidSpatialHashShaders.h"
 
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
@@ -79,6 +79,10 @@ FGPUFluidSimulator::~FGPUFluidSimulator()
 // Initialization
 //=============================================================================
 
+/**
+ * @brief Initialize the GPU fluid simulator with maximum particle capacity.
+ * @param InMaxParticleCount Maximum number of particles to support.
+ */
 void FGPUFluidSimulator::Initialize(int32 InMaxParticleCount)
 {
 	if (InMaxParticleCount <= 0)
@@ -121,6 +125,9 @@ void FGPUFluidSimulator::Initialize(int32 InMaxParticleCount)
 	UE_LOG(LogGPUFluidSimulator, Log, TEXT("GPU Fluid Simulator initialized with capacity: %d particles"), MaxParticleCount);
 }
 
+/**
+ * @brief Release all simulation resources and shutdown managers.
+ */
 void FGPUFluidSimulator::Release()
 {
 	if (!bIsInitialized)
@@ -376,6 +383,10 @@ void FGPUFluidSimulator::ResizeBuffers(FRHICommandListBase& RHICmdList, int32 Ne
 // Simulation Execution
 //=============================================================================
 
+/**
+ * @brief Execute a single simulation substep (Direct path).
+ * @param Params Simulation parameters for this substep.
+ */
 void FGPUFluidSimulator::SimulateSubstep(const FGPUFluidSimulationParams& Params)
 {
 	if (!bIsInitialized)
@@ -431,6 +442,10 @@ void FGPUFluidSimulator::SimulateSubstep(const FGPUFluidSimulationParams& Params
 	);
 }
 
+/**
+ * @brief Store simulation parameters for deferred execution in render thread.
+ * @param Params Simulation parameters to store.
+ */
 void FGPUFluidSimulator::EnqueueSimulation(const FGPUFluidSimulationParams& Params)
 {
 	FScopeLock Lock(&PendingSimulationLock);
@@ -694,7 +709,10 @@ void FGPUFluidSimulator::SimulateSubstep_RDG(FRDGBuilder& GraphBuilder, const FG
 		PassParams->OutParticleIDs = GraphBuilder.CreateUAV(SpatialData.SoA_ParticleIDs, PF_R32_SINT);
 		PassParams->OutSourceIDs = GraphBuilder.CreateUAV(SpatialData.SoA_SourceIDs, PF_R32_SINT);
 		PassParams->SplitParticleCount = CurrentParticleCount;
-		if (CurrentIndirectArgsBuffer) PassParams->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+		if (CurrentIndirectArgsBuffer)
+		{
+			PassParams->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+		}
 
 		if (CurrentIndirectArgsBuffer)
 		{
@@ -750,7 +768,10 @@ void FGPUFluidSimulator::SimulateSubstep_RDG(FRDGBuilder& GraphBuilder, const FG
 		PassParams->MergeUniformParticleMass = Params.ParticleMass;
 		PassParams->TargetParticles = ParticlesUAVLocal;
 		PassParams->MergeParticleCount = CurrentParticleCount;
-		if (CurrentIndirectArgsBuffer) PassParams->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+		if (CurrentIndirectArgsBuffer)
+		{
+			PassParams->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+		}
 
 		if (CurrentIndirectArgsBuffer)
 		{
@@ -868,6 +889,9 @@ void FGPUFluidSimulator::RunInitializationSimulation(const FGPUFluidSimulationPa
 // Frame Lifecycle Functions
 //=============================================================================
 
+/**
+ * @brief Orchestrate frame start operations (async readbacks, spawn/despawn).
+ */
 void FGPUFluidSimulator::BeginFrame()
 {
 	if (!bIsInitialized)
@@ -1145,6 +1169,9 @@ void FGPUFluidSimulator::BeginFrame()
 	);
 }
 
+/**
+ * @brief Orchestrate frame end operations (persistent extraction, enqueuing readbacks).
+ */
 void FGPUFluidSimulator::EndFrame()
 {
 	if (!bIsInitialized)
@@ -1426,8 +1453,12 @@ FRDGBufferRef FGPUFluidSimulator::PrepareParticleBuffer(
 				IConsoleObject* CaptureCmd = IConsoleManager::Get().FindConsoleObject(TEXT("renderdoc.CaptureFrame"));
 				if (CaptureCmd)
 				{
-					IConsoleCommand* Cmd = CaptureCmd->AsCommand();
-					if (Cmd) Cmd->Execute(TArray<FString>(), nullptr, *GLog);
+									IConsoleCommand* Cmd = CaptureCmd->AsCommand();
+									if (Cmd)
+									{
+										Cmd->Execute(TArray<FString>(), nullptr, *GLog);
+									}
+					
 				}
 			});
 		}
@@ -1597,7 +1628,10 @@ FSimulationSpatialData FGPUFluidSimulator::BuildSpatialStructures(
 			FBuildSpatialHashSimpleCS::FParameters* BuildParams = GraphBuilder.AllocParameters<FBuildSpatialHashSimpleCS::FParameters>();
 			BuildParams->ParticlePositions = OutPositionsSRV;
 			BuildParams->ParticleCount = CurrentParticleCount;
-			if (CurrentIndirectArgsBuffer) BuildParams->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+			if (CurrentIndirectArgsBuffer)
+			{
+				BuildParams->ParticleCountBuffer = GraphBuilder.CreateSRV(CurrentIndirectArgsBuffer);
+			}
 			BuildParams->ParticleRadius = Params.ParticleRadius;
 			BuildParams->CellSize = Params.CellSize;
 			BuildParams->CellCounts = CellCountsUAVLocal;
@@ -2211,8 +2245,15 @@ void FGPUFluidSimulator::ExtractPersistentBuffers(
 
 	if (!bUseZOrderSorting)
 	{
-		if (SpatialData.CellCountsBuffer) GraphBuilder.QueueBufferExtraction(SpatialData.CellCountsBuffer, &PersistentCellCountsBuffer, ERHIAccess::UAVCompute);
-		if (SpatialData.ParticleIndicesBuffer) GraphBuilder.QueueBufferExtraction(SpatialData.ParticleIndicesBuffer, &PersistentParticleIndicesBuffer, ERHIAccess::UAVCompute);
+			if (SpatialData.CellCountsBuffer)
+			{
+				GraphBuilder.QueueBufferExtraction(SpatialData.CellCountsBuffer, &PersistentCellCountsBuffer, ERHIAccess::UAVCompute);
+			}
+			if (SpatialData.ParticleIndicesBuffer)
+			{
+				GraphBuilder.QueueBufferExtraction(SpatialData.ParticleIndicesBuffer, &PersistentParticleIndicesBuffer, ERHIAccess::UAVCompute);
+			}
+		
 	}
 
 	// =====================================================
@@ -2695,10 +2736,23 @@ FGPUFluidParticle FGPUFluidSimulator::ConvertToGPU(const FKawaiiFluidParticle& C
 
 	// Pack flags
 	uint32 Flags = 0;
-	if (CPUParticle.bIsAttached) Flags |= EGPUParticleFlags::IsAttached;
-	if (CPUParticle.bIsSurfaceParticle) Flags |= EGPUParticleFlags::IsSurface;
-	if (CPUParticle.bJustDetached) Flags |= EGPUParticleFlags::JustDetached;
-	if (CPUParticle.bNearGround) Flags |= EGPUParticleFlags::NearGround;
+			if (CPUParticle.bIsAttached)
+			{
+				Flags |= EGPUParticleFlags::IsAttached;
+			}
+			if (CPUParticle.bIsSurfaceParticle)
+			{
+				Flags |= EGPUParticleFlags::IsSurface;
+			}
+			if (CPUParticle.bJustDetached)
+			{
+				Flags |= EGPUParticleFlags::JustDetached;
+			}
+			if (CPUParticle.bNearGround)
+			{
+				Flags |= EGPUParticleFlags::NearGround;
+			}
+	
 	GPUParticle.Flags = Flags;
 
 	// NeighborCount is calculated on GPU during density solve
@@ -4052,7 +4106,10 @@ void FGPUFluidSimulator::ProcessStatsReadback(FRHICommandListImmediate& RHICmdLi
 			{
 				const int32 StartIdx = ChunkIndex * ChunkSize;
 				const int32 EndIdx = FMath::Min(StartIdx + ChunkSize, ParticleCount);
-				if (StartIdx >= EndIdx) return;
+				if (StartIdx >= EndIdx)
+				{
+					return;
+				}
 
 				auto& LocalSourceArrays = ChunkSourceArrays[ChunkIndex];
 				auto& LocalAllIDs = ChunkAllIDs[ChunkIndex];
@@ -4091,7 +4148,10 @@ void FGPUFluidSimulator::ProcessStatsReadback(FRHICommandListImmediate& RHICmdLi
 			{
 				const int32 StartIdx = ChunkIndex * ChunkSize;
 				const int32 EndIdx = FMath::Min(StartIdx + ChunkSize, ParticleCount);
-				if (StartIdx >= EndIdx) return;
+				if (StartIdx >= EndIdx)
+				{
+					return;
+				}
 
 				auto& LocalSourceArrays = ChunkSourceArrays[ChunkIndex];
 				auto& LocalAllIDs = ChunkAllIDs[ChunkIndex];

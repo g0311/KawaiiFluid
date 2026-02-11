@@ -1,33 +1,58 @@
 // Copyright 2026 Team_Bruteforce. All Rights Reserved.
-// FGPUBoundarySkinningManager - GPU Boundary Skinning and Adhesion System
 
 #pragma once
-
-#include <GPU/GPUFluidSpatialData.h>
 
 #include "CoreMinimal.h"
 #include "RenderGraphResources.h"
 #include "RHIResources.h"
 #include "GPU/GPUFluidParticle.h"
-#include "Core/KawaiiFluidSimulationTypes.h"  // For EGridResolutionPreset
+#include "GPU/GPUFluidSpatialData.h"
+#include "Core/KawaiiFluidSimulationTypes.h"
 
 class USkeletalMeshComponent;
-
 class FRDGBuilder;
 
 /**
- * FGPUBoundarySkinningManager
+ * @class FGPUBoundarySkinningManager
+ * @brief Manages GPU-based boundary skinning for Flex-style adhesion.
  *
- * Manages GPU-based boundary skinning for Flex-style adhesion.
- * Transforms bone-local boundary particles to world space using GPU compute,
- * enabling efficient interaction between fluid and skinned meshes.
- *
- * Features:
- * - Persistent local boundary particles (uploaded once per mesh)
- * - Per-frame bone transform updates
- * - GPU-based skinning transform
- * - Z-Order (Morton code) sorting for O(K) neighbor search
- * - BoundaryCellStart/End for cache-coherent access
+ * @param bIsInitialized State of the manager.
+ * @param PersistentStaticBoundaryBuffer GPU buffer for static boundary particles.
+ * @param PersistentStaticZOrderSorted Z-Order sorted buffer for static boundaries.
+ * @param PersistentStaticCellStart Spatial hash cell start indices for static boundaries.
+ * @param PersistentStaticCellEnd Spatial hash cell end indices for static boundaries.
+ * @param StaticBoundaryParticleCount Number of static boundary particles.
+ * @param StaticBoundaryBufferCapacity Capacity of the static boundary buffer.
+ * @param bStaticBoundaryEnabled Whether static boundary processing is active.
+ * @param bStaticBoundaryDirty Flag indicating static boundary needs re-upload/sort.
+ * @param bStaticZOrderValid Flag indicating static Z-Order data is up-to-date.
+ * @param PendingStaticBoundaryParticles CPU storage for particles waiting for GPU upload.
+ * @param CachedBoundaryAdhesionParams Configuration for boundary adhesion.
+ * @param BoundarySkinningDataMap Map of skinning data per mesh owner.
+ * @param TotalLocalBoundaryParticleCount Sum of all local boundary particles.
+ * @param PersistentLocalBoundaryBuffers Map of GPU buffers for local boundary particles.
+ * @param PersistentWorldBoundaryBuffer GPU buffer for world-space boundary particles.
+ * @param PreviousWorldBoundaryBuffer Previous frame buffer for velocity calculation.
+ * @param WorldBoundaryBufferCapacity Capacity of the world boundary buffer.
+ * @param bHasPreviousFrame Whether previous frame data is available.
+ * @param bBoundarySkinningDataDirty Flag indicating skinning data needs update.
+ * @param bUseBoundaryZOrder Whether to use Z-Order sorting for boundaries.
+ * @param bBoundaryZOrderDirty Flag indicating boundary Z-Order needs re-sort.
+ * @param bBoundaryZOrderValid Flag indicating boundary Z-Order data is valid.
+ * @param GridResolutionPreset Resolution preset for the spatial hash.
+ * @param ZOrderBoundsMin Minimum bounds for Z-Order calculation.
+ * @param ZOrderBoundsMax Maximum bounds for Z-Order calculation.
+ * @param bUseHybridTiledZOrder Whether to use hybrid tiled Z-Order mode.
+ * @param PersistentSortedBoundaryBuffer GPU buffer for sorted boundary particles.
+ * @param PersistentBoundaryCellStart Spatial hash cell start indices for boundaries.
+ * @param PersistentBoundaryCellEnd Spatial hash cell end indices for boundaries.
+ * @param BoundaryZOrderBufferCapacity Capacity of the boundary Z-Order buffer.
+ * @param BoundaryOwnerAABBs Map of world-space AABBs per mesh owner.
+ * @param CombinedBoundaryAABB Unified AABB encompassing all owners.
+ * @param bBoundaryAABBDirty Flag indicating combined AABB needs recalculation.
+ * @param PendingBoneTransformSnapshots Queue of snapshotted bone transforms.
+ * @param ActiveSnapshot Currently active snapshot for simulation.
+ * @param BoundarySkinningLock Critical section for thread-safe access.
  */
 class KAWAIIFLUIDRUNTIME_API FGPUBoundarySkinningManager
 {
@@ -40,49 +65,34 @@ public:
 	//=========================================================================
 
 	void Initialize();
+
 	void Release();
+
 	bool IsReady() const { return bIsInitialized; }
 
 	//=========================================================================
 	// Static Boundary Particles (StaticMesh colliders - Persistent GPU)
-	// Uploaded once, cached on GPU, re-sorted only when dirty
 	//=========================================================================
 
-	/**
-	 * Upload static boundary particles to persistent GPU buffer
-	 * Called once when static colliders are generated, cached on GPU
-	 * @param Particles - World-space static boundary particles
-	 */
 	void UploadStaticBoundaryParticles(const TArray<FGPUBoundaryParticle>& Particles);
 
-	/**
-	 * Clear static boundary particles
-	 */
 	void ClearStaticBoundaryParticles();
 
-	/**
-	 * Mark static boundary as dirty (needs re-upload and re-sort)
-	 * Call when colliders change (add/remove/move)
-	 */
 	void MarkStaticBoundaryDirty() { bStaticBoundaryDirty = true; }
 
-	/** Check if static boundary is enabled and has data */
 	bool HasStaticBoundaryData() const { return bStaticBoundaryEnabled && StaticBoundaryParticleCount > 0; }
 
-	/** Get static boundary particle count */
 	int32 GetStaticBoundaryParticleCount() const { return StaticBoundaryParticleCount; }
 
-	/** Enable/disable static boundary processing */
 	void SetStaticBoundaryEnabled(bool bEnabled) { bStaticBoundaryEnabled = bEnabled; }
+
 	bool IsStaticBoundaryEnabled() const { return bStaticBoundaryEnabled; }
 
-	/** Get static boundary buffers (for density/adhesion passes) */
 	TRefCountPtr<FRDGPooledBuffer>& GetStaticBoundaryBuffer() { return PersistentStaticBoundaryBuffer; }
 	TRefCountPtr<FRDGPooledBuffer>& GetStaticZOrderSortedBuffer() { return PersistentStaticZOrderSorted; }
 	TRefCountPtr<FRDGPooledBuffer>& GetStaticCellStartBuffer() { return PersistentStaticCellStart; }
 	TRefCountPtr<FRDGPooledBuffer>& GetStaticCellEndBuffer() { return PersistentStaticCellEnd; }
 
-	/** Check if static Z-Order data is valid */
 	bool HasStaticZOrderData() const
 	{
 		return bStaticZOrderValid
@@ -91,85 +101,36 @@ public:
 			&& PersistentStaticCellEnd.IsValid();
 	}
 
-	/**
-	 * Execute Z-Order sorting for static boundary particles (if dirty)
-	 * Called once when static boundary is uploaded, cached until dirty
-	 * @param GraphBuilder - RDG builder
-	 * @param Params - Simulation parameters
-	 */
 	void ExecuteStaticBoundaryZOrderSort(FRDGBuilder& GraphBuilder, const FGPUFluidSimulationParams& Params);
 
 	//=========================================================================
 	// GPU Boundary Skinning (Persistent Local + GPU Transform)
 	//=========================================================================
 
-	/**
-	 * Upload local boundary particles for GPU skinning
-	 * @param OwnerID - Unique ID for the mesh owner
-	 * @param LocalParticles - Bone-local boundary particles
-	 */
 	void UploadLocalBoundaryParticles(int32 OwnerID, const TArray<FGPUBoundaryParticleLocal>& LocalParticles);
 
-	/**
-	 * Upload bone transforms for boundary skinning
-	 * @param OwnerID - Unique ID for the mesh owner
-	 * @param BoneTransforms - Current bone transforms
-	 * @param ComponentTransform - Component world transform
-	 */
 	void UploadBoneTransformsForBoundary(int32 OwnerID, const TArray<FMatrix44f>& BoneTransforms, const FMatrix44f& ComponentTransform);
 
-	/**
-	 * Register a skeletal mesh component for late bone transform refresh
-	 * Call this instead of/in addition to UploadBoneTransformsForBoundary
-	 * @param OwnerID - Unique ID for the mesh owner
-	 * @param SkelMesh - Skeletal mesh component to read bones from
-	 */
 	void RegisterSkeletalMeshReference(int32 OwnerID, USkeletalMeshComponent* SkelMesh);
 
-	/**
-	 * Refresh bone transforms from all registered skeletal meshes
-	 * MUST be called on Game Thread, right before render thread starts (BeginRenderViewFamily)
-	 * This ensures bone transforms match what the skeletal mesh will render with
-	 */
 	void RefreshAllBoneTransforms();
 
-	/** Remove skinning data for an owner */
 	void RemoveBoundarySkinningData(int32 OwnerID);
 
-	/** Clear all boundary skinning data */
 	void ClearAllBoundarySkinningData();
 
-	/** Check if GPU boundary skinning is enabled */
 	bool IsGPUBoundarySkinningEnabled() const { return TotalLocalBoundaryParticleCount > 0; }
 
-	/** Get total local boundary particle count */
 	int32 GetTotalLocalBoundaryParticleCount() const { return TotalLocalBoundaryParticleCount; }
 
 	//=========================================================================
 	// Bone Transform Access (for BoneDeltaAttachment system)
 	//=========================================================================
 
-	/**
-	 * Get bone transforms for a specific owner
-	 * Used by the BoneDeltaAttachment system to transform attached particles
-	 * @param OwnerID - Unique ID for the mesh owner
-	 * @return Pointer to bone transforms array, nullptr if owner not found
-	 */
 	const TArray<FMatrix44f>* GetBoneTransforms(int32 OwnerID) const;
 
-	/**
-	 * Get the first available bone transforms (for single-owner scenarios)
-	 * Returns the bone transforms of the first registered skeletal mesh owner
-	 * @param OutOwnerID - Output: Owner ID of the returned transforms
-	 * @return Pointer to bone transforms array, nullptr if no owners
-	 */
 	const TArray<FMatrix44f>* GetFirstAvailableBoneTransforms(int32* OutOwnerID = nullptr) const;
 
-	/**
-	 * Get bone count for a specific owner
-	 * @param OwnerID - Unique ID for the mesh owner
-	 * @return Number of bones, 0 if owner not found
-	 */
 	int32 GetBoneCount(int32 OwnerID) const;
 
 	//=========================================================================
@@ -177,48 +138,27 @@ public:
 	//=========================================================================
 
 	void SetBoundaryAdhesionParams(const FGPUBoundaryAdhesionParams& Params) { CachedBoundaryAdhesionParams = Params; }
+
 	const FGPUBoundaryAdhesionParams& GetBoundaryAdhesionParams() const { return CachedBoundaryAdhesionParams; }
+
 	bool IsBoundaryAdhesionEnabled() const;
 
 	//=========================================================================
 	// Boundary Owner AABB (for early-out optimization)
-	// Skip boundary adhesion pass entirely when AABB doesn't overlap volume
 	//=========================================================================
 
-	/**
-	 * Update AABB for a boundary owner
-	 * @param OwnerID - Unique ID for the mesh owner
-	 * @param AABB - World-space AABB of the boundary owner
-	 */
 	void UpdateBoundaryOwnerAABB(int32 OwnerID, const FGPUBoundaryOwnerAABB& AABB);
 
-	/**
-	 * Get combined AABB of all boundary owners
-	 * @return Combined AABB encompassing all boundary owners
-	 */
 	const FGPUBoundaryOwnerAABB& GetCombinedBoundaryAABB() const { return CombinedBoundaryAABB; }
 
-	/**
-	 * Check if any boundary owner AABB overlaps with the simulation volume
-	 * @param VolumeMin - Minimum corner of simulation volume (expanded by AdhesionRadius)
-	 * @param VolumeMax - Maximum corner of simulation volume (expanded by AdhesionRadius)
-	 * @param AdhesionRadius - Adhesion search radius
-	 * @return true if any boundary AABB overlaps with the volume
-	 */
 	bool DoesBoundaryOverlapVolume(const FVector3f& VolumeMin, const FVector3f& VolumeMax, float AdhesionRadius) const;
 
-	/**
-	 * Check if boundary adhesion pass should be skipped due to no overlap
-	 * @param Params - Simulation parameters containing volume bounds
-	 * @return true if the pass should be skipped (no overlap)
-	 */
 	bool ShouldSkipBoundaryAdhesionPass(const FGPUFluidSimulationParams& Params) const;
 
 	//=========================================================================
 	// RDG Pass (called from simulator)
 	//=========================================================================
 
-	/** Data needed for ApplyBoneTransformPass (returned by AddBoundarySkinningPass) */
 	struct FBoundarySkinningOutputs
 	{
 		FRDGBufferRef LocalBoundaryParticlesBuffer = nullptr;
@@ -227,14 +167,6 @@ public:
 		FMatrix44f ComponentTransform = FMatrix44f::Identity;
 	};
 
-	/**
-	 * Add boundary skinning pass to transform local particles to world space
-	 * @param GraphBuilder - RDG builder
-	 * @param OutWorldBoundaryBuffer - Output: World-space boundary particles buffer
-	 * @param OutBoundaryParticleCount - Output: Number of boundary particles
-	 * @param DeltaTime - Frame delta time for velocity calculation
-	 * @param OutSkinningOutputs - Optional: Additional outputs for ApplyBoneTransformPass
-	 */
 	void AddBoundarySkinningPass(
 		FRDGBuilder& GraphBuilder,
 		FRDGBufferRef& OutWorldBoundaryBuffer,
@@ -242,18 +174,6 @@ public:
 		float DeltaTime,
 		FBoundarySkinningOutputs* OutSkinningOutputs = nullptr);
 
-	/**
-	 * Add boundary adhesion pass
-	 * @param GraphBuilder - RDG builder
-	 * @param ParticlesUAV - Fluid particles buffer
-	 * @param CurrentParticleCount - Number of fluid particles
-	 * @param Params - Simulation parameters
-	 * @param InSameFrameBoundaryBuffer - Optional: Same-frame boundary buffer (for first frame support)
-	 * @param InSameFrameBoundaryCount - Optional: Same-frame boundary particle count
-	 * @param InZOrderSortedSRV - Optional: Same-frame Z-Order sorted boundary buffer
-	 * @param InZOrderCellStartSRV - Optional: Same-frame Z-Order cell start buffer
-	 * @param InZOrderCellEndSRV - Optional: Same-frame Z-Order cell end buffer
-	 */
 	void AddBoundaryAdhesionPass(
 		FRDGBuilder& GraphBuilder,
 		const FSimulationSpatialData& SpatialData,
@@ -266,31 +186,14 @@ public:
 		FRDGBufferSRVRef InZOrderCellEndSRV = nullptr,
 		FRDGBufferRef IndirectArgsBuffer = nullptr);
 
-	/** Get world boundary buffer for other passes */
 	TRefCountPtr<FRDGPooledBuffer>& GetWorldBoundaryBuffer() { return PersistentWorldBoundaryBuffer; }
 
-	/** Check if world boundary buffer is valid */
 	bool HasWorldBoundaryBuffer() const { return PersistentWorldBoundaryBuffer.IsValid(); }
 
 	//=========================================================================
 	// Z-Order Sorting for Boundary Particles
-	// Enables O(K) neighbor search instead of O(M) full traversal
 	//=========================================================================
 
-	/**
-	 * Execute Z-Order sorting pipeline for boundary particles
-	 * Called after BoundarySkinningPass to sort world-space boundary particles
-	 * Works independently of FluidInteraction - supports static boundary particles
-	 * @param GraphBuilder - RDG builder
-	 * @param Params - Simulation parameters (for CellSize, bounds)
-	 * @param InSameFrameBoundaryBuffer - Optional: Same-frame boundary buffer (for first frame support)
-	 * @param InSameFrameBoundaryCount - Optional: Same-frame boundary particle count
-	 * @param OutSortedBuffer - Output: Sorted boundary particles buffer (same-frame access)
-	 * @param OutCellStartBuffer - Output: Cell start indices buffer
-	 * @param OutCellEndBuffer - Output: Cell end indices buffer
-	 * @param OutParticleCount - Output: Number of boundary particles sorted
-	 * @return true if Z-Order sorting was performed
-	 */
 	bool ExecuteBoundaryZOrderSort(
 		FRDGBuilder& GraphBuilder,
 		const FGPUFluidSimulationParams& Params,
@@ -301,7 +204,6 @@ public:
 		FRDGBufferRef& OutCellEndBuffer,
 		int32& OutParticleCount);
 
-	/** Set Z-Order configuration */
 	void SetBoundaryZOrderConfig(EGridResolutionPreset Preset, const FVector3f& BoundsMin, const FVector3f& BoundsMax)
 	{
 		GridResolutionPreset = Preset;
@@ -309,15 +211,12 @@ public:
 		ZOrderBoundsMax = BoundsMax;
 	}
 
-	/** Enable/disable Z-Order sorting for boundary */
 	void SetBoundaryZOrderEnabled(bool bEnabled) { bUseBoundaryZOrder = bEnabled; }
 	bool IsBoundaryZOrderEnabled() const { return bUseBoundaryZOrder; }
 
-	/** Enable/disable Hybrid Tiled Z-Order mode for unlimited simulation range */
 	void SetHybridTiledZOrderEnabled(bool bEnabled) { bUseHybridTiledZOrder = bEnabled; }
 	bool IsHybridTiledZOrderEnabled() const { return bUseHybridTiledZOrder; }
 
-	/** Check if Z-Order data is valid */
 	bool HasBoundaryZOrderData() const
 	{
 		return bBoundaryZOrderValid
@@ -326,14 +225,10 @@ public:
 			&& PersistentBoundaryCellEnd.IsValid();
 	}
 
-	/** Get sorted boundary buffer (Z-Order sorted) */
 	TRefCountPtr<FRDGPooledBuffer>& GetSortedBoundaryBuffer() { return PersistentSortedBoundaryBuffer; }
-
-	/** Get boundary cell start/end buffers */
 	TRefCountPtr<FRDGPooledBuffer>& GetBoundaryCellStartBuffer() { return PersistentBoundaryCellStart; }
 	TRefCountPtr<FRDGPooledBuffer>& GetBoundaryCellEndBuffer() { return PersistentBoundaryCellEnd; }
 
-	/** Mark boundary Z-Order as dirty (needs re-sort) */
 	void MarkBoundaryZOrderDirty() { bBoundaryZOrderDirty = true; }
 
 
@@ -484,33 +379,32 @@ private:
 
 public:
 	/**
-	 * Snapshot current bone transforms for deferred simulation execution.
+	 * @brief Snapshot current bone transforms for deferred simulation execution.
 	 * Call this from EnqueueSimulation() to capture bone transforms at enqueue time.
-	 * Thread-safe: uses BoundarySkinningLock.
 	 */
 	void SnapshotBoneTransformsForPendingSimulation();
 
 	/**
-	 * Pop and activate a snapshotted bone transform for execution.
-	 * Call before SimulateSubstep_RDG() in ExecutePendingSimulations_RenderThread().
-	 * @return true if a snapshot was available and is now active
+	 * @brief Pop and activate a snapshotted bone transform for execution.
+	 * @return true if a snapshot was available and is now active.
 	 */
 	bool PopAndActivateSnapshot();
 
 	/**
-	 * Clear the active snapshot after simulation execution completes.
-	 * Call after SimulateSubstep_RDG() completes.
+	 * @brief Clear the active snapshot after simulation execution completes.
 	 */
 	void ClearActiveSnapshot();
 
 	/**
-	 * Check if there's an active snapshot being used.
+	 * @brief Check if there's an active snapshot being used.
+	 * @return true if set.
 	 */
 	bool HasActiveSnapshot() const { return ActiveSnapshot.IsSet(); }
 
 	/**
-	 * Get the active snapshot's skinning data for a specific owner.
-	 * Returns nullptr if no active snapshot or owner not found.
+	 * @brief Get the active snapshot's skinning data for a specific owner.
+	 * @param OwnerID Unique ID.
+	 * @return Pointer to snapshot data.
 	 */
 	const FBoneTransformSnapshotData* GetActiveSnapshotData(int32 OwnerID) const;
 

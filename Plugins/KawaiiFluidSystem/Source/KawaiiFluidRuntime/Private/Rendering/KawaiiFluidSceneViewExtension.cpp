@@ -1,8 +1,8 @@
 // Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
-#include "Rendering/FluidSceneViewExtension.h"
+#include "Rendering/KawaiiFluidSceneViewExtension.h"
 
-#include "FluidRendererSubsystem.h"
+#include "KawaiiFluidRendererSubsystem.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphEvent.h"
 #include "SceneRendering.h"
@@ -29,19 +29,19 @@
 #include "GPU/GPUFluidSimulator.h"
 #include "GPU/GPUFluidSimulatorShaders.h"
 #include "RHIGPUReadback.h"  // FRHIGPUBufferReadback for particle bounds readback
-#include "Rendering/FluidDepthPass.h"
+#include "Rendering/KawaiiFluidDepthPass.h"
 
 // ==============================================================================
 // Class Implementation
 // ==============================================================================
 
-FFluidSceneViewExtension::FFluidSceneViewExtension(const FAutoRegister& AutoRegister,
-                                                   UFluidRendererSubsystem* InSubsystem)
+FKawaiiFluidSceneViewExtension::FKawaiiFluidSceneViewExtension(const FAutoRegister& AutoRegister,
+                                                   UKawaiiFluidRendererSubsystem* InSubsystem)
 	: FSceneViewExtensionBase(AutoRegister), Subsystem(InSubsystem)
 {
 }
 
-FFluidSceneViewExtension::~FFluidSceneViewExtension()
+FKawaiiFluidSceneViewExtension::~FKawaiiFluidSceneViewExtension()
 {
 }
 
@@ -50,9 +50,9 @@ FFluidSceneViewExtension::~FFluidSceneViewExtension()
  * Used to cache light direction for render thread access.
  * @param InViewFamily The view family being set up.
  */
-void FFluidSceneViewExtension::SetupViewFamily(FSceneViewFamily& InViewFamily)
+void FKawaiiFluidSceneViewExtension::SetupViewFamily(FSceneViewFamily& InViewFamily)
 {
-	UFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
+	UKawaiiFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
 	if (!SubsystemPtr)
 	{
 		return;
@@ -74,9 +74,9 @@ void FFluidSceneViewExtension::SetupViewFamily(FSceneViewFamily& InViewFamily)
  * This is the LAST game thread callback before render thread starts.
  * @param InViewFamily The view family being rendered.
  */
-void FFluidSceneViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewFamily)
+void FKawaiiFluidSceneViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewFamily)
 {
-	UFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
+	UKawaiiFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
 	if (!SubsystemPtr)
 	{
 		return;
@@ -108,11 +108,21 @@ void FFluidSceneViewExtension::BeginRenderViewFamily(FSceneViewFamily& InViewFam
 	// Note: Per-frame deduplication is handled by Preset-based TMap batching
 }
 
-void FFluidSceneViewExtension::PreRenderViewFamily_RenderThread(
+/**
+ * @brief Called before ViewFamily rendering on the render thread.
+ * 
+ * Performs data extraction from the GPU simulator to render resources and enqueues particle bounds readbacks.
+ */
+/**
+ * @brief Called before ViewFamily rendering on the render thread.
+ * 
+ * Performs data extraction from the GPU simulator to render resources and enqueues particle bounds readbacks.
+ */
+void FKawaiiFluidSceneViewExtension::PreRenderViewFamily_RenderThread(
 	FRDGBuilder& GraphBuilder,
 	FSceneViewFamily& InViewFamily)
 {
-	UFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
+	UKawaiiFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
 	if (!SubsystemPtr)
 	{
 		return;
@@ -272,9 +282,9 @@ void FFluidSceneViewExtension::PreRenderViewFamily_RenderThread(
 	}
 }
 
-bool FFluidSceneViewExtension::IsViewFromOurWorld(const FSceneView& InView) const
+bool FKawaiiFluidSceneViewExtension::IsViewFromOurWorld(const FSceneView& InView) const
 {
-	UFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
+	UKawaiiFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
 	if (!SubsystemPtr)
 	{
 		return false;
@@ -297,7 +307,13 @@ bool FFluidSceneViewExtension::IsViewFromOurWorld(const FSceneView& InView) cons
 }
 
 
-void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
+/**
+ * @brief Subscribes to post-processing passes to inject custom fluid rendering.
+ */
+/**
+ * @brief Subscribe to post-processing passes to inject custom fluid rendering.
+ */
+void FKawaiiFluidSceneViewExtension::SubscribeToPostProcessingPass(
 	EPostProcessingPass Pass,
 	const FSceneView& InView,
 	FPostProcessingPassDelegateArray& InOutPassCallbacks,
@@ -317,7 +333,7 @@ void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 					return InInputs.ReturnUntouchedSceneColorForPostProcessing(GraphBuilder);
 				}
 
-				UFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
+				UKawaiiFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
 
 				// Validity check
 				bool bHasAnyModules = SubsystemPtr && SubsystemPtr->GetAllRenderingModules().Num() >
@@ -338,7 +354,17 @@ void FFluidSceneViewExtension::SubscribeToPostProcessingPass(
 	}
 }
 
-void FFluidSceneViewExtension::PrePostProcessPass_RenderThread(
+/**
+ * @brief Core fluid rendering entry point executed at the PrePostProcess stage.
+ * 
+ * Collects active renderers, sorts batches by distance, and executes the rendering pipeline.
+ */
+/**
+ * @brief Core fluid rendering entry point executed at the PrePostProcess stage.
+ * 
+ * Collects active renderers, sorts batches by distance, and executes the rendering pipeline.
+ */
+void FKawaiiFluidSceneViewExtension::PrePostProcessPass_RenderThread(
 	FRDGBuilder& GraphBuilder,
 	const FSceneView& View,
 	const FPostProcessingInputs& Inputs)
@@ -349,7 +375,7 @@ void FFluidSceneViewExtension::PrePostProcessPass_RenderThread(
 		return;
 	}
 
-	UFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
+	UKawaiiFluidRendererSubsystem* SubsystemPtr = Subsystem.Get();
 	if (!SubsystemPtr)
 	{
 		return;
@@ -477,7 +503,7 @@ void FFluidSceneViewExtension::PrePostProcessPass_RenderThread(
 		UKawaiiFluidPresetDataAsset* Preset = CacheKey.Preset;
 		const TArray<UKawaiiFluidMetaballRenderer*>& Renderers = Batch.Renderers;
 
-		const FFluidRenderingParameters& BatchParams = Preset->RenderingParameters;
+		const FKawaiiFluidRenderingParameters& BatchParams = Preset->RenderingParameters;
 
 		RDG_EVENT_SCOPE(GraphBuilder, "FluidBatch_Incremental(%d)", Renderers.Num());
 

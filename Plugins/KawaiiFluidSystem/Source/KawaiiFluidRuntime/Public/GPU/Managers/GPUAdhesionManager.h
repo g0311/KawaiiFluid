@@ -1,5 +1,4 @@
 ﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
-// FGPUAdhesionManager - GPU-based particle adhesion system manager
 
 #pragma once
 
@@ -14,16 +13,14 @@ class FRDGBuilder;
 class FGPUCollisionManager;
 
 /**
- * FGPUAdhesionManager
- *
- * Manages GPU-based particle adhesion system:
- * - Particle attachment to bone-based collision primitives
- * - Attachment tracking buffer (per particle)
- * - Update attached particle positions
- * - Detachment handling
- * - Stack pressure calculation for attached particles
- *
- * This consolidates adhesion logic that was previously in GPUFluidSimulator
+ * @class FGPUAdhesionManager
+ * @brief Manages GPU-based particle adhesion system.
+ * 
+ * @param bIsInitialized State of the manager.
+ * @param AdhesionLock Critical section for thread-safe resource management.
+ * @param AdhesionParams Current configuration for the adhesion system.
+ * @param PersistentAttachmentBuffer Pooled buffer tracking per-particle attachment states.
+ * @param AttachmentBufferSize Current capacity of the attachment buffer.
  */
 class KAWAIIFLUIDRUNTIME_API FGPUAdhesionManager
 {
@@ -35,57 +32,38 @@ public:
 	// Lifecycle
 	//=========================================================================
 
-	/** Initialize the adhesion manager */
 	void Initialize();
 
-	/** Release all resources */
 	void Release();
 
-	/** Check if manager is ready */
 	bool IsReady() const { return bIsInitialized; }
 
 	//=========================================================================
 	// Configuration
 	//=========================================================================
 
-	/** Set adhesion parameters */
 	void SetAdhesionParams(const FGPUAdhesionParams& Params) { AdhesionParams = Params; }
 
-	/** Get adhesion parameters */
 	const FGPUAdhesionParams& GetAdhesionParams() const { return AdhesionParams; }
 
-	/** Check if adhesion is enabled */
 	bool IsAdhesionEnabled() const { return AdhesionParams.bEnableAdhesion != 0; }
 
 	//=========================================================================
 	// Attachment Buffer Management
 	//=========================================================================
 
-	/** Get persistent attachment buffer */
 	TRefCountPtr<FRDGPooledBuffer> GetPersistentAttachmentBuffer() const { return PersistentAttachmentBuffer; }
 
-	/** Access persistent attachment buffer for writing */
 	TRefCountPtr<FRDGPooledBuffer>& AccessPersistentAttachmentBuffer() { return PersistentAttachmentBuffer; }
 
-	/** Get attachment buffer size */
 	int32 GetAttachmentBufferSize() const { return AttachmentBufferSize; }
 
-	/** Set attachment buffer size */
 	void SetAttachmentBufferSize(int32 Size) { AttachmentBufferSize = Size; }
 
 	//=========================================================================
 	// Adhesion Passes (called from render thread)
 	//=========================================================================
 
-	/**
-	 * Add adhesion pass (create attachments to bone colliders)
-	 * @param GraphBuilder - RDG builder
-	 * @param ParticlesUAV - Particle buffer UAV
-	 * @param AttachmentUAV - Attachment buffer UAV
-	 * @param CollisionManager - Collision manager for bone transforms and primitives
-	 * @param CurrentParticleCount - Current particle count
-	 * @param Params - Simulation parameters
-	 */
 	void AddAdhesionPass(
 		FRDGBuilder& GraphBuilder,
 		const FSimulationSpatialData& SpatialData,
@@ -95,15 +73,6 @@ public:
 		const FGPUFluidSimulationParams& Params,
 		FRDGBufferRef IndirectArgsBuffer = nullptr);
 
-	/**
-	 * Add update attached positions pass (move attached particles with bones)
-	 * @param GraphBuilder - RDG builder
-	 * @param SpatialData - Spatial hash data with SOA buffers
-	 * @param AttachmentUAV - Attachment buffer UAV
-	 * @param CollisionManager - Collision manager for bone transforms and primitives
-	 * @param CurrentParticleCount - Current particle count
-	 * @param Params - Simulation parameters
-	 */
 	void AddUpdateAttachedPositionsPass(
 		FRDGBuilder& GraphBuilder,
 		const FSimulationSpatialData& SpatialData,
@@ -113,29 +82,12 @@ public:
 		const FGPUFluidSimulationParams& Params,
 		FRDGBufferRef IndirectArgsBuffer = nullptr);
 
-	/**
-	 * Add clear detached flag pass (clear just-detached flag at end of frame)
-	 * @param GraphBuilder - RDG builder
-	 * @param SpatialData - Spatial hash data with SOA buffers
-	 * @param CurrentParticleCount - Current particle count
-	 */
 	void AddClearDetachedFlagPass(
 		FRDGBuilder& GraphBuilder,
 		const FSimulationSpatialData& SpatialData,
 		int32 CurrentParticleCount,
 		FRDGBufferRef IndirectArgsBuffer = nullptr);
 
-	/**
-	 * Add stack pressure pass (weight transfer from stacked attached particles)
-	 * @param GraphBuilder - RDG builder
-	 * @param ParticlesUAV - Particle buffer UAV
-	 * @param AttachmentSRV - Attachment buffer SRV
-	 * @param CellCountsSRV - Spatial hash cell counts SRV
-	 * @param ParticleIndicesSRV - Spatial hash particle indices SRV
-	 * @param CollisionManager - Collision manager for primitives
-	 * @param CurrentParticleCount - Current particle count
-	 * @param Params - Simulation parameters
-	 */
 	void AddStackPressurePass(
 		FRDGBuilder& GraphBuilder,
 		const FSimulationSpatialData& SpatialData,

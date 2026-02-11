@@ -30,6 +30,10 @@ FGPUSpawnManager::~FGPUSpawnManager()
 // Lifecycle
 //=============================================================================
 
+/**
+ * @brief Initialize the spawn manager with max particle capacity.
+ * @param InMaxParticleCount Maximum particle capacity.
+ */
 void FGPUSpawnManager::Initialize(int32 InMaxParticleCount)
 {
 	if (InMaxParticleCount <= 0)
@@ -63,6 +67,9 @@ void FGPUSpawnManager::Initialize(int32 InMaxParticleCount)
 		MaxParticleCapacity, EGPUParticleSource::MaxSourceCount);
 }
 
+/**
+ * @brief Release all resources.
+ */
 void FGPUSpawnManager::Release()
 {
 	{
@@ -131,6 +138,12 @@ void FGPUSpawnManager::Release()
 // Thread-Safe Public API
 //=============================================================================
 
+/**
+ * @brief Add a spawn request (thread-safe).
+ * @param Position World position to spawn at.
+ * @param Velocity Initial velocity.
+ * @param Mass Particle mass (0 = use default).
+ */
 void FGPUSpawnManager::AddSpawnRequest(const FVector3f& Position, const FVector3f& Velocity, float Mass)
 {
 	FScopeLock Lock(&SpawnLock);
@@ -148,6 +161,10 @@ void FGPUSpawnManager::AddSpawnRequest(const FVector3f& Position, const FVector3
 		Position.X, Position.Y, Position.Z, Velocity.X, Velocity.Y, Velocity.Z);
 }
 
+/**
+ * @brief Add multiple spawn requests at once (thread-safe, more efficient).
+ * @param Requests Array of spawn requests.
+ */
 void FGPUSpawnManager::AddSpawnRequests(const TArray<FGPUSpawnRequest>& Requests)
 {
 	if (Requests.Num() == 0)
@@ -164,6 +181,9 @@ void FGPUSpawnManager::AddSpawnRequests(const TArray<FGPUSpawnRequest>& Requests
 		Requests.Num(), PendingSpawnRequests.Num());
 }
 
+/**
+ * @brief Clear all pending spawn requests.
+ */
 void FGPUSpawnManager::ClearSpawnRequests()
 {
 	FScopeLock Lock(&SpawnLock);
@@ -171,12 +191,21 @@ void FGPUSpawnManager::ClearSpawnRequests()
 	bHasPendingSpawnRequests.store(false);
 }
 
+/**
+ * @brief Get number of pending spawn requests (thread-safe).
+ * @return Number of requests.
+ */
 int32 FGPUSpawnManager::GetPendingSpawnCount() const
 {
 	FScopeLock Lock(&SpawnLock);
 	return PendingSpawnRequests.Num();
 }
 
+/**
+ * @brief Cancel pending spawn requests for a specific SourceID (thread-safe).
+ * @param SourceID Source ID to cancel spawns for.
+ * @return Number of cancelled spawn requests.
+ */
 int32 FGPUSpawnManager::CancelPendingSpawnsForSource(int32 SourceID)
 {
 	FScopeLock Lock(&SpawnLock);
@@ -209,6 +238,11 @@ int32 FGPUSpawnManager::CancelPendingSpawnsForSource(int32 SourceID)
 // GPU-Driven Despawn API
 //=============================================================================
 
+/**
+ * @brief Add a brush despawn request - removes particles within radius (thread-safe).
+ * @param Center World position of brush center.
+ * @param Radius Brush radius.
+ */
 void FGPUSpawnManager::AddGPUDespawnBrushRequest(const FVector3f& Center, float Radius)
 {
 	FScopeLock Lock(&GPUDespawnLock);
@@ -216,6 +250,10 @@ void FGPUSpawnManager::AddGPUDespawnBrushRequest(const FVector3f& Center, float 
 	bHasPendingGPUDespawnRequests.store(true);
 }
 
+/**
+ * @brief Add a source despawn request - removes all particles with matching SourceID (thread-safe).
+ * @param SourceID Source component ID to despawn.
+ */
 void FGPUSpawnManager::AddGPUDespawnSourceRequest(int32 SourceID)
 {
 	if (SourceID < 0 || SourceID >= EGPUParticleSource::MaxSourceCount)
@@ -233,6 +271,11 @@ void FGPUSpawnManager::AddGPUDespawnSourceRequest(int32 SourceID)
 	bHasPendingGPUDespawnRequests.store(true);
 }
 
+/**
+ * @brief Set per-source emitter max particle count for GPU-driven recycling (thread-safe).
+ * @param SourceID Source component ID (0 to MaxSourceCount-1).
+ * @param MaxCount Max particles for this source (0 = no limit / disable).
+ */
 void FGPUSpawnManager::SetSourceEmitterMax(int32 SourceID, int32 MaxCount)
 {
 	if (SourceID < 0 || SourceID >= EGPUParticleSource::MaxSourceCount)
@@ -270,6 +313,10 @@ void FGPUSpawnManager::SetSourceEmitterMax(int32 SourceID, int32 MaxCount)
 		SourceID, MaxCount, ActiveEmitterMaxCount);
 }
 
+/**
+ * @brief Swap pending GPU despawn requests to active buffers.
+ * @return true if any despawn requests were swapped.
+ */
 bool FGPUSpawnManager::SwapGPUDespawnBuffers()
 {
 	FScopeLock Lock(&GPUDespawnLock);
@@ -295,6 +342,14 @@ bool FGPUSpawnManager::SwapGPUDespawnBuffers()
 	return bHasAny;
 }
 
+/**
+ * @brief Add GPU-driven despawn RDG passes.
+ * @param GraphBuilder RDG builder.
+ * @param InOutParticleBuffer Particle buffer.
+ * @param InOutParticleCount Particle count.
+ * @param NextParticleIDHint Hint for IDShiftBits computation.
+ * @param ParticleCountBuffer GPU particle count buffer.
+ */
 void FGPUSpawnManager::AddGPUDespawnPass(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferRef& InOutParticleBuffer,
@@ -726,6 +781,9 @@ void FGPUSpawnManager::AddGPUDespawnPass(
 // Render Thread API
 //=============================================================================
 
+/**
+ * @brief Swap pending requests to active buffer.
+ */
 void FGPUSpawnManager::SwapBuffers()
 {
 	FScopeLock Lock(&SpawnLock);
@@ -736,6 +794,13 @@ void FGPUSpawnManager::SwapBuffers()
 	bHasPendingSpawnRequests.store(false);
 }
 
+/**
+ * @brief Add spawn particles RDG pass.
+ * @param GraphBuilder RDG builder.
+ * @param ParticlesUAV Particle buffer UAV.
+ * @param ParticleCounterUAV Atomic counter UAV.
+ * @param MaxParticleCount Maximum particle capacity.
+ */
 void FGPUSpawnManager::AddSpawnParticlesPass(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferUAVRef ParticlesUAV,
@@ -793,6 +858,10 @@ void FGPUSpawnManager::AddSpawnParticlesPass(
 }
 
 
+/**
+ * @brief Update next particle ID after spawning.
+ * @param SpawnedCount Number of particles successfully spawned.
+ */
 void FGPUSpawnManager::OnSpawnComplete(int32 SpawnedCount)
 {
 	if (SpawnedCount > 0)
@@ -805,6 +874,11 @@ void FGPUSpawnManager::OnSpawnComplete(int32 SpawnedCount)
 // Source Counter API (Per-Component Particle Count Tracking)
 //=============================================================================
 
+/**
+ * @brief Register source counter buffer for RDG and get UAV.
+ * @param GraphBuilder RDG builder.
+ * @return Source counter UAV.
+ */
 FRDGBufferUAVRef FGPUSpawnManager::RegisterSourceCounterUAV(FRDGBuilder& GraphBuilder)
 {
 	// Create persistent buffer if not exists
@@ -830,6 +904,11 @@ FRDGBufferUAVRef FGPUSpawnManager::RegisterSourceCounterUAV(FRDGBuilder& GraphBu
 	return GraphBuilder.CreateUAV(RegisteredBuffer);
 }
 
+/**
+ * @brief Get particle count for a specific source (component).
+ * @param SourceID Source component ID.
+ * @return Particle count or -1 if invalid.
+ */
 int32 FGPUSpawnManager::GetParticleCountForSource(int32 SourceID) const
 {
 	// Check SourceID range
@@ -852,12 +931,20 @@ int32 FGPUSpawnManager::GetParticleCountForSource(int32 SourceID) const
 	return -1;
 }
 
+/**
+ * @brief Get all source counts.
+ * @return Array of particle counts per source.
+ */
 TArray<int32> FGPUSpawnManager::GetAllSourceCounts() const
 {
 	FScopeLock Lock(&SourceCountLock);
 	return CachedSourceCounts;
 }
 
+/**
+ * @brief Enqueue source counter readback.
+ * @param RHICmdList Command list.
+ */
 void FGPUSpawnManager::EnqueueSourceCounterReadback(FRHICommandListImmediate& RHICmdList)
 {
 	if (!SourceCounterBuffer.IsValid())
@@ -894,6 +981,9 @@ void FGPUSpawnManager::EnqueueSourceCounterReadback(FRHICommandListImmediate& RH
 	}
 }
 
+/**
+ * @brief Process source counter readback (check completion, copy to cache).
+ */
 void FGPUSpawnManager::ProcessSourceCounterReadback()
 {
 	// Nothing pending
@@ -930,6 +1020,10 @@ void FGPUSpawnManager::ProcessSourceCounterReadback()
 	--SourceCounterPendingCount;
 }
 
+/**
+ * @brief Clear all source counters.
+ * @param GraphBuilder RDG builder.
+ */
 void FGPUSpawnManager::ClearSourceCounters(FRDGBuilder& GraphBuilder)
 {
 	if (!SourceCounterBuffer.IsValid())
@@ -952,6 +1046,10 @@ void FGPUSpawnManager::ClearSourceCounters(FRDGBuilder& GraphBuilder)
 	UE_LOG(LogGPUSpawnManager, Log, TEXT("Cleared all source counters"));
 }
 
+/**
+ * @brief Initialize source counters from uploaded particles.
+ * @param Particles Array of particles to count by SourceID.
+ */
 void FGPUSpawnManager::InitializeSourceCountersFromParticles(const TArray<FGPUFluidParticle>& Particles)
 {
 	if (Particles.Num() == 0)
@@ -1039,6 +1137,11 @@ void FGPUSpawnManager::InitializeSourceCountersFromParticles(const TArray<FGPUFl
 // Stream Compaction Buffers (Persistent)
 //=============================================================================
 
+/**
+ * @brief Ensure stream compaction buffers are allocated with sufficient capacity.
+ * @param GraphBuilder RDG builder.
+ * @param RequiredCapacity Required particle capacity.
+ */
 void FGPUSpawnManager::EnsureStreamCompactionBuffers(FRDGBuilder& GraphBuilder, int32 RequiredCapacity)
 {
 	// Already allocated with sufficient capacity

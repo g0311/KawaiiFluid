@@ -1,8 +1,6 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
-// LEGACY: Traditional Spatial Hash Shader Implementations
-// See FluidSpatialHashShaders.h for details on legacy vs. Z-Order approach.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
-#include "Rendering/Shaders/FluidSpatialHashShaders.h"
+#include "Rendering/Shaders/KawaiiFluidSpatialHashShaders.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "GlobalShader.h"
@@ -12,12 +10,10 @@
 // Shader Implementations
 //=============================================================================
 
-// Simple Version Shaders
 IMPLEMENT_GLOBAL_SHADER(FClearCellDataCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "ClearCellDataCS", SF_Compute);
 IMPLEMENT_GLOBAL_SHADER(FBuildSpatialHashSimpleCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "BuildSpatialHashSimpleCS", SF_Compute);
 IMPLEMENT_GLOBAL_SHADER(FSortCellParticlesCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "SortCellParticlesCS", SF_Compute);
 
-// Multi-pass Version Shaders
 IMPLEMENT_GLOBAL_SHADER(FClearCellDataMultipassCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "ClearCellDataMultipassCS", SF_Compute);
 IMPLEMENT_GLOBAL_SHADER(FCountParticlesPerCellCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "CountParticlesPerCellCS", SF_Compute);
 IMPLEMENT_GLOBAL_SHADER(FPrefixSumCS, "/Plugin/KawaiiFluidSystem/Private/FluidSpatialHashBuild.usf", "PrefixSumCS", SF_Compute);
@@ -29,6 +25,12 @@ IMPLEMENT_GLOBAL_SHADER(FSortBucketParticlesCS, "/Plugin/KawaiiFluidSystem/Priva
 // FSpatialHashBuilder Implementation
 //=============================================================================
 
+/**
+ * @brief Create GPU buffers for the simplified spatial hash structure.
+ * @param GraphBuilder RDG builder for resource creation.
+ * @param CellSize Dimension of the spatial cells in cm.
+ * @return Struct containing initialized RDG buffer references.
+ */
 FSpatialHashGPUResources FSpatialHashBuilder::CreateResources(
     FRDGBuilder& GraphBuilder,
     float CellSize)
@@ -58,6 +60,9 @@ FSpatialHashGPUResources FSpatialHashBuilder::CreateResources(
     return Resources;
 }
 
+/**
+ * @brief Dispatch a compute shader pass to clear the cell counts buffer.
+ */
 void FSpatialHashBuilder::ClearBuffers(
     FRDGBuilder& GraphBuilder,
     FSpatialHashGPUResources& Resources)
@@ -65,14 +70,12 @@ void FSpatialHashBuilder::ClearBuffers(
     FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
     if (!ShaderMap)
     {
-        UE_LOG(LogTemp, Warning, TEXT("FSpatialHashBuilder::ClearBuffers - ShaderMap is null"));
         return;
     }
 
     TShaderMapRef<FClearCellDataCS> ComputeShader(ShaderMap);
     if (!ComputeShader.IsValid())
     {
-        UE_LOG(LogTemp, Warning, TEXT("FSpatialHashBuilder::ClearBuffers - FClearCellDataCS shader is not valid"));
         return;
     }
 
@@ -91,6 +94,17 @@ void FSpatialHashBuilder::ClearBuffers(
         });
 }
 
+/**
+ * @brief Build the spatial hash by assigning particle indices to grid cells.
+ * 
+ * @param GraphBuilder RDG builder.
+ * @param ParticlePositionsSRV SRV of particle world-space positions.
+ * @param ParticleCount Total number of particles to process.
+ * @param ParticleRadius Radius used for cell boundary checks.
+ * @param Resources Target hash resources to populate.
+ * @param IndirectArgsBuffer Optional indirect arguments for dynamic particle counts.
+ * @return True if the build pass was successfully registered.
+ */
 bool FSpatialHashBuilder::BuildHash(
     FRDGBuilder& GraphBuilder,
     FRDGBufferSRVRef ParticlePositionsSRV,
@@ -99,10 +113,6 @@ bool FSpatialHashBuilder::BuildHash(
     FSpatialHashGPUResources& Resources,
     FRDGBufferRef IndirectArgsBuffer)
 {
-    // WARNING: Resources must already be created. If this function fails,
-    // the caller is responsible for handling orphan buffers.
-    // Use CreateAndBuildHash() for safe atomic operation.
-
     if (!Resources.IsValid())
     {
         UE_LOG(LogTemp, Warning, TEXT("FSpatialHashBuilder::BuildHash - Resources not valid"));
@@ -118,7 +128,6 @@ bool FSpatialHashBuilder::BuildHash(
     FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
     if (!ShaderMap)
     {
-        UE_LOG(LogTemp, Warning, TEXT("FSpatialHashBuilder::BuildHash - ShaderMap is null"));
         return false;
     }
 
@@ -127,7 +136,6 @@ bool FSpatialHashBuilder::BuildHash(
 
     if (!BuildShader.IsValid() || !ClearShader.IsValid())
     {
-        UE_LOG(LogTemp, Warning, TEXT("FSpatialHashBuilder::BuildHash - Shaders not valid"));
         return false;
     }
 
@@ -181,6 +189,12 @@ bool FSpatialHashBuilder::BuildHash(
     return true;
 }
 
+/**
+ * @brief Atomically create resources and build the spatial hash grid.
+ * 
+ * RECOMMENDED: This is the safe way to use spatial hash - it validates conditions 
+ * before creating RDG resources, preventing orphan buffer crashes.
+ */
 bool FSpatialHashBuilder::CreateAndBuildHash(
     FRDGBuilder& GraphBuilder,
     FRDGBufferSRVRef ParticlePositionsSRV,
@@ -190,7 +204,6 @@ bool FSpatialHashBuilder::CreateAndBuildHash(
     FSpatialHashGPUResources& OutResources,
     FRDGBufferRef IndirectArgsBuffer)
 {
-    
     OutResources = FSpatialHashGPUResources();
 
     if (ParticleCount <= 0 || !ParticlePositionsSRV)
@@ -212,17 +225,15 @@ bool FSpatialHashBuilder::CreateAndBuildHash(
     TShaderMapRef<FBuildSpatialHashSimpleCS> BuildShader(ShaderMap);
     if (!BuildShader.IsValid())
     {
-        UE_LOG(LogTemp, Warning, TEXT("CreateAndBuildHash - BuildShader not valid"));
         return false;
     }
 
     OutResources.CellSize = CellSize;
 
-    // Create CellCounts buffer with initial data (implicit upload producer)
-    // Each cell: uint count = 0 (startIndex is implicit: cellIdx * MAX_PER_CELL)
+    // Create buffers with initial zero data
     {
         TArray<uint32> InitialCellCounts;
-        InitialCellCounts.SetNumZeroed(SPATIAL_HASH_SIZE);  // All counts start at 0
+        InitialCellCounts.SetNumZeroed(SPATIAL_HASH_SIZE);
 
         OutResources.CellCountsBuffer = CreateStructuredBuffer(
             GraphBuilder,
@@ -236,7 +247,6 @@ bool FSpatialHashBuilder::CreateAndBuildHash(
         OutResources.CellCountsUAV = GraphBuilder.CreateUAV(OutResources.CellCountsBuffer);
     }
 
-    // Create ParticleIndices buffer with zero initial data (implicit upload producer)
     {
         uint32 TotalSlots = SPATIAL_HASH_SIZE * MAX_PARTICLES_PER_CELL;
         TArray<uint32> InitialIndices;
@@ -254,7 +264,7 @@ bool FSpatialHashBuilder::CreateAndBuildHash(
         OutResources.ParticleIndicesUAV = GraphBuilder.CreateUAV(OutResources.ParticleIndicesBuffer);
     }
 
-    // Build pass - writes particle indices into the hash grid
+    // Dispatch build pass
     {
         FBuildSpatialHashSimpleCS::FParameters* PassParameters =
             GraphBuilder.AllocParameters<FBuildSpatialHashSimpleCS::FParameters>();
@@ -280,15 +290,14 @@ bool FSpatialHashBuilder::CreateAndBuildHash(
             FIntVector(NumGroups, 1, 1));
     }
 
-    //UE_LOG(LogTemp, Log, TEXT("CreateAndBuildHash - Success (Particles: %d, CellSize: %.2f)"), ParticleCount, CellSize);
-
     return true;
 }
 
-//=============================================================================
-// Multi-pass Spatial Hash Build (Dynamic Array - No particle limit per cell)
-//=============================================================================
-
+/**
+ * @brief Build a dynamic multi-pass spatial hash without particle count limits per cell.
+ * 
+ * Uses prefix sums to allocate bucket sizes dynamically based on actual particle distribution.
+ */
 bool FSpatialHashBuilder::CreateAndBuildHashMultipass(
     FRDGBuilder& GraphBuilder,
     FRDGBufferSRVRef ParticlePositionsSRV,
@@ -315,7 +324,6 @@ bool FSpatialHashBuilder::CreateAndBuildHashMultipass(
         return false;
     }
 
-    // Get all shaders
     TShaderMapRef<FClearCellDataMultipassCS> ClearShader(ShaderMap);
     TShaderMapRef<FCountParticlesPerCellCS> CountShader(ShaderMap);
     TShaderMapRef<FPrefixSumCS> PrefixSumShader(ShaderMap);
@@ -326,7 +334,6 @@ bool FSpatialHashBuilder::CreateAndBuildHashMultipass(
     if (!ClearShader.IsValid() || !CountShader.IsValid() || !PrefixSumShader.IsValid() ||
         !ScatterShader.IsValid() || !FinalizeShader.IsValid() || !SortShader.IsValid())
     {
-        UE_LOG(LogTemp, Warning, TEXT("CreateAndBuildHashMultipass - One or more shaders not valid"));
         return false;
     }
 
@@ -335,11 +342,7 @@ bool FSpatialHashBuilder::CreateAndBuildHashMultipass(
 
     RDG_EVENT_SCOPE(GraphBuilder, "SpatialHash::BuildMultipass (Particles: %d)", ParticleCount);
 
-    //=========================================================================
-    // Create Buffers
-    //=========================================================================
-
-    // CellData: {startIndex, count} per cell
+    // Create resources
     {
         FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(FUintVector2), SPATIAL_HASH_SIZE);
         Desc.Usage |= EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::ShaderResource;
@@ -348,7 +351,6 @@ bool FSpatialHashBuilder::CreateAndBuildHashMultipass(
         OutResources.CellDataUAV = GraphBuilder.CreateUAV(OutResources.CellDataBuffer);
     }
 
-    // ParticleIndices: Dynamic size = ParticleCount
     {
         FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), ParticleCount);
         Desc.Usage |= EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::ShaderResource;
@@ -357,7 +359,6 @@ bool FSpatialHashBuilder::CreateAndBuildHashMultipass(
         OutResources.ParticleIndicesUAV = GraphBuilder.CreateUAV(OutResources.ParticleIndicesBuffer);
     }
 
-    // CellCounters: Atomic counter per cell (temporary)
     {
         FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), SPATIAL_HASH_SIZE);
         Desc.Usage |= EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::ShaderResource;
@@ -365,7 +366,6 @@ bool FSpatialHashBuilder::CreateAndBuildHashMultipass(
         OutResources.CellCountersUAV = GraphBuilder.CreateUAV(OutResources.CellCountersBuffer);
     }
 
-    // ParticleCellHashes: Hash for each particle
     {
         FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), ParticleCount);
         Desc.Usage |= EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::ShaderResource;
@@ -374,7 +374,6 @@ bool FSpatialHashBuilder::CreateAndBuildHashMultipass(
         OutResources.ParticleCellHashesUAV = GraphBuilder.CreateUAV(OutResources.ParticleCellHashesBuffer);
     }
 
-    // PrefixSumBuffer: Prefix sum workspace
     {
         FRDGBufferDesc Desc = FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), SPATIAL_HASH_SIZE);
         Desc.Usage |= EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::ShaderResource;
@@ -386,9 +385,7 @@ bool FSpatialHashBuilder::CreateAndBuildHashMultipass(
     uint32 NumCellGroups = FMath::DivideAndRoundUp(SPATIAL_HASH_SIZE, SPATIAL_HASH_THREAD_GROUP_SIZE);
     uint32 NumParticleGroups = FMath::DivideAndRoundUp(static_cast<uint32>(ParticleCount), SPATIAL_HASH_THREAD_GROUP_SIZE);
 
-    //=========================================================================
-    // Pass 1: Clear CellData and CellCounters
-    //=========================================================================
+    // Pass 1: Clear
     {
         FClearCellDataMultipassCS::FParameters* ClearParams =
             GraphBuilder.AllocParameters<FClearCellDataMultipassCS::FParameters>();
@@ -403,9 +400,7 @@ bool FSpatialHashBuilder::CreateAndBuildHashMultipass(
             FIntVector(NumCellGroups, 1, 1));
     }
 
-    //=========================================================================
-    // Pass 2: Count particles per cell
-    //=========================================================================
+    // Pass 2: Count
     {
         FCountParticlesPerCellCS::FParameters* CountParams =
             GraphBuilder.AllocParameters<FCountParticlesPerCellCS::FParameters>();
@@ -427,9 +422,7 @@ bool FSpatialHashBuilder::CreateAndBuildHashMultipass(
             FIntVector(NumParticleGroups, 1, 1));
     }
 
-    //=========================================================================
-    // Pass 3: Prefix sum (single-threaded for correctness)
-    //=========================================================================
+    // Pass 3: Prefix Sum
     {
         FPrefixSumCS::FParameters* PrefixParams =
             GraphBuilder.AllocParameters<FPrefixSumCS::FParameters>();
@@ -444,14 +437,9 @@ bool FSpatialHashBuilder::CreateAndBuildHashMultipass(
             FIntVector(1, 1, 1));
     }
 
-    //=========================================================================
-    // Pass 3.5: Clear CellCounters before Scatter (reuse as local index)
-    //=========================================================================
     AddClearUAVPass(GraphBuilder, OutResources.CellCountersUAV, 0u);
 
-    //=========================================================================
-    // Pass 4: Scatter particles into cells
-    //=========================================================================
+    // Pass 4: Scatter
     {
         FScatterParticlesCS::FParameters* ScatterParams =
             GraphBuilder.AllocParameters<FScatterParticlesCS::FParameters>();
@@ -473,9 +461,7 @@ bool FSpatialHashBuilder::CreateAndBuildHashMultipass(
             FIntVector(NumParticleGroups, 1, 1));
     }
 
-    //=========================================================================
-    // Pass 5: Finalize cell data (set start indices)
-    //=========================================================================
+    // Pass 5: Finalize
     {
         FFinalizeCellDataCS::FParameters* FinalizeParams =
             GraphBuilder.AllocParameters<FFinalizeCellDataCS::FParameters>();
@@ -491,9 +477,7 @@ bool FSpatialHashBuilder::CreateAndBuildHashMultipass(
             FIntVector(NumCellGroups, 1, 1));
     }
 
-    //=========================================================================
-    // Pass 6: Sort particles within each bucket (deterministic order)
-    //=========================================================================
+    // Pass 6: Sort
     {
         FSortBucketParticlesCS::FParameters* SortParams =
             GraphBuilder.AllocParameters<FSortBucketParticlesCS::FParameters>();

@@ -30,6 +30,9 @@ FGPUCollisionManager::~FGPUCollisionManager()
 // Lifecycle
 //=============================================================================
 
+/**
+ * @brief Initialize the collision manager.
+ */
 void FGPUCollisionManager::Initialize()
 {
 	if (bIsInitialized)
@@ -45,6 +48,9 @@ void FGPUCollisionManager::Initialize()
 	UE_LOG(LogGPUCollisionManager, Log, TEXT("FGPUCollisionManager initialized"));
 }
 
+/**
+ * @brief Release all resources.
+ */
 void FGPUCollisionManager::Release()
 {
 	if (!bIsInitialized)
@@ -82,6 +88,10 @@ void FGPUCollisionManager::Release()
 // Collision Primitives Upload
 //=============================================================================
 
+/**
+ * @brief Upload collision primitives to GPU.
+ * @param Primitives Collection of collision primitives.
+ */
 void FGPUCollisionManager::UploadCollisionPrimitives(const FGPUCollisionPrimitives& Primitives)
 {
 	if (!bIsInitialized)
@@ -118,6 +128,14 @@ void FGPUCollisionManager::UploadCollisionPrimitives(const FGPUCollisionPrimitiv
 // Bounds Collision Pass
 //=============================================================================
 
+/**
+ * @brief Add bounds collision pass (AABB/OBB).
+ * @param GraphBuilder RDG builder.
+ * @param SpatialData Simulation spatial data.
+ * @param ParticleCount Current particle count.
+ * @param Params Simulation parameters.
+ * @param IndirectArgsBuffer Optional indirect dispatch arguments.
+ */
 void FGPUCollisionManager::AddBoundsCollisionPass(
 	FRDGBuilder& GraphBuilder,
 	const FSimulationSpatialData& SpatialData,
@@ -135,7 +153,10 @@ void FGPUCollisionManager::AddBoundsCollisionPass(
 	PassParameters->PackedVelocities = GraphBuilder.CreateUAV(SpatialData.SoA_PackedVelocities, PF_R32G32_UINT);  // B plan
 	PassParameters->Flags = GraphBuilder.CreateUAV(SpatialData.SoA_Flags, PF_R32_UINT);
 	PassParameters->ParticleCount = ParticleCount;
-	if (IndirectArgsBuffer) PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+	if (IndirectArgsBuffer)
+	{
+		PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+	}
 	PassParameters->ParticleRadius = Params.ParticleRadius;
 
 	// OBB parameters
@@ -172,6 +193,14 @@ void FGPUCollisionManager::AddBoundsCollisionPass(
 // Primitive Collision Pass (Spheres, Capsules, Boxes, Convex)
 //=============================================================================
 
+/**
+ * @brief Add primitive collision pass (spheres, capsules, boxes, convexes).
+ * @param GraphBuilder RDG builder.
+ * @param SpatialData Simulation spatial data.
+ * @param ParticleCount Current particle count.
+ * @param Params Simulation parameters.
+ * @param IndirectArgsBuffer Optional indirect dispatch arguments.
+ */
 void FGPUCollisionManager::AddPrimitiveCollisionPass(
 	FRDGBuilder& GraphBuilder,
 	const FSimulationSpatialData& SpatialData,
@@ -356,7 +385,10 @@ void FGPUCollisionManager::AddPrimitiveCollisionPass(
 	PassParameters->SourceIDs = GraphBuilder.CreateSRV(SpatialData.SoA_SourceIDs, PF_R32_SINT);
 	PassParameters->Flags = GraphBuilder.CreateUAV(SpatialData.SoA_Flags, PF_R32_UINT);
 	PassParameters->ParticleCount = ParticleCount;
-	if (IndirectArgsBuffer) PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+	if (IndirectArgsBuffer)
+	{
+		PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+	}
 	PassParameters->ParticleRadius = Params.ParticleRadius;
 	PassParameters->CollisionThreshold = PrimitiveCollisionThreshold;
 
@@ -429,6 +461,10 @@ void FGPUCollisionManager::AddPrimitiveCollisionPass(
 // Collision Feedback
 //=============================================================================
 
+/**
+ * @brief Enable or disable collision feedback recording.
+ * @param bEnabled Enable flag.
+ */
 void FGPUCollisionManager::SetCollisionFeedbackEnabled(bool bEnabled)
 {
 	if (FeedbackManager.IsValid())
@@ -437,11 +473,19 @@ void FGPUCollisionManager::SetCollisionFeedbackEnabled(bool bEnabled)
 	}
 }
 
+/**
+ * @brief Check if collision feedback is enabled.
+ * @return true if enabled.
+ */
 bool FGPUCollisionManager::IsCollisionFeedbackEnabled() const
 {
 	return FeedbackManager.IsValid() && FeedbackManager->IsEnabled();
 }
 
+/**
+ * @brief Allocate collision feedback readback buffers.
+ * @param RHICmdList Command list.
+ */
 void FGPUCollisionManager::AllocateCollisionFeedbackBuffers(FRHICommandListImmediate& RHICmdList)
 {
 	if (FeedbackManager.IsValid())
@@ -450,11 +494,18 @@ void FGPUCollisionManager::AllocateCollisionFeedbackBuffers(FRHICommandListImmed
 	}
 }
 
+/**
+ * @brief Release collision feedback buffers.
+ */
 void FGPUCollisionManager::ReleaseCollisionFeedbackBuffers()
 {
 	// Manager release is handled in Release()
 }
 
+/**
+ * @brief Process collision feedback readback (non-blocking).
+ * @param RHICmdList Command list.
+ */
 void FGPUCollisionManager::ProcessCollisionFeedbackReadback(FRHICommandListImmediate& RHICmdList)
 {
 	if (FeedbackManager.IsValid())
@@ -463,6 +514,10 @@ void FGPUCollisionManager::ProcessCollisionFeedbackReadback(FRHICommandListImmed
 	}
 }
 
+/**
+ * @brief Process collider contact count readback (non-blocking).
+ * @param RHICmdList Command list.
+ */
 void FGPUCollisionManager::ProcessColliderContactCountReadback(FRHICommandListImmediate& RHICmdList)
 {
 	if (FeedbackManager.IsValid())
@@ -471,6 +526,13 @@ void FGPUCollisionManager::ProcessColliderContactCountReadback(FRHICommandListIm
 	}
 }
 
+/**
+ * @brief Get collision feedback for a specific collider.
+ * @param ColliderIndex Index of the collider.
+ * @param OutFeedback Output feedback array.
+ * @param OutCount Output count.
+ * @return true if successful.
+ */
 bool FGPUCollisionManager::GetCollisionFeedbackForCollider(int32 ColliderIndex, TArray<FGPUCollisionFeedback>& OutFeedback, int32& OutCount)
 {
 	if (!FeedbackManager.IsValid())
@@ -482,6 +544,12 @@ bool FGPUCollisionManager::GetCollisionFeedbackForCollider(int32 ColliderIndex, 
 	return FeedbackManager->GetFeedbackForCollider(ColliderIndex, OutFeedback, OutCount);
 }
 
+/**
+ * @brief Get all collision feedback.
+ * @param OutFeedback Output feedback array.
+ * @param OutCount Output count.
+ * @return true if successful.
+ */
 bool FGPUCollisionManager::GetAllCollisionFeedback(TArray<FGPUCollisionFeedback>& OutFeedback, int32& OutCount)
 {
 	if (!FeedbackManager.IsValid())
@@ -493,6 +561,10 @@ bool FGPUCollisionManager::GetAllCollisionFeedback(TArray<FGPUCollisionFeedback>
 	return FeedbackManager->GetAllFeedback(OutFeedback, OutCount);
 }
 
+/**
+ * @brief Get current collision feedback count.
+ * @return Count of feedback entries.
+ */
 int32 FGPUCollisionManager::GetCollisionFeedbackCount() const
 {
 	return FeedbackManager.IsValid() ? FeedbackManager->GetFeedbackCount() : 0;
@@ -530,6 +602,11 @@ int32 FGPUCollisionManager::GetFluidInteractionSMCollisionFeedbackCount() const
 	return FeedbackManager.IsValid() ? FeedbackManager->GetFluidInteractionSMFeedbackCount() : 0;
 }
 
+/**
+ * @brief Get collider contact count.
+ * @param ColliderIndex Index.
+ * @return Count.
+ */
 int32 FGPUCollisionManager::GetColliderContactCount(int32 ColliderIndex) const
 {
 	if (!FeedbackManager.IsValid())
@@ -539,6 +616,10 @@ int32 FGPUCollisionManager::GetColliderContactCount(int32 ColliderIndex) const
 	return FeedbackManager->GetContactCount(ColliderIndex);
 }
 
+/**
+ * @brief Get all collider contact counts.
+ * @param OutCounts Output counts array.
+ */
 void FGPUCollisionManager::GetAllColliderContactCounts(TArray<int32>& OutCounts) const
 {
 	if (!FeedbackManager.IsValid())
@@ -549,6 +630,11 @@ void FGPUCollisionManager::GetAllColliderContactCounts(TArray<int32>& OutCounts)
 	FeedbackManager->GetAllContactCounts(OutCounts);
 }
 
+/**
+ * @brief Get contact count for a specific owner ID.
+ * @param OwnerID Owner unique ID.
+ * @return Total contacts.
+ */
 int32 FGPUCollisionManager::GetContactCountForOwner(int32 OwnerID) const
 {
 	// Debug logging (every 60 frames)
@@ -616,6 +702,12 @@ int32 FGPUCollisionManager::GetContactCountForOwner(int32 OwnerID) const
 // Heightmap Collision (Landscape terrain)
 //=============================================================================
 
+/**
+ * @brief Upload heightmap texture data to GPU.
+ * @param HeightData Array of normalized height values (0-1).
+ * @param Width Texture width.
+ * @param Height Texture height.
+ */
 void FGPUCollisionManager::UploadHeightmapTexture(const TArray<float>& HeightData, int32 Width, int32 Height)
 {
 	if (!bIsInitialized)
@@ -702,6 +794,14 @@ void FGPUCollisionManager::UploadHeightmapTexture(const TArray<float>& HeightDat
 		HeightmapParams.WorldMax.X, HeightmapParams.WorldMax.Y, HeightmapParams.WorldMax.Z);
 }
 
+/**
+ * @brief Add heightmap collision pass (Landscape terrain).
+ * @param GraphBuilder RDG builder.
+ * @param SpatialData Simulation spatial data.
+ * @param ParticleCount Current particle count.
+ * @param Params Simulation parameters.
+ * @param IndirectArgsBuffer Optional indirect dispatch arguments.
+ */
 void FGPUCollisionManager::AddHeightmapCollisionPass(
 	FRDGBuilder& GraphBuilder,
 	const FSimulationSpatialData& SpatialData,
@@ -729,7 +829,10 @@ void FGPUCollisionManager::AddHeightmapCollisionPass(
 	PassParameters->PackedVelocities = GraphBuilder.CreateUAV(SpatialData.SoA_PackedVelocities, PF_R32G32_UINT);  // B plan
 	PassParameters->Flags = GraphBuilder.CreateUAV(SpatialData.SoA_Flags, PF_R32_UINT);
 	PassParameters->ParticleCount = ParticleCount;
-	if (IndirectArgsBuffer) PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+	if (IndirectArgsBuffer)
+	{
+		PassParameters->ParticleCountBuffer = GraphBuilder.CreateSRV(IndirectArgsBuffer);
+	}
 	PassParameters->ParticleRadius = HeightmapParams.ParticleRadius > 0 ? HeightmapParams.ParticleRadius : Params.ParticleRadius;
 
 	// Heightmap texture

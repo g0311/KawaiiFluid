@@ -44,12 +44,18 @@ FGPUBoundarySkinningManager::~FGPUBoundarySkinningManager()
 // Lifecycle
 //=============================================================================
 
+/**
+ * @brief Initialize the manager.
+ */
 void FGPUBoundarySkinningManager::Initialize()
 {
 	bIsInitialized = true;
 	UE_LOG(LogGPUBoundarySkinning, Log, TEXT("GPUBoundarySkinningManager initialized"));
 }
 
+/**
+ * @brief Release all resources.
+ */
 void FGPUBoundarySkinningManager::Release()
 {
 	FScopeLock Lock(&BoundarySkinningLock);
@@ -90,6 +96,10 @@ void FGPUBoundarySkinningManager::Release()
 // Static Boundary Particles (StaticMesh colliders - Persistent GPU)
 //=============================================================================
 
+/**
+ * @brief Upload static boundary particles to persistent GPU buffer.
+ * @param Particles World-space static boundary particles.
+ */
 void FGPUBoundarySkinningManager::UploadStaticBoundaryParticles(const TArray<FGPUBoundaryParticle>& Particles)
 {
 	if (!bIsInitialized)
@@ -115,6 +125,9 @@ void FGPUBoundarySkinningManager::UploadStaticBoundaryParticles(const TArray<FGP
 	UE_LOG(LogGPUBoundarySkinning, Log, TEXT("Static boundary particles queued for upload: Count=%d"), StaticBoundaryParticleCount);
 }
 
+/**
+ * @brief Clear static boundary particles.
+ */
 void FGPUBoundarySkinningManager::ClearStaticBoundaryParticles()
 {
 	FScopeLock Lock(&BoundarySkinningLock);
@@ -132,6 +145,11 @@ void FGPUBoundarySkinningManager::ClearStaticBoundaryParticles()
 	UE_LOG(LogGPUBoundarySkinning, Log, TEXT("Static boundary particles cleared"));
 }
 
+/**
+ * @brief Execute Z-Order sorting for static boundary particles.
+ * @param GraphBuilder RDG builder.
+ * @param Params Simulation parameters.
+ */
 void FGPUBoundarySkinningManager::ExecuteStaticBoundaryZOrderSort(FRDGBuilder& GraphBuilder, const FGPUFluidSimulationParams& Params)
 {
 	FScopeLock Lock(&BoundarySkinningLock);
@@ -300,7 +318,10 @@ void FGPUBoundarySkinningManager::ExecuteStaticBoundaryZOrderSort(FRDGBuilder& G
 				SortKeyBits = GridAxisBits * 3;
 			}
 			int32 RadixSortPasses = (SortKeyBits + GPU_RADIX_BITS - 1) / GPU_RADIX_BITS;
-			if (RadixSortPasses % 2 != 0) RadixSortPasses++;
+			if (RadixSortPasses % 2 != 0)
+			{
+				RadixSortPasses++;
+			}
 
 			const int32 NumBlocks = FMath::DivideAndRoundUp(ParticleCount, GPU_RADIX_ELEMENTS_PER_GROUP);
 			const int32 RequiredHistogramSize = GPU_RADIX_SIZE * NumBlocks;
@@ -502,6 +523,11 @@ void FGPUBoundarySkinningManager::ExecuteStaticBoundaryZOrderSort(FRDGBuilder& G
 // GPU Boundary Skinning (SkeletalMesh)
 //=============================================================================
 
+/**
+ * @brief Upload local boundary particles for GPU skinning.
+ * @param OwnerID Unique ID for the mesh owner.
+ * @param LocalParticles Bone-local boundary particles.
+ */
 void FGPUBoundarySkinningManager::UploadLocalBoundaryParticles(int32 OwnerID, const TArray<FGPUBoundaryParticleLocal>& LocalParticles)
 {
 	if (!bIsInitialized || LocalParticles.Num() == 0)
@@ -528,6 +554,12 @@ void FGPUBoundarySkinningManager::UploadLocalBoundaryParticles(int32 OwnerID, co
 		OwnerID, LocalParticles.Num(), TotalLocalBoundaryParticleCount);
 }
 
+/**
+ * @brief Upload bone transforms for boundary skinning.
+ * @param OwnerID Unique ID for the mesh owner.
+ * @param BoneTransforms Current bone transforms.
+ * @param ComponentTransform Component world transform.
+ */
 void FGPUBoundarySkinningManager::UploadBoneTransformsForBoundary(int32 OwnerID, const TArray<FMatrix44f>& BoneTransforms, const FMatrix44f& ComponentTransform)
 {
 	if (!bIsInitialized)
@@ -545,6 +577,11 @@ void FGPUBoundarySkinningManager::UploadBoneTransformsForBoundary(int32 OwnerID,
 	}
 }
 
+/**
+ * @brief Register a skeletal mesh component for late bone transform refresh.
+ * @param OwnerID Unique ID for the mesh owner.
+ * @param SkelMesh Skeletal mesh component.
+ */
 void FGPUBoundarySkinningManager::RegisterSkeletalMeshReference(int32 OwnerID, USkeletalMeshComponent* SkelMesh)
 {
 	if (!bIsInitialized || !SkelMesh)
@@ -570,6 +607,9 @@ void FGPUBoundarySkinningManager::RegisterSkeletalMeshReference(int32 OwnerID, U
 	}
 }
 
+/**
+ * @brief Refresh bone transforms from all registered skeletal meshes.
+ */
 void FGPUBoundarySkinningManager::RefreshAllBoneTransforms()
 {
 	// MUST be called on Game Thread, right before render thread starts
@@ -674,6 +714,10 @@ int32 FGPUBoundarySkinningManager::GetBoneCount(int32 OwnerID) const
 	return 0;
 }
 
+/**
+ * @brief Remove skinning data for an owner.
+ * @param OwnerID Unique ID.
+ */
 void FGPUBoundarySkinningManager::RemoveBoundarySkinningData(int32 OwnerID)
 {
 	FScopeLock Lock(&BoundarySkinningLock);
@@ -700,6 +744,9 @@ void FGPUBoundarySkinningManager::RemoveBoundarySkinningData(int32 OwnerID)
 	}
 }
 
+/**
+ * @brief Clear all boundary skinning data.
+ */
 void FGPUBoundarySkinningManager::ClearAllBoundarySkinningData()
 {
 	FScopeLock Lock(&BoundarySkinningLock);
@@ -734,6 +781,11 @@ bool FGPUBoundarySkinningManager::IsBoundaryAdhesionEnabled() const
 // Boundary Owner AABB (for early-out optimization)
 //=============================================================================
 
+/**
+ * @brief Update AABB for a boundary owner.
+ * @param OwnerID Unique ID.
+ * @param AABB World-space AABB.
+ */
 void FGPUBoundarySkinningManager::UpdateBoundaryOwnerAABB(int32 OwnerID, const FGPUBoundaryOwnerAABB& AABB)
 {
 	FScopeLock Lock(&BoundarySkinningLock);
@@ -839,6 +891,14 @@ bool FGPUBoundarySkinningManager::ShouldSkipBoundaryAdhesionPass(const FGPUFluid
 // Boundary Skinning Pass
 //=============================================================================
 
+/**
+ * @brief Add boundary skinning pass.
+ * @param GraphBuilder RDG builder.
+ * @param OutWorldBoundaryBuffer Output world-space boundary buffer.
+ * @param OutBoundaryParticleCount Output particle count.
+ * @param DeltaTime Frame delta time.
+ * @param OutSkinningOutputs Optional outputs.
+ */
 void FGPUBoundarySkinningManager::AddBoundarySkinningPass(
 	FRDGBuilder& GraphBuilder,
 	FRDGBufferRef& OutWorldBoundaryBuffer,
@@ -1122,6 +1182,19 @@ void FGPUBoundarySkinningManager::AddBoundarySkinningPass(
 // Boundary Adhesion Pass
 //=============================================================================
 
+/**
+ * @brief Add boundary adhesion pass.
+ * @param GraphBuilder RDG builder.
+ * @param SpatialData Simulation spatial data.
+ * @param CurrentParticleCount Fluid particle count.
+ * @param Params Simulation parameters.
+ * @param InSameFrameBoundaryBuffer Optional same-frame buffer.
+ * @param InSameFrameBoundaryCount Optional same-frame count.
+ * @param InZOrderSortedSRV Optional sorted SRV.
+ * @param InZOrderCellStartSRV Optional cell start SRV.
+ * @param InZOrderCellEndSRV Optional cell end SRV.
+ * @param IndirectArgsBuffer Optional indirect arguments.
+ */
 void FGPUBoundarySkinningManager::AddBoundaryAdhesionPass(
 	FRDGBuilder& GraphBuilder,
 	const FSimulationSpatialData& SpatialData,
@@ -1394,6 +1467,18 @@ void FGPUBoundarySkinningManager::AddBoundaryAdhesionPass(
 // Boundary Z-Order Sorting Pipeline
 //=============================================================================
 
+/**
+ * @brief Execute Z-Order sorting pipeline for boundary particles.
+ * @param GraphBuilder RDG builder.
+ * @param Params Simulation parameters.
+ * @param InSameFrameBoundaryBuffer Same-frame source.
+ * @param InSameFrameBoundaryCount Same-frame count.
+ * @param OutSortedBuffer Output sorted buffer.
+ * @param OutCellStartBuffer Output cell start.
+ * @param OutCellEndBuffer Output cell end.
+ * @param OutParticleCount Output count.
+ * @return true if performed.
+ */
 bool FGPUBoundarySkinningManager::ExecuteBoundaryZOrderSort(
 	FRDGBuilder& GraphBuilder,
 	const FGPUFluidSimulationParams& Params,
@@ -1572,7 +1657,10 @@ bool FGPUBoundarySkinningManager::ExecuteBoundaryZOrderSort(
 			SortKeyBits = GridAxisBits * 3;
 		}
 		int32 RadixSortPasses = (SortKeyBits + GPU_RADIX_BITS - 1) / GPU_RADIX_BITS;
-		if (RadixSortPasses % 2 != 0) RadixSortPasses++;
+		if (RadixSortPasses % 2 != 0)
+		{
+			RadixSortPasses++;
+		}
 
 		const int32 NumBlocks = FMath::DivideAndRoundUp(BoundaryParticleCount, GPU_RADIX_ELEMENTS_PER_GROUP);
 		const int32 RequiredHistogramSize = GPU_RADIX_SIZE * NumBlocks;
@@ -1785,6 +1873,9 @@ bool FGPUBoundarySkinningManager::ExecuteBoundaryZOrderSort(
 // before Render thread uses them.
 //=============================================================================
 
+/**
+ * @brief Snapshot current bone transforms for deferred simulation execution.
+ */
 void FGPUBoundarySkinningManager::SnapshotBoneTransformsForPendingSimulation()
 {
 	FScopeLock Lock(&BoundarySkinningLock);
@@ -1835,6 +1926,10 @@ void FGPUBoundarySkinningManager::SnapshotBoneTransformsForPendingSimulation()
 		PendingBoneTransformSnapshots.Num());
 }
 
+/**
+ * @brief Pop and activate a snapshotted bone transform for execution.
+ * @return true if a snapshot was available and is now active.
+ */
 bool FGPUBoundarySkinningManager::PopAndActivateSnapshot()
 {
 	FScopeLock Lock(&BoundarySkinningLock);
@@ -1856,6 +1951,9 @@ bool FGPUBoundarySkinningManager::PopAndActivateSnapshot()
 	return true;
 }
 
+/**
+ * @brief Clear the active snapshot after simulation execution completes.
+ */
 void FGPUBoundarySkinningManager::ClearActiveSnapshot()
 {
 	FScopeLock Lock(&BoundarySkinningLock);

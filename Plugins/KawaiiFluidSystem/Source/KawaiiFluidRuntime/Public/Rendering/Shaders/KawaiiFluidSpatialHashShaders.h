@@ -1,18 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
-//
-// LEGACY: Traditional Spatial Hash Shaders
-// =========================================
-// These shaders implement traditional hash-table based spatial partitioning.
-// They are kept for backward compatibility (bUseZOrderSorting=false path).
-//
-// The RECOMMENDED approach is Z-Order (Morton Code) sorting via FGPUZOrderSortManager,
-// which provides cache-coherent memory access and no hash collisions.
-//
-// This file is used when:
-// - FGPUZOrderSortManager is not available
-// - Legacy fallback mode is explicitly enabled
-//
-// For new features, prefer using Z-Order sorting defined in GPUZOrderSortManager.h
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -21,18 +7,14 @@
 #include "ShaderParameterStruct.h"
 #include "RenderGraphDefinitions.h"
 
-//=============================================================================
-// LEGACY: Spatial Hash Constants (must match shader defines)
-//=============================================================================
-
-static constexpr uint32 SPATIAL_HASH_SIZE = 65536;          // 2^16 cells
+static constexpr uint32 SPATIAL_HASH_SIZE = 65536;
 static constexpr uint32 MAX_PARTICLES_PER_CELL = 16;
 static constexpr uint32 SPATIAL_HASH_THREAD_GROUP_SIZE = 256;
 
-//=============================================================================
-// Clear Cell Data Compute Shader
-//=============================================================================
-
+/**
+ * @class FClearCellDataCS
+ * @brief Compute shader to reset cell particle counts.
+ */
 class FClearCellDataCS : public FGlobalShader
 {
 public:
@@ -58,10 +40,10 @@ public:
     }
 };
 
-//=============================================================================
-// Simple Version Shaders
-//=============================================================================
-
+/**
+ * @class FBuildSpatialHashSimpleCS
+ * @brief Compute shader for traditional hash-table based spatial partitioning.
+ */
 class FBuildSpatialHashSimpleCS : public FGlobalShader
 {
 public:
@@ -93,6 +75,10 @@ public:
     }
 };
 
+/**
+ * @class FSortCellParticlesCS
+ * @brief Compute shader to sort particles within each hash cell.
+ */
 class FSortCellParticlesCS : public FGlobalShader
 {
 public:
@@ -119,10 +105,10 @@ public:
     }
 };
 
-//=============================================================================
-// Multi-pass Version Shaders (Dynamic Array - No particle limit per cell)
-//=============================================================================
-
+/**
+ * @class FClearCellDataMultipassCS
+ * @brief Resets buffers for the multi-pass spatial hash build.
+ */
 class FClearCellDataMultipassCS : public FGlobalShader
 {
 public:
@@ -149,6 +135,10 @@ public:
     }
 };
 
+/**
+ * @class FCountParticlesPerCellCS
+ * @brief Pass 1: Count number of particles per hash cell.
+ */
 class FCountParticlesPerCellCS : public FGlobalShader
 {
 public:
@@ -179,6 +169,10 @@ public:
     }
 };
 
+/**
+ * @class FPrefixSumCS
+ * @brief Pass 2: Calculate prefix sums to determine starting indices for each cell.
+ */
 class FPrefixSumCS : public FGlobalShader
 {
 public:
@@ -205,6 +199,10 @@ public:
     }
 };
 
+/**
+ * @class FScatterParticlesCS
+ * @brief Pass 3: Scatter particle indices into their corresponding cells based on prefix sums.
+ */
 class FScatterParticlesCS : public FGlobalShader
 {
 public:
@@ -235,6 +233,10 @@ public:
     }
 };
 
+/**
+ * @class FFinalizeCellDataCS
+ * @brief Pass 4: Store finalized starting indices and counts for each cell.
+ */
 class FFinalizeCellDataCS : public FGlobalShader
 {
 public:
@@ -262,6 +264,10 @@ public:
     }
 };
 
+/**
+ * @class FSortBucketParticlesCS
+ * @brief Final Pass: Sort particles within each dynamic bucket for consistency.
+ */
 class FSortBucketParticlesCS : public FGlobalShader
 {
 public:
@@ -288,28 +294,24 @@ public:
     }
 };
 
-//=============================================================================
-// Spatial Hash GPU Resources (Simple Version)
-//=============================================================================
-
 /**
- * GPU resources for spatial hash acceleration structure
- * Simplified: CellCounts stores only count per cell (uint)
- * StartIndex is implicit: Hash * MAX_PARTICLES_PER_CELL
+ * @struct FSpatialHashGPUResources
+ * @brief GPU resources for the simplified spatial hash acceleration structure.
+ * 
+ * @param CellCountsBuffer Buffer storing the number of particles per cell.
+ * @param ParticleIndicesBuffer Buffer storing particle indices sorted by cell.
+ * @param CellSize Spatial partitioning cell size in cm.
  */
 struct FSpatialHashGPUResources
 {
-    // Cell counts: count per cell (startIndex is implicit)
     FRDGBufferRef CellCountsBuffer = nullptr;
     FRDGBufferSRVRef CellCountsSRV = nullptr;
     FRDGBufferUAVRef CellCountsUAV = nullptr;
 
-    // Particle indices sorted by cell
     FRDGBufferRef ParticleIndicesBuffer = nullptr;
     FRDGBufferSRVRef ParticleIndicesSRV = nullptr;
     FRDGBufferUAVRef ParticleIndicesUAV = nullptr;
 
-    // Configuration
     float CellSize = 0.0f;
 
     bool IsValid() const
@@ -318,23 +320,28 @@ struct FSpatialHashGPUResources
     }
 };
 
-//=============================================================================
-// Spatial Hash GPU Resources (Multi-pass Version - Dynamic Array)
-//=============================================================================
-
+/**
+ * @struct FSpatialHashMultipassResources
+ * @brief GPU resources for the dynamic multi-pass spatial hash.
+ * 
+ * @param CellDataBuffer Buffer storing {startIndex, count} pairs for each cell.
+ * @param ParticleIndicesBuffer Buffer storing all particle indices sorted by cell.
+ * @param CellCountersBuffer Temporary atomic counters for cell processing.
+ * @param ParticleCellHashesBuffer Temporary buffer storing hash values for each particle.
+ * @param PrefixSumBuffer Temporary buffer for prefix sum calculation.
+ * @param CellSize Spatial partitioning cell size in cm.
+ * @param ParticleCount Total number of particles managed.
+ */
 struct FSpatialHashMultipassResources
 {
-    // CellData: {startIndex, count} per cell
     FRDGBufferRef CellDataBuffer = nullptr;
     FRDGBufferSRVRef CellDataSRV = nullptr;
     FRDGBufferUAVRef CellDataUAV = nullptr;
 
-    // Particle indices (dynamic size = ParticleCount)
     FRDGBufferRef ParticleIndicesBuffer = nullptr;
     FRDGBufferSRVRef ParticleIndicesSRV = nullptr;
     FRDGBufferUAVRef ParticleIndicesUAV = nullptr;
 
-    // Temporary buffers for build
     FRDGBufferRef CellCountersBuffer = nullptr;
     FRDGBufferUAVRef CellCountersUAV = nullptr;
 
@@ -346,7 +353,6 @@ struct FSpatialHashMultipassResources
     FRDGBufferSRVRef PrefixSumSRV = nullptr;
     FRDGBufferUAVRef PrefixSumUAV = nullptr;
 
-    // Configuration
     float CellSize = 0.0f;
     int32 ParticleCount = 0;
 
@@ -376,31 +382,17 @@ struct FSpatialHashMultipassResources
     }
 };
 
-//=============================================================================
-// Spatial Hash Builder
-//=============================================================================
-
 /**
- * Utility class for building spatial hash on GPU
+ * @class FSpatialHashBuilder
+ * @brief Utility class for building and managing spatial hash structures on the GPU using RDG.
  */
 class KAWAIIFLUIDRUNTIME_API FSpatialHashBuilder
 {
 public:
-    /**
-     * Create GPU buffers for spatial hash
-     * WARNING: Only call this if you will IMMEDIATELY add producer passes!
-     * Orphan buffers (without producers) cause RDG crashes.
-     */
     static FSpatialHashGPUResources CreateResources(
         FRDGBuilder& GraphBuilder,
         float CellSize);
 
-    /**
-     * Build spatial hash from particle positions
-     * @return true if build succeeded, false if shaders not available
-     * WARNING: Resources must already be created, and this function MUST succeed
-     * to avoid orphan buffers.
-     */
     static bool BuildHash(
         FRDGBuilder& GraphBuilder,
         FRDGBufferSRVRef ParticlePositionsSRV,
@@ -409,14 +401,6 @@ public:
         FSpatialHashGPUResources& Resources,
         FRDGBufferRef IndirectArgsBuffer = nullptr);
 
-    /**
-     * RECOMMENDED: Atomically create resources and build hash.
-     * This is the safe way to use spatial hash - it validates ALL conditions
-     * BEFORE creating any RDG resources, preventing orphan buffer crashes.
-     *
-     * @param OutResources Output - will be populated only on success
-     * @return true if build succeeded, false if conditions not met (no resources created)
-     */
     static bool CreateAndBuildHash(
         FRDGBuilder& GraphBuilder,
         FRDGBufferSRVRef ParticlePositionsSRV,
@@ -426,7 +410,6 @@ public:
         FSpatialHashGPUResources& OutResources,
         FRDGBufferRef IndirectArgsBuffer = nullptr);
 
-    // Multi-pass version (dynamic array, no particle limit per cell)
     static bool CreateAndBuildHashMultipass(
         FRDGBuilder& GraphBuilder,
         FRDGBufferSRVRef ParticlePositionsSRV,

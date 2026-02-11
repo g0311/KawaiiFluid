@@ -16,6 +16,36 @@ IMPLEMENT_GLOBAL_SHADER(FFluidAnisotropyCS,
 	"/Plugin/KawaiiFluidSystem/Private/FluidAnisotropyCompute.usf",
 	"MainCS", SF_Compute);
 
+/**
+ * @brief Check if a shader permutation should be compiled.
+ */
+bool FFluidAnisotropyCS::ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+{
+	return IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
+}
+
+/**
+ * @brief Modify the shader compilation environment.
+ */
+void FFluidAnisotropyCS::ModifyCompilationEnvironment(
+	const FGlobalShaderPermutationParameters& Parameters,
+	FShaderCompilerEnvironment& OutEnvironment)
+{
+	FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+	OutEnvironment.SetDefine(TEXT("THREADGROUP_SIZE"), ThreadGroupSize);
+	OutEnvironment.SetDefine(TEXT("SPATIAL_HASH_SIZE"), ANISOTROPY_SPATIAL_HASH_SIZE);
+	OutEnvironment.SetDefine(TEXT("MAX_PARTICLES_PER_CELL"), ANISOTROPY_MAX_PARTICLES_PER_CELL);
+
+	// Get grid resolution from permutation for Morton code calculation
+	const FPermutationDomain PermutationVector(Parameters.PermutationId);
+	const int32 GridPreset = PermutationVector.Get<FGridResolutionDim>();
+	const int32 AxisBits = GridResolutionPermutation::GetAxisBits(GridPreset);
+	const int32 MaxCells = GridResolutionPermutation::GetMaxCells(GridPreset);
+
+	OutEnvironment.SetDefine(TEXT("MORTON_GRID_AXIS_BITS"), AxisBits);
+	OutEnvironment.SetDefine(TEXT("MAX_CELLS"), MaxCells);
+}
+
 //=============================================================================
 // Pass Builder Implementation
 //=============================================================================

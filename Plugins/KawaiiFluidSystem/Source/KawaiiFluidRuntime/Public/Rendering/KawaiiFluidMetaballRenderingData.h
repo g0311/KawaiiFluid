@@ -1,4 +1,4 @@
-﻿// Copyright 2026 Team_Bruteforce. All Rights Reserved.
+// Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #pragma once
 
@@ -7,33 +7,37 @@
 #include "ScreenPass.h"
 
 /**
- * Intermediate textures produced by ScreenSpace pipeline
- * These are cached between PostBasePass and Tonemap passes
+ * @struct FMetaballIntermediateTextures
+ * @brief Container for intermediate surface textures produced by the ScreenSpace rendering pipeline.
+ * 
+ * @param SmoothedDepthTexture Bilateral filtered depth buffer.
+ * @param NormalTexture Reconstructed world-space normals.
+ * @param ThicknessTexture Accumulated view-space thickness.
+ * @param VelocityTexture Screen-space velocity buffer (RG16F).
+ * @param OcclusionMaskTexture Binary mask for visible fluid (R8).
+ * @param AccumulatedFlowTexture Temporal UV offset for flow map animation.
+ * @param BackgroundDepthTexture Hardware depth buffer including scene and previous fluids.
+ * @param GBufferATexture Optional GBuffer A component.
+ * @param GBufferBTexture Optional GBuffer B component.
+ * @param GBufferCTexture Optional GBuffer C component.
+ * @param GBufferDTexture Optional GBuffer D component.
  */
 struct FMetaballIntermediateTextures
 {
-	/** Smoothed depth texture (bilateral filtered) */
 	FRDGTextureRef SmoothedDepthTexture = nullptr;
 
-	/** View-space normal texture */
 	FRDGTextureRef NormalTexture = nullptr;
 
-	/** Accumulated thickness texture */
 	FRDGTextureRef ThicknessTexture = nullptr;
 
-	/** Screen-space velocity texture for flow effects (RG16F: velocity.xy) */
 	FRDGTextureRef VelocityTexture = nullptr;
 
-	/** OcclusionMask texture (R8: 1.0 = visible, 0.0 = occluded by scene geometry) */
 	FRDGTextureRef OcclusionMaskTexture = nullptr;
 
-	/** Accumulated flow UV offset texture (RG16F: accumulated offset.xy) */
 	FRDGTextureRef AccumulatedFlowTexture = nullptr;
 
-	/** Background depth texture (Hardware Depth: Scene + Previous Fluids) */
 	FRDGTextureRef BackgroundDepthTexture = nullptr;
 
-	/** GBuffer textures (optional, for GBuffer shading mode) */
 	FRDGTextureRef GBufferATexture = nullptr;
 	FRDGTextureRef GBufferBTexture = nullptr;
 	FRDGTextureRef GBufferCTexture = nullptr;
@@ -63,21 +67,22 @@ struct FMetaballIntermediateTextures
 };
 
 /**
- * Anisotropy data for ellipsoid rendering
- * Precomputed by FluidAnisotropyCompute shader
+ * @struct FAnisotropyData
+ * @brief Container for precomputed anisotropic ellipsoid axis data.
+ * 
+ * @param bUseAnisotropy Whether anisotropic rendering is active.
+ * @param AnisotropyAxis1SRV Major axis buffer SRV (float4).
+ * @param AnisotropyAxis2SRV Intermediate axis buffer SRV (float4).
+ * @param AnisotropyAxis3SRV Minor axis buffer SRV (float4).
  */
 struct FAnisotropyData
 {
-	/** Whether to use anisotropic rendering */
 	bool bUseAnisotropy = false;
 
-	/** Anisotropy Axis1 buffer SRV: float4(axis.xyz, scale.w) */
 	FRDGBufferSRVRef AnisotropyAxis1SRV = nullptr;
 
-	/** Anisotropy Axis2 buffer SRV: float4(axis.xyz, scale.w) */
 	FRDGBufferSRVRef AnisotropyAxis2SRV = nullptr;
 
-	/** Anisotropy Axis3 buffer SRV: float4(axis.xyz, scale.w) */
 	FRDGBufferSRVRef AnisotropyAxis3SRV = nullptr;
 
 	bool IsValid() const
@@ -96,4 +101,3 @@ struct FAnisotropyData
 		AnisotropyAxis3SRV = nullptr;
 	}
 };
-
