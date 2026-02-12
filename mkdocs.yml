@@ -33,6 +33,7 @@ nav:
   - User Guides:
       - Fluid Brush Tool: brush-tool-guide.md
       - Rendering Options: rendering-option-guide.md
+      - Boundary Tagging: boundary-tagging-guide.md
       - Interaction Blueprint Examples: interaction-blueprint-examples.md
 
 markdown_extensions:
