@@ -6,8 +6,8 @@
 #include "UObject/Object.h"
 #include "Core/KawaiiFluidParticle.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
-#include "Interfaces/IKawaiiFluidDataProvider.h"
-#include "GPU/GPUFluidSimulator.h"
+#include "Core/IKawaiiFluidDataProvider.h"
+#include "Simulation/GPUFluidSimulator.h"
 #include "Components/KawaiiFluidInteractionComponent.h"
 #include "KawaiiFluidSimulationModule.generated.h"
 

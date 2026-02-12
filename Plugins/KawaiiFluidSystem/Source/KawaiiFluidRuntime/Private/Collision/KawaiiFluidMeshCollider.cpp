@@ -8,7 +8,7 @@
 #include "PhysicsEngine/SkeletalBodySetup.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "Engine/StaticMesh.h"
-#include "GPU/GPUFluidParticle.h"
+#include "Simulation/Resources/GPUFluidParticle.h"
 
 /**
  * @brief Default constructor for UKawaiiFluidMeshCollider.

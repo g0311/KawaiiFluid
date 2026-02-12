@@ -21,13 +21,13 @@
 // Context-based batching
 #include "Core/KawaiiFluidSimulationContext.h"
 #include "Core/KawaiiFluidSimulatorSubsystem.h"  // For FContextCacheKey
-#include "Data/KawaiiFluidPresetDataAsset.h"
+#include "Core/KawaiiFluidPresetDataAsset.h"
 
 // Unified interface
 #include "Rendering/Resources/KawaiiFluidRenderResource.h"
 #include "Core/KawaiiFluidRenderParticle.h"
-#include "GPU/GPUFluidSimulator.h"
-#include "GPU/GPUFluidSimulatorShaders.h"
+#include "Simulation/GPUFluidSimulator.h"
+#include "Simulation/Shaders/GPUFluidSimulatorShaders.h"
 #include "RHIGPUReadback.h"  // FRHIGPUBufferReadback for particle bounds readback
 #include "Rendering/Passes/KawaiiFluidDepthPass.h"
 

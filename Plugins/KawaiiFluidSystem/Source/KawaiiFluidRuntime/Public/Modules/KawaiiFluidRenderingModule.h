@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
-#include "Interfaces/IKawaiiFluidDataProvider.h"
+#include "Core/IKawaiiFluidDataProvider.h"
 #include "Core/KawaiiFluidRenderParticle.h"
 #include "KawaiiFluidRenderingModule.generated.h"
 

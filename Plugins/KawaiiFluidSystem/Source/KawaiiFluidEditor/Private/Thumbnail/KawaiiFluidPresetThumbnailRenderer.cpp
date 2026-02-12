@@ -3,7 +3,7 @@
 #include "Thumbnail/KawaiiFluidPresetThumbnailRenderer.h"
 
 #include "CanvasTypes.h"
-#include "Data/KawaiiFluidPresetDataAsset.h"
+#include "Core/KawaiiFluidPresetDataAsset.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/Material.h"

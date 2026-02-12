@@ -7,9 +7,9 @@
 #include "RHICommandList.h"
 #include "RenderingThread.h"
 #include "ShaderParameterUtils.h"
-#include "GPU/GPUFluidSimulatorShaders.h"
-#include "GPU/GPUFluidParticle.h"
-#include "GPU/GPUFluidSimulator.h"
+#include "Simulation/Shaders/GPUFluidSimulatorShaders.h"
+#include "Simulation/Resources/GPUFluidParticle.h"
+#include "Simulation/GPUFluidSimulator.h"
 
 /**
  * @brief Default constructor for the render resource.

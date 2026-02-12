@@ -2,7 +2,7 @@
 
 #include "Tests/KawaiiFluidMetricsCollector.h"
 #include "Modules/KawaiiFluidSimulationModule.h"
-#include "Data/KawaiiFluidPresetDataAsset.h"
+#include "Core/KawaiiFluidPresetDataAsset.h"
 
 /**
  * @brief Collect comprehensive metrics from a raw particle array.

@@ -5,7 +5,7 @@
 #include "Rendering/Resources/KawaiiFluidRenderResource.h"
 #include "Modules/KawaiiFluidRenderingModule.h"
 #include "Rendering/KawaiiFluidRenderer.h"
-#include "GPU/GPUIndirectDispatchUtils.h"
+#include "Simulation/GPUIndirectDispatchUtils.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "SceneView.h"

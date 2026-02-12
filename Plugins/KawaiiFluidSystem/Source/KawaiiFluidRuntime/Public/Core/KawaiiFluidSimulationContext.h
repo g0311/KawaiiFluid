@@ -6,8 +6,8 @@
 #include "UObject/NoExportTypes.h"
 #include "Core/KawaiiFluidParticle.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
-#include "GPU/GPUFluidParticle.h"
-#include "Data/KawaiiFluidPresetDataAsset.h"
+#include "Simulation/Resources/GPUFluidParticle.h"
+#include "Core/KawaiiFluidPresetDataAsset.h"
 #include "Components/KawaiiFluidVolumeComponent.h"
 #include "KawaiiFluidSimulationContext.generated.h"
 

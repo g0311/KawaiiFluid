@@ -3,7 +3,7 @@
 #include "Core/KawaiiFluidSimulatorSubsystem.h"
 #include "Core/KawaiiFluidSimulationContext.h"
 #include "Core/KawaiiFluidSpatialHash.h"
-#include "Data/KawaiiFluidPresetDataAsset.h"
+#include "Core/KawaiiFluidPresetDataAsset.h"
 #include "Components/KawaiiFluidVolumeComponent.h"
 #include "Actors/KawaiiFluidVolume.h"
 #include "Modules/KawaiiFluidSimulationModule.h"
@@ -12,7 +12,7 @@
 #include "Rendering/Resources/KawaiiFluidRenderResource.h"
 #include "Components/KawaiiFluidInteractionComponent.h"
 #include "Collision/KawaiiFluidCollider.h"
-#include "GPU/GPUFluidSimulator.h"
+#include "Simulation/GPUFluidSimulator.h"
 #include "Engine/Level.h"
 #include "Engine/World.h"
 

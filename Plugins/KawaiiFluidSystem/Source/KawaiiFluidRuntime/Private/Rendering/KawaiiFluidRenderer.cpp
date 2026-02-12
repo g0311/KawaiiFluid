@@ -1,14 +1,14 @@
 // Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #include "Rendering/KawaiiFluidRenderer.h"
-#include "Interfaces/IKawaiiFluidDataProvider.h"
+#include "Core/IKawaiiFluidDataProvider.h"
 #include "Rendering/KawaiiFluidRendererSubsystem.h"
 #include "Rendering/Resources/KawaiiFluidRenderResource.h"
 #include "Core/KawaiiFluidSimulationContext.h"
 #include "Core/KawaiiFluidRenderParticle.h"
 #include "RenderGraphResources.h"
 #include "RenderingThread.h"
-#include "GPU/GPUFluidSimulator.h"
+#include "Simulation/GPUFluidSimulator.h"
 #include "Engine/World.h"
 
 // Pipeline architecture

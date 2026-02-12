@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "GPU/GPUFluidParticle.h"
+#include "Simulation/Resources/GPUFluidParticle.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
 #include "Core/KawaiiFluidRenderingTypes.h"
 #include "KawaiiFluidVolume.generated.h"

@@ -8,10 +8,10 @@
 #include "Components/KawaiiFluidInteractionComponent.h"
 #include "Components/KawaiiFluidVolumeComponent.h"
 #include "Actors/KawaiiFluidVolume.h"
-#include "Data/KawaiiFluidPresetDataAsset.h"
-#include "GPU/GPUFluidSimulator.h"
-#include "GPU/GPUFluidSimulatorShaders.h"  // For GPU_MORTON_GRID_AXIS_BITS
-#include "GPU/GPUFluidParticle.h"  // For FGPUSpawnRequest
+#include "Core/KawaiiFluidPresetDataAsset.h"
+#include "Simulation/GPUFluidSimulator.h"
+#include "Simulation/Shaders/GPUFluidSimulatorShaders.h"  // For GPU_MORTON_GRID_AXIS_BITS
+#include "Simulation/Resources/GPUFluidParticle.h"  // For FGPUSpawnRequest
 #include "UObject/UObjectGlobals.h"  // For FCoreUObjectDelegates
 #include "UObject/ObjectSaveContext.h"  // For FObjectPreSaveContext
 #include "Engine/World.h"

@@ -7,7 +7,7 @@
 #include "Engine/EngineBaseTypes.h"
 #include "Core/KawaiiFluidSimulationTypes.h"
 #include "Components/KawaiiFluidInteractionComponent.h"
-#include "GPU/GPUFluidParticle.h"
+#include "Simulation/Resources/GPUFluidParticle.h"
 #include "KawaiiFluidSimulatorSubsystem.generated.h"
 
 class UKawaiiFluidSimulationModule;

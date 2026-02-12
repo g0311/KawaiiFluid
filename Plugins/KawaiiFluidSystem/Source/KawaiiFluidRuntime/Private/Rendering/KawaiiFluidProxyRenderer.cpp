@@ -1,11 +1,11 @@
 // Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #include "Rendering/KawaiiFluidProxyRenderer.h"
-#include "Interfaces/IKawaiiFluidDataProvider.h"
+#include "Core/IKawaiiFluidDataProvider.h"
 #include "Core/KawaiiFluidParticle.h"
-#include "Data/KawaiiFluidPresetDataAsset.h"
+#include "Core/KawaiiFluidPresetDataAsset.h"
 #include "Materials/MaterialInstanceDynamic.h"
-#include "GPU/GPUFluidSimulator.h"
+#include "Simulation/GPUFluidSimulator.h"
 #include "Engine/StaticMesh.h"
 
 UKawaiiFluidProxyRenderer::UKawaiiFluidProxyRenderer()

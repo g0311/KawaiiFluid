@@ -1,7 +1,7 @@
 // Copyright 2026 Team_Bruteforce. All Rights Reserved.
 
 #include "Preview/KawaiiFluidPreviewScene.h"
-#include "Data/KawaiiFluidPresetDataAsset.h"
+#include "Core/KawaiiFluidPresetDataAsset.h"
 #include "Core/KawaiiFluidParticle.h"
 #include "Core/KawaiiFluidSpatialHash.h"
 #include "Core/KawaiiFluidSimulationContext.h"
@@ -11,7 +11,7 @@
 #include "Modules/KawaiiFluidRenderingModule.h"
 #include "Rendering/KawaiiFluidRenderer.h"
 #include "Rendering/KawaiiFluidRendererSubsystem.h"
-#include "GPU/GPUFluidSimulator.h"
+#include "Simulation/GPUFluidSimulator.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInstanceDynamic.h"

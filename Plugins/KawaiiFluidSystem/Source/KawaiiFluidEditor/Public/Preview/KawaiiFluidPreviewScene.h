@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "AdvancedPreviewScene.h"
 #include "Preview/KawaiiFluidPreviewSettings.h"
-#include "Interfaces/IKawaiiFluidDataProvider.h"
+#include "Core/IKawaiiFluidDataProvider.h"
 
 class UKawaiiFluidPresetDataAsset;
 class UKawaiiFluidSimulationContext;
