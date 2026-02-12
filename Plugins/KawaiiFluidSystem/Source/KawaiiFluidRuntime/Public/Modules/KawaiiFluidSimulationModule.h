@@ -354,10 +354,6 @@ public:
 
 	void ResolveVolumeBoundaryCollisions();
 
-	UFUNCTION(BlueprintCallable, Category = "Fluid|Containment", meta = (DeprecatedFunction, DeprecationMessage = "Use SetSimulationVolume instead"))
-	void SetContainment(bool bEnabled, const FVector& Center, const FVector& Extent,
-	                    const FQuat& Rotation, float Restitution, float Friction);
-
 	void ResolveContainmentCollisions();
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fluid|Events")

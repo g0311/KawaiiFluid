@@ -92,17 +92,6 @@ public:
 	TRefCountPtr<FRDGPooledBuffer>& GetContactCountBuffer() { return ColliderContactCountBuffer; }
 
 	//=========================================================================
-	// Legacy API (deprecated)
-	//=========================================================================
-
-	TRefCountPtr<FRDGPooledBuffer>& GetFeedbackBuffer() { return UnifiedFeedbackBuffer; }
-	TRefCountPtr<FRDGPooledBuffer>& GetCounterBuffer() { static TRefCountPtr<FRDGPooledBuffer> Dummy; return Dummy; }
-	TRefCountPtr<FRDGPooledBuffer>& GetStaticMeshFeedbackBuffer() { return UnifiedFeedbackBuffer; }
-	TRefCountPtr<FRDGPooledBuffer>& GetStaticMeshCounterBuffer() { static TRefCountPtr<FRDGPooledBuffer> Dummy; return Dummy; }
-	TRefCountPtr<FRDGPooledBuffer>& GetFluidInteractionSMFeedbackBuffer() { return UnifiedFeedbackBuffer; }
-	TRefCountPtr<FRDGPooledBuffer>& GetFluidInteractionSMCounterBuffer() { static TRefCountPtr<FRDGPooledBuffer> Dummy; return Dummy; }
-
-	//=========================================================================
 	// Readback Processing (called from render thread)
 	//=========================================================================
 

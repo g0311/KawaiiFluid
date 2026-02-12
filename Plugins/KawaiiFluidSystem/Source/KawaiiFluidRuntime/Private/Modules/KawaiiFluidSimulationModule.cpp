@@ -1846,33 +1846,6 @@ void UKawaiiFluidSimulationModule::SetSimulationVolume(const FVector& Size, cons
 	RecalculateVolumeBounds();
 }
 
-// Legacy API - deprecated
-void UKawaiiFluidSimulationModule::SetContainment(bool bEnabled, const FVector& Center, const FVector& Extent,
-                                                   const FQuat& Rotation, float Restitution, float Friction)
-{
-	// Map to new unified API (ignoring bEnabled and Center since containment is always enabled)
-	// Extent is half-extent in legacy API, convert to full size
-	const float EffectiveCellSize = FMath::Max(CellSize, 1.0f);
-	const FVector ClampedHalfExtent = GridResolutionPresetHelper::ClampExtentToMaxSupported(Extent, EffectiveCellSize);
-	const FVector ClampedFullSize = ClampedHalfExtent * 2.0f;
-
-	// Update the appropriate size property based on current bUniformSize setting
-	// Note: bUniformSize is user-controlled from editor, don't modify it here
-	if (bUniformSize)
-	{
-		UniformVolumeSize = FMath::Max3(ClampedFullSize.X, ClampedFullSize.Y, ClampedFullSize.Z);
-	}
-	else
-	{
-		VolumeSize = ClampedFullSize;
-	}
-
-	VolumeRotation = Rotation.Rotator();
-	VolumeCenter = Center;  // Set center directly
-	VolumeRotationQuat = Rotation;
-	// Note: Restitution/Friction parameters are ignored. Use Preset's Restitution/Friction instead.
-}
-
 /**
  * @brief Manually resolves particle collisions with the volume boundaries on the CPU.
  * 
