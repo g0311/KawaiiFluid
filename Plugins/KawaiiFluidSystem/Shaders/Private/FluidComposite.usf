@@ -890,7 +890,8 @@ void CalculateRefraction(
 	}
 
 	// Clamp maximum distortion in pixel space to avoid silhouette tearing.
-	float2 MaxOffsetUV = 8.0 / max(ViewportSize, float2(1.0, 1.0));
+	const float MaxRefractionOffsetPixels = 16.0;
+	float2 MaxOffsetUV = MaxRefractionOffsetPixels / max(ViewportSize, float2(1.0, 1.0));
 	RefractOffset = clamp(RefractOffset, -MaxOffsetUV, MaxOffsetUV);
 
 	// Edge fade: reduce refraction near screen edges
