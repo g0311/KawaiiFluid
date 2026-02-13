@@ -484,7 +484,11 @@ float TraceSSR(float3 RayOrigin, float3 RayDir, out float2 OutHitUV, out float3 
 		return 0.0;
 	}
 
-	int StepCount = ScreenSpaceReflectionMaxSteps;
+	// Use exposed SSR step-size parameter (pixels per march step).
+	// Smaller step size => more steps (higher quality), larger => fewer steps (faster).
+	float StepSizePixels = max(ScreenSpaceReflectionStepSize, 0.5);
+	int MaxSteps = max(ScreenSpaceReflectionMaxSteps, 1);
+	int StepCount = clamp((int)ceil(RayScreenLen / StepSizePixels), 1, MaxSteps);
 	float InvStepCount = 1.0 / float(StepCount);
 
 	float StartDepth = -RayOrigin.z;
@@ -861,27 +865,33 @@ void CalculateRefraction(
 		return;
 	}
 
-	// Calculate depth difference for distance-based logic
-	float DistToBackground = max(SceneLinearDepth - Surface.Depth, 1.0);
+	// Transmission from Fresnel: at grazing angles, transmission should decrease.
+	float Transmission = saturate(1.0 - Fresnel);
+	float RefractionStrength = max(RefractionScale, 0.0);
 
-	// Calculate refraction mask (reduce at thin/edge areas for stability)
-	float ThicknessMask = saturate(Surface.Thickness * 0.1);
-	float EdgeMask = saturate(abs(Surface.Normal.z) * 2.0);
-	float RefractionMask = ThicknessMask * EdgeMask;
+	// Snell-based refracted direction in view space.
+	// Surface.ViewDir points from surface -> camera, so incident is -ViewDir.
+	float Eta = 1.0 / max(RefractiveIndex, 1.0001);
+	float3 IncidentDir = -Surface.ViewDir;
+	float3 RefractDir = refract(IncidentDir, Surface.Normal, Eta);
 
-	// Calculate refraction offset
-	// 1. Normal-based displacement (for surface waves/ripples)
-	float2 NormalOffset = Surface.Normal.xy * RefractiveIndex;
+	// If refraction direction is invalid (or points toward camera), fall back to no offset.
+	float2 RefractOffset = float2(0.0, 0.0);
+	if (RefractDir.z < -0.001)
+	{
+		// Intersect refracted ray with a plane at the sampled background depth.
+		float TargetViewZ = -SceneLinearDepth;
+		float t = (TargetViewZ - Surface.ViewPos.z) / RefractDir.z;
+		t = max(t, 0.0);
 
-	// 2. Depth Compression (Apparent Depth)
-	// Objects underwater appear shallower (closer to the surface).
-	// This creates a parallax shift: the background is pulled toward the viewer along the view axis.
-	// (1.0 - 1.0/n) is the lifting ratio (approx 0.25 for water).
-	float DepthCompression = (1.0 - 1.0 / RefractiveIndex);
-	float2 CompressionOffset = Surface.ViewDir.xy * DepthCompression * saturate(DistToBackground / 100.0);
+		float3 RefractedHitPos = Surface.ViewPos + RefractDir * t;
+		float2 RefractedUVPhysical = ProjectToScreenUV(RefractedHitPos);
+		RefractOffset = (RefractedUVPhysical - UV) * RefractionStrength * Transmission;
+	}
 
-	// Combined offset: even if Normal.xy is 0 (flat surface), CompressionOffset makes it look shallow.
-	float2 RefractOffset = (NormalOffset + CompressionOffset) * RefractionScale * RefractionMask;
+	// Clamp maximum distortion in pixel space to avoid silhouette tearing.
+	float2 MaxOffsetUV = 8.0 / max(ViewportSize, float2(1.0, 1.0));
+	RefractOffset = clamp(RefractOffset, -MaxOffsetUV, MaxOffsetUV);
 
 	// Edge fade: reduce refraction near screen edges
 	float EdgeFadeDistance = 0.1;
@@ -924,9 +934,11 @@ void CalculateRefraction(
 		return;
 	}
 
-	// Direct refraction failed - sample valid neighbors (fallback)
+	// Direct refraction failed - sample a nearby valid neighbor (fallback).
+	// Use "best single sample" instead of averaging many samples to avoid
+	// multi-image ghosting around silhouettes.
 	float2 PixelSize = 1.0 / ViewportSize;
-	float SearchRadius = 8.0;
+	float SearchRadius = 4.0;
 
 	// 8 directions
 	float2 Directions[8] = {
@@ -934,9 +946,10 @@ void CalculateRefraction(
 		float2(0.707, 0.707), float2(-0.707, 0.707), float2(0.707, -0.707), float2(-0.707, -0.707)
 	};
 
-	float3 AccumColor = float3(0, 0, 0);
-	float AccumDepth = 0.0;
-	float ValidWeight = 0.0;
+	float3 BestColor = SceneColorTexture.Sample(InputSampler, SceneUV).rgb;
+	float BestDepth = SceneLinearDepth;
+	float BestScore = 0.0;
+	bool bFoundNeighbor = false;
 
 	for (int i = 0; i < 8; i++)
 	{
@@ -951,30 +964,61 @@ void CalculateRefraction(
 		if (length(NeighborNormal) < 0.1) continue;
 		NeighborNormal = normalize(NeighborNormal);
 
-		float2 NeighborRefractOffset = NeighborNormal.xy * RefractiveIndex * RefractionScale * RefractionMask;
+		float3 NeighborFluidViewPos = ReconstructViewPosition(NeighborUV, NeighborFluidDepth);
+		float3 NeighborViewDir = normalize(-NeighborFluidViewPos);
+		float3 NeighborIncidentDir = -NeighborViewDir;
+		float3 NeighborRefractDir = refract(NeighborIncidentDir, NeighborNormal, Eta);
+		float NeighborNoV = saturate(dot(NeighborNormal, NeighborViewDir));
+		float NeighborF0Ratio = (1.0 - RefractiveIndex) / (1.0 + RefractiveIndex);
+		float NeighborF0 = NeighborF0Ratio * NeighborF0Ratio * FresnelStrength;
+		float NeighborFresnel = NeighborF0 + (1.0 - NeighborF0) * pow(1.0 - NeighborNoV, 5.0);
+		float NeighborTransmission = saturate(1.0 - NeighborFresnel);
+
+		float2 NeighborRefractOffset = float2(0.0, 0.0);
+		if (NeighborRefractDir.z < -0.001)
+		{
+			float2 NeighborSceneUV = NeighborUV * SceneUVScale;
+			float NeighborSceneDepth = ConvertFromDeviceZ(SceneDepthTexture.SampleLevel(PointClampSampler, NeighborSceneUV, 0).r);
+			float NeighborTargetViewZ = -NeighborSceneDepth;
+			float tNeighbor = (NeighborTargetViewZ - NeighborFluidViewPos.z) / NeighborRefractDir.z;
+			tNeighbor = max(tNeighbor, 0.0);
+
+			float3 NeighborHitPos = NeighborFluidViewPos + NeighborRefractDir * tNeighbor;
+			float2 NeighborRefractedUVPhysical = ProjectToScreenUV(NeighborHitPos);
+			NeighborRefractOffset = (NeighborRefractedUVPhysical - NeighborUV) * RefractionStrength * NeighborTransmission;
+		}
+
+		NeighborRefractOffset = clamp(NeighborRefractOffset, -MaxOffsetUV, MaxOffsetUV);
 		float2 NeighborRefractedUV = saturate(NeighborUV + NeighborRefractOffset);
 
 		float2 NeighborRefractedSceneUV = NeighborRefractedUV * SceneUVScale;
 		float NeighborRefractedDepth = ConvertFromDeviceZ(SceneDepthTexture.SampleLevel(PointClampSampler, NeighborRefractedSceneUV, 0).r);
 
-		float3 NeighborFluidViewPos = ReconstructViewPosition(NeighborUV, NeighborFluidDepth);
 		float3 NeighborRefractedViewPos = ReconstructViewPosition(NeighborRefractedUV, NeighborRefractedDepth);
 
 		bool bNeighborValid = (NeighborRefractedViewPos.z < NeighborFluidViewPos.z) && (NeighborRefractedDepth < BACKGROUND_DEPTH_THRESH);
 
 		if (bNeighborValid)
 		{
-			AccumColor += SceneColorTexture.SampleLevel(InputSampler, NeighborRefractedSceneUV, 0).rgb;
-			AccumDepth += NeighborRefractedDepth;
-			ValidWeight += 1.0;
+			float NormalScore = saturate(dot(NeighborNormal, Surface.Normal));
+			float DepthScore = exp(-abs(NeighborRefractedDepth - SceneLinearDepth) * 0.02);
+			float Score = max(NormalScore * DepthScore, 0.0001);
+
+			if (Score > BestScore)
+			{
+				BestScore = Score;
+				BestColor = SceneColorTexture.SampleLevel(InputSampler, NeighborRefractedSceneUV, 0).rgb;
+				BestDepth = NeighborRefractedDepth;
+				bFoundNeighbor = true;
+			}
 		}
 	}
 
-	if (ValidWeight > 0.0)
+	if (bFoundNeighbor)
 	{
-		OutRefractedColor = AccumColor / ValidWeight;
-		OutRefractedDepth = AccumDepth / ValidWeight;
-		OutRefractionValidity = ValidWeight / 8.0;
+		OutRefractedColor = BestColor;
+		OutRefractedDepth = BestDepth;
+		OutRefractionValidity = saturate(BestScore);
 	}
 	else
 	{
@@ -1006,15 +1050,26 @@ float CalculateCaustics(float2 UV, float2 FluidUV, FFluidSurfaceData Surface, fl
 		return 1.0;
 	}
 
+	// No valid receiver behind the fluid (sky/far plane): skip caustics.
+	if (RefractedDepth >= BACKGROUND_DEPTH_THRESH)
+	{
+		return 1.0;
+	}
+
 	float Pattern = CausticPattern(UV, FluidUV, Surface.Normal, Surface.Depth, RefractedDepth, ViewMatrix, RefractiveIndex);
 	float Brightness = 1.0 + Pattern * CausticIntensity;
 
-	// Fade based on fluid properties
-	// RefractionValidity removed - apply caustics even in fallback regions
-	float DepthFade = saturate(1.0 - Surface.Depth * 0.0003);
-	float ThicknessFade = exp(-Surface.Thickness * 0.015);
+	// Physically motivated fade terms:
+	// - ReceiverDistanceFade: farther receiver from the fluid surface => weaker focused light
+	// - ThicknessFade: thicker fluid absorbs/scatters more light
+	// - TransparencyFade: higher opacity transmits less light
+	// - ValidityFade: keep fallback contribution but damp uncertain refraction regions
+	float ReceiverDistance = max(RefractedDepth - Surface.Depth, 0.0);
+	float ReceiverDistanceFade = exp(-ReceiverDistance * 0.0025);
+	float ThicknessFade = exp(-Surface.Thickness * 0.012);
 	float TransparencyFade = saturate(1.0 - Opacity * 0.7);
-	float CausticFade = DepthFade * ThicknessFade * TransparencyFade;
+	float ValidityFade = lerp(0.5, 1.0, saturate(RefractionValidity));
+	float CausticFade = saturate(ReceiverDistanceFade * ThicknessFade * TransparencyFade * ValidityFade);
 
 	return lerp(1.0, Brightness, CausticFade);
 }

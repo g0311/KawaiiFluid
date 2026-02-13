@@ -39,7 +39,7 @@ enum class EFluidReflectionMode : uint8
  * @param LightingScale Global lighting multiplier for manual HDR compensation.
  * @param bEnableRefraction Toggle for background distortion through the fluid surface.
  * @param RefractiveIndex Index of Refraction (IOR) controlling light bending and Fresnel.
- * @param RefractionScale Magnitude of the UV offset for refraction.
+ * @param RefractionScale Blend factor for physically derived refraction displacement.
  * @param bEnableCaustics Toggle for synthetic caustic light patterns on refracted background.
  * @param CausticIntensity Brightness multiplier for caustic patterns.
  * @param ParticleRenderRadius World-space radius of particles when rasterized (cm).
@@ -126,8 +126,8 @@ struct KAWAIIFLUIDRUNTIME_API FKawaiiFluidRenderingParameters
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Refraction", meta = (EditCondition = "bEnableRefraction", ClampMin = "1.0", ClampMax = "2.0", ToolTip = "Index of Refraction (IOR). Controls light bending magnitude."))
 	float RefractiveIndex = 1.33f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Refraction", meta = (EditCondition = "bEnableRefraction", ClampMin = "0.0", ClampMax = "0.2", ToolTip = "Refraction offset scale."))
-	float RefractionScale = 0.05f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rendering|Refraction", meta = (EditCondition = "bEnableRefraction", ClampMin = "0.0", ClampMax = "1.0", ToolTip = "Strength of physically derived refraction (1.0 = full Snell-based displacement)."))
+	float RefractionScale = 1.0f;
 
 	//========================================
 	// Caustics
